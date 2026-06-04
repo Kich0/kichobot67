@@ -1,0 +1,17 @@
+# Node.js
+**/node_modules/
+**/npm-debug.log*
+**/package-lock.json
+
+# Environment variables
+**/.env
+
+# Logs
+**/logs/
+**/*.log
+
+# Temporary files
+**/temp/
+**/screenshot.png
+**/gpt-input-pictures/
+**/uploads/

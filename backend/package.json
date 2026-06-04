@@ -1,0 +1,42 @@
+{
+  "name": "tolyan_express",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon app.js",
+    "start": "node app.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "async": "^3.2.5",
+    "axios": "^1.4.0",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.2",
+    "cheerio": "^1.0.0-rc.12",
+    "child_process": "^1.0.2",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "iconv-lite": "^0.6.3",
+    "jsonwebtoken": "^9.0.1",
+    "mongodb": "^5.7.0",
+    "mongoose": "^7.4.1",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.2",
+    "nodemon": "^3.0.1",
+    "openai": "^4.40.0",
+    "ping": "^0.4.4",
+    "puppeteer": "^21.0.2",
+    "uuid": "^9.0.1",
+    "winston": "^3.10.0",
+    "winston-daily-rotate-file": "^4.7.1",
+    "winston-mongodb": "^5.1.1",
+    "winston-transport": "^4.5.0",
+    "xlsx": "^0.18.5"
+  }
+}

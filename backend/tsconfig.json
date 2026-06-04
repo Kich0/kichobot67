@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "strict": true,
+    "esModuleInterop": true
+  },
+  "include": [
+    "./services/ConverterService/convertWordToHtmlAsync.ts"
+  ]
+}

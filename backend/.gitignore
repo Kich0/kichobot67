@@ -1,0 +1,11 @@
+.idea
+.env
+node_modules
+experiments.js
+temp
+logs.log
+logs
+error_logs.log
+uploads
+gpt-input-pictures
+screenshot.png
