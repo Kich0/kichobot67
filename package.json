@@ -1,0 +1,15 @@
+{
+  "name": "kichobot_root",
+  "version": "1.0.0",
+  "description": "Root package to run bot and backend",
+  "scripts": {
+    "install-all": "npm install --prefix backend && npm install --prefix bot",
+    "start-backend": "npm start --prefix backend",
+    "start-bot": "npm start --prefix bot",
+    "dev-backend": "npm run dev --prefix backend",
+    "dev-bot": "npm run dev --prefix bot"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.1"
+  }
+}

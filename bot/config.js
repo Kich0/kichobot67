@@ -20,7 +20,7 @@ const config = {
 const requiredVars = ['DB_URI', 'TG_TOKEN', 'LOG_CHANEL_ID', 'LOGGER_TG_TOKEN', 'BOT_ID', 'KSU_HELPER_URL'];
 requiredVars.forEach((key) => {
     if (config[key] === undefined) {
-        throw new Error(`Missing required environment variable: ${key}`);
+        console.warn(`[WARNING] Missing environment variable: ${key}. Bot might not work correctly.`);
     }
 });
 
