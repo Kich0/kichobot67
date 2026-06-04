@@ -3,7 +3,7 @@ import {Schedule} from "../models/schedule.js"
 class scheduleService {
     updateByGroupId = async (groupId, data) => {
         try {
-            return await await Schedule.findOneAndUpdate(
+            return await Schedule.findOneAndUpdate(
                 {groupId}, {groupId, data}, {upsert: true, returnDocument: "after"}
             );
 

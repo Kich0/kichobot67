@@ -1,7 +1,7 @@
 module.exports = {
     apps: [
         {
-            name: "tolyan-bot",
+            name: "kichobot-bot",
             script: "npm",
             args: "run start",
             log_date_format: "YYYY-MM-DD HH:mm:ss",

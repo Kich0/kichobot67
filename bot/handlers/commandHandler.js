@@ -4,7 +4,6 @@ import {scheduleCommandController} from "../controllers/commands/scheduleCommand
 import {profileCommandController} from "../controllers/commands/profileCommandController.js";
 import {helpCommandController} from "../controllers/commands/helpCommandController.js";
 import {newsCommandController} from "../controllers/commands/newsCommandController.js";
-import {donateCommandController} from "../controllers/commands/donateCommandController.js";
 import {teacherScheduleCommandController} from "../controllers/commands/teacherScheduleCommandController.js";
 import {groupScheduleCommandController} from "../controllers/commands/groupScheduleCommandController.js";
 import {newScheduleCommandController} from "../controllers/commands/newScheduleCommandController.js";
@@ -36,12 +35,6 @@ export function setupCommandHandlers() {
     bot.onText(/^\/help/i, safeHandler(helpCommandController, 'help'))
     bot.onText(/^💡 Помощь/i, safeHandler(helpCommandController, 'help'))
     bot.onText(/^💡 Көмек/i, safeHandler(helpCommandController, 'help'))
-
-    bot.onText(/^\/news/i, safeHandler(newsCommandController, 'news'))
-    bot.onText(/^📢 Новости/i, safeHandler(newsCommandController, 'news'))
-    bot.onText(/^📢 Жаңалықтар/i, safeHandler(newsCommandController, 'news'))
-
-    bot.onText(/^\/donate/i, safeHandler(donateCommandController, 'donate'))
 
     bot.onText(/^\/remove/i, safeHandler(removeKeyboardCommandController, 'removeKeyboard'))
 

@@ -154,6 +154,13 @@ class BrowserController {
                 await page.close()
                 console.log("Прокси авторизован")
             }
+
+            // Направляем первую страницу на домен КСУ сразу после запуска
+            const pages = await this.browser.pages();
+            if (pages.length > 0) {
+                await pages[0].goto(config.KSU_DOMAIN).catch(e => log.error("Ошибка при переходе на главную страницу: " + e.message));
+            }
+
             if (config.AUTO_KSU_AUTH) {
                 await this.auth()
             }

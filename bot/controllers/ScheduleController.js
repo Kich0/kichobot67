@@ -60,7 +60,7 @@ class ScheduleController {
         }
         const start_index = row_per_page * page;
 
-        const currentPageText = `📄 ${i18next.t('page_text', { lng: user_language, page: page + 1, pageCount: page_count + 1 })}`
+        const currentPageText = `${i18next.t('page_text', { lng: user_language, page: page + 1, pageCount: page_count + 1 })}`
 
         return {
             data: data.slice(start_index, start_index + row_per_page), page, page_count, currentPageText
@@ -70,18 +70,25 @@ class ScheduleController {
     formatElapsedTime(timestamp, user_language) {
         const now = new Date();
         const diffInSeconds = Math.floor((now - timestamp) / 1000);
+        const diffInHours = Math.floor(diffInSeconds / 3600);
+
+        let statusEmoji = '🟢';
+        if (diffInHours >= 24) {
+            statusEmoji = '🔴';
+        } else if (diffInHours >= 5) {
+            statusEmoji = '🟡';
+        }
 
         if (diffInSeconds < 60) {
-            return `✅ ${diffInSeconds} ${i18next.t('second', {lng:user_language})}`;
+            return `${statusEmoji} ${diffInSeconds} ${i18next.t('second', {lng:user_language})}`;
         } else if (diffInSeconds < 3600) {
             const minutes = Math.floor(diffInSeconds / 60);
-            return `✅ ${minutes} ${i18next.t('minute', {lng:user_language})}`;
+            return `${statusEmoji} ${minutes} ${i18next.t('minute', {lng:user_language})}`;
         } else if (diffInSeconds < 86400) {
-            const hours = Math.floor(diffInSeconds / 3600);
-            return `👎 ${hours} ${i18next.t('hour', {lng:user_language})}`;
+            return `${statusEmoji} ${diffInHours} ${i18next.t('hour', {lng:user_language})}`;
         } else {
             const days = Math.floor(diffInSeconds / 86400);
-            return `👎 ${days} ${i18next.t('day', {lng:user_language})}`;
+            return `${statusEmoji} ${days} ${i18next.t('day', {lng:user_language})}`;
         }
     }
 
@@ -105,7 +112,7 @@ class ScheduleController {
 
     addGoBackBtnToMarkup(markup, refTo, lng) {
         markup.inline_keyboard.push([{
-            text: i18next.t('go_prev_menu', { lng }), callback_data: refTo
+            text: `${i18next.t('go_prev_menu', { lng })}`, callback_data: refTo
         }])
 
         return markup
@@ -114,11 +121,11 @@ class ScheduleController {
     addPaginationBtnsToMarkup(markup, pageCount, page, refTo, lng) {
         if (pageCount > 0) {
             markup.inline_keyboard.push([{
-                text: `⬅️${i18next.t('go_back', { lng })}`,
+                text: `◀️ ${i18next.t('go_back', { lng })}`,
                 callback_data: `${refTo}|${page - 1}`
             },
-            { text: `📄 ${i18next.t('page_mini_text', { lng, page: page + 1, pageCount: pageCount + 1 })}`, callback_data: `nothing` },
-            { text: `${i18next.t('go_forward', { lng })}➡️`, callback_data: `${refTo}|${page + 1}` }])
+            { text: `${i18next.t('page_mini_text', { lng, page: page + 1, pageCount: pageCount + 1 })}`, callback_data: `nothing` },
+            { text: `${i18next.t('go_forward', { lng })} ▶️`, callback_data: `${refTo}|${page + 1}` }])
         }
         return markup
     }
@@ -135,9 +142,7 @@ class ScheduleController {
             markup = this.addPaginationBtnsToMarkup(markup, page_count, page, 'faculty', user_language)
             markup = this.addGoBackBtnToMarkup(markup, 'start', user_language)
 
-            const currentMenuText = `📌 ${i18next.t('faculty_pick', { lng: user_language })}`
-
-            const msgText = `${currentMenuText} \n${currentPageText}`
+            const msgText = `${i18next.t('faculty_pick', { lng: user_language })} \n${currentPageText}`
 
             await bot.editMessageText(msgText, {
                 chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
@@ -162,9 +167,7 @@ class ScheduleController {
             markup = this.addPaginationBtnsToMarkup(markup, page_count, page, `program|${facultyId}`, user_language)
             markup = this.addGoBackBtnToMarkup(markup, 'faculty|0', user_language)
 
-            const currentMenuText = `📌 ${i18next.t('program_pick', { lng: user_language })}\n🏛️ ${i18next.t('faculty', { lng: user_language, faculty: faculty.name })}`
-
-            const msgText = `${currentMenuText}\n${currentPageText}`
+            const msgText = `${i18next.t('program_pick', { lng: user_language })}\n${i18next.t('faculty', { lng: user_language, faculty: faculty.name })}\n${currentPageText}`
 
             await bot.editMessageText(msgText, {
                 chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
@@ -188,9 +191,7 @@ class ScheduleController {
             markup = this.addPaginationBtnsToMarkup(markup, page_count, page, `group|${facultyId}|${programId}`, user_language)
             markup = this.addGoBackBtnToMarkup(markup, `program|${facultyId}|0`, user_language)
 
-            const currentMenuText = `📌 ${i18next.t('group_pick', { lng: user_language })}\n📘 ${i18next.t('program', { lng: user_language, program: program.name })}`
-
-            const msgText = `${currentMenuText} \n${currentPageText}`
+            const msgText = `${i18next.t('group_pick', { lng: user_language })}\n${i18next.t('program', { lng: user_language, program: program.name })}\n${currentPageText}`
 
             await bot.editMessageText(msgText, {
                 chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
@@ -226,31 +227,33 @@ class ScheduleController {
             const schedule = preSchedule.filter(obj => obj.subject !== '')
 
             let schedule_text = ``
-            const headerText = `👥 ${i18next.t('group_and_year', { lng: user_language, groupName: group.name, groupYear: group.age })}\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
+            const headerText = `${i18next.t('group_and_year', { lng: user_language, groupName: group.name, groupYear: group.age })}\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
 
             if (!schedule.length) {
-                schedule_text = `🥳 <b>${i18next.t('vacation', { lng: user_language })}</b>\n`
+                schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n`
             }
             for (const item of schedule) {
                 schedule_text += '⌚️ ' + item.time + '\n'
                 schedule_text += '📚 ' + item.subject + '\n'
             }
-            let end_text = `🕰 <i><b>${i18next.t('schedule_downloaded', {lng:user_language, timeAgo:scheduleLifeTime})} || ${scheduleDateTime}</b></i>\n` +
-                `📖 ${i18next.t('for_help', {lng:user_language})}\n` +
-                `🗞 ${i18next.t('our_chanel', {lng:user_language, link:'@ksutolyan'})} \n` +
-                `<tg-spoiler>${i18next.t('donate_command_description', {lng:user_language})}</tg-spoiler>`
+            let end_text = `🕒 <i><b>${scheduleLifeTime} || ${scheduleDateTime}</b></i>\n` +
+                `${i18next.t('for_help', {lng:user_language})}\n`
 
             let msg_text = preMessage + headerText + schedule_text + end_text
 
             const preCallback = data_array.slice(0, -1).join("|")
+            const facultyId = await facultyService.getIdByGroup(group) || 0
 
             let markup = {
-                inline_keyboard: [[{ text: `⬅️${i18next.t('go_back', {lng:user_language})}`, callback_data: preCallback + `|${+dayNumber - 1}` }, {
-                    text: `🔄`,
-                    callback_data: 'refresh' + call.data
-                }, {
-                    text: `${i18next.t('go_forward', {lng:user_language})}➡️`, callback_data: preCallback + `|${+dayNumber + 1}`
-                }],]
+                inline_keyboard: [
+                    [{ text: `◀️ ${i18next.t('go_back', { lng: user_language })}`, callback_data: preCallback + `|${+dayNumber - 1}` }, {
+                        text: `🔄`,
+                        callback_data: 'refresh' + call.data
+                    }, {
+                        text: `${i18next.t('go_forward', { lng: user_language })} ▶️`, callback_data: preCallback + `|${+dayNumber + 1}`
+                    }],
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `group|${facultyId}|${group.program}|0` }]
+                ]
             }
             await bot.editMessageText(msg_text,
                 {
@@ -348,7 +351,11 @@ class ScheduleController {
             }))
             if (!userOldData.group){
                 log.warn(`User ${call.message.chat.id} получил своё первое расписание. Юхууу! Щас вышлю инфу о нем. `)
-                await getAndSendUserInfoByUserId(call.message.chat.id, config.LOG_CHANEL_ID)
+                try {
+                    await getAndSendUserInfoByUserId(call.message.chat.id, config.LOG_CHANEL_ID)
+                } catch (notificationError) {
+                    log.error(`Не удалось отправить уведомление о новом пользователе: ${notificationError.message}. Убедитесь, что LOG_CHANEL_ID в .env верный и бот добавлен в этот канал.`);
+                }
             }
         } catch (e) {
             return await unexpectedCallbackErrorController(e, call.message, call.data)

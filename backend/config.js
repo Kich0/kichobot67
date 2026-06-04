@@ -20,10 +20,12 @@ const config = {
     AUTO_KSU_AUTH: process.env.AUTO_KSU_AUTH === "true"
 }
 
-if(Object.values(config).some((value => value === undefined))){
-    console.error('ЗАПОЛНИ .env дурень. в конфиге undefined')
-    console.error('ЗАПОЛНИ .env дурень. в конфиге undefined')
-    console.error('ЗАПОЛНИ .env дурень. в конфиге undefined')
-}
+// Validate critical variables
+const criticalVars = ['DB_URI', 'PORT', 'KSU_LOGIN', 'KSU_PASSWORD'];
+criticalVars.forEach(key => {
+    if (config[key] === undefined) {
+        console.warn(`[WARNING] Missing critical environment variable: ${key}`);
+    }
+});
 
 export default config

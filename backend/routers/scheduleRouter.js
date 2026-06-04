@@ -1,6 +1,7 @@
 import {Router} from "express";
 import ScheduleController from "../controllers/ScheduleController.js"
 import BrowserController from "../controllers/BrowserController.js";
+import SyncService from "../services/SyncService.js";
 
 export const scheduleRouter = new Router()
 
@@ -10,3 +11,7 @@ scheduleRouter.get("/get_group_list_by_programId/:id", BrowserController.allChec
 scheduleRouter.get("/get_schedule_by_groupId/:id/:language", BrowserController.allChecksCall, ScheduleController.get_schedule_by_groupId)
 scheduleRouter.get("/get_all_data", BrowserController.allChecksCall, ScheduleController.get_all_data)
 scheduleRouter.get("/restart_browser", BrowserController.restartBrowser)
+scheduleRouter.get("/sync", BrowserController.allChecksCall, async (req, res) => {
+    SyncService.syncAll();
+    res.json({ message: "Синхронизация запущена в фоновом режиме. Следите за логами." });
+})

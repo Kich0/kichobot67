@@ -1,9 +1,15 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI();
+let openai;
+if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI();
+}
 
 class GptAssistantService{
     async getAnswerByScreenshot(newFileName) {
+        if (!openai) {
+            throw new Error("OpenAI API Key is missing. GPT features are disabled.");
+        }
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
@@ -17,7 +23,7 @@ class GptAssistantService{
                         {
                             type: "image_url",
                             image_url: {
-                                "url": `https://api.tolyan.me/express/api/gpt-input-pictures/${newFileName}`,
+                                "url": `https://api.kicho.me/express/api/gpt-input-pictures/${newFileName}`,
                             },
                         },
                     ],

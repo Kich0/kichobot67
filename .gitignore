@@ -5,35 +5,43 @@
 
 # Environment variables
 **/.env
+**/.env.*
+!**/.env.example
 
 # Logs
 **/logs/
 **/*.log
+error_logs.log
+logs.log
 
-# Temporary files
+# Temporary files & Uploads
 **/temp/
 **/screenshot.png
 **/gpt-input-pictures/
 **/uploads/
+**/static/upload.zip
 
 # Agent Memory and Notes
 **/MEMORY.md
 **/GEMINI.md
 .gemini/
-**/*.md
-!**/README.md
-**/CLAUDE.md
 **/.claude/
-
+CHANGELOG.md
+**/CLAUDE.md
+**/IMPROVEMENTS.md
+**/MIGRATION.md
+**/QUICK_MIGRATION_GUIDE.md
+**/WEBHOOK_TESTING.md
+**/error.md
+**/error_logs.log
+**/logs.log
 
 # IDEs
 .idea/
 .vscode/
+*.swp
+*.swo
 
-# Temporary files
-**/temp/
-**/screenshot.png
-**/gpt-input-pictures/
-**/uploads/
-**/*.log
-**/logs/
+# OS files
+.DS_Store
+Thumbs.db

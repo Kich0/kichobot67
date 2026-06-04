@@ -157,9 +157,7 @@ class TeacherScheduleController {
                 schedule_text += this.addSymbolToEachLine(this.transformGroupString(item.group), '📚') + '\n\n'
             }
             let end_text = `🕰 <i><b>${i18next.t('schedule_downloaded', {lng:user_language, timeAgo:scheduleLifeTime})} || ${scheduleDateTime}</b></i>\n` +
-                `📖 ${i18next.t('for_help', {lng:user_language})}\n` +
-                `🗞 ${i18next.t('our_chanel', {lng:user_language, link:'@ksutolyan'})} \n` +
-                `<tg-spoiler>${i18next.t('donate_command_description', {lng:user_language})}</tg-spoiler>`
+                `📖 ${i18next.t('for_help', {lng:user_language})}\n`
 
             let msg_text = preMessage + headerText + schedule_text + end_text
 

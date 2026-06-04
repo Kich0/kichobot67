@@ -74,7 +74,7 @@ app.use(errorMiddleware)
 
 const port = 5001;
 const server = app.listen(port, async () => {
-    log.info(`Tolyan express started at ${port} port.`);
+    log.info(`Kichobot bot started at ${port} port.`);
 
     // Set webhook if in webhook mode (with automatic retry)
     if (config.BOT_MODE === 'webhook' && webhookRetryManager) {
@@ -125,9 +125,15 @@ export const userLastRequest = {};
     await setupCommandHandlers();
     await setupAdminCommandHandler();
     await setupCallbackHandlers();
+    // Setup document and message handlers
     await setupDocumentHandler()
     await setupNewChatMemberHandler()
     await setupAnyMessageHandler();
+
+    // Настройка меню команд (гамбургер)
+    await bot.setMyCommands([
+        { command: '/start', description: 'Меню / Мәзір' }
+    ]);
 
     await setupUserDailyStatisticsLogging()
     await setupDailyDataUpdate()

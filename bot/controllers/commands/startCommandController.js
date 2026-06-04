@@ -43,15 +43,15 @@ export async function welcomePageRedirectController(call) {
         const user_language = await userService.getUserLanguage(call.message.chat.id)
 
         const keyboard = {
-            keyboard: [[{text: `📢 ${i18next.t('news', {lng:user_language})}`}, {text: `🗒 ${i18next.t('new_schedule', {lng:user_language})}`}, {text: `💡 ${i18next.t('help', {lng:user_language})}`}],
-                [{text: `🗓 ${i18next.t('teacher_schedule', {lng:user_language})}`}, {text: `🗓 ${i18next.t('student_schedule', {lng:user_language})}`}],
-
+            keyboard: [
+                [{text: `${i18next.t('new_schedule', {lng:user_language})}`}, {text: `${i18next.t('help', {lng:user_language})}`}],
+                [{text: `${i18next.t('teacher_schedule', {lng:user_language})}`}, {text: `${i18next.t('student_schedule', {lng:user_language})}`}],
             ],
             one_time_keyboard: false,
             resize_keyboard: true
         }
 
-        const msg_text = `🧙 ${i18next.t('welcome_page', {lng:user_language})}`
+        const msg_text = `${i18next.t('welcome_page', {lng:user_language})}`
 
         await bot.deleteMessage(call.message.chat.id, call.message.message_id)
         await bot.sendMessage(call.message.chat.id, msg_text, {reply_markup: keyboard, parse_mode: "HTML"})

@@ -1,15 +1,20 @@
 {
   "name": "kichobot_root",
   "version": "1.0.0",
+  "type": "module",
   "description": "Root package to run bot and backend",
   "scripts": {
     "install-all": "npm install --prefix backend && npm install --prefix bot",
     "start-backend": "npm start --prefix backend",
     "start-bot": "npm start --prefix bot",
     "dev-backend": "npm run dev --prefix backend",
-    "dev-bot": "npm run dev --prefix bot"
+    "dev-bot": "npm run dev --prefix bot",
+    "update-db": "node update_db.js"
   },
   "dependencies": {
-    "concurrently": "^8.2.1"
+    "concurrently": "^8.2.1",
+    "dotenv": "^16.3.1",
+    "mongoose": "^7.4.1",
+    "axios": "^1.4.0"
   }
 }

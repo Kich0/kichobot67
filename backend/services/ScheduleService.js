@@ -11,7 +11,8 @@ export function sleep(ms) {
 class ScheduleService {
 
     get_faculty_list = async (browser) => {
-        const page = await browser.newPage();
+        const pages = await browser.pages();
+        const page = pages.length > 0 ? pages[0] : await browser.newPage();
         const domain = `${config.KSU_DOMAIN}`
         try {
             await page.goto(`${domain}/login.php`, {waitUntil: 'domcontentloaded'});
@@ -42,7 +43,8 @@ class ScheduleService {
             const cookies = await page.cookies()
             const auth_cookie = await cookies.find(cookie => cookie.name === "PHPSESSID");
 
-            await page.close()
+            // Не закрываем главную страницу, чтобы она оставалась видимой и не было about:blank
+            // await page.close() 
 
             return {faculties_data, auth_cookie}
         } catch (e) {

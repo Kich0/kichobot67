@@ -3,8 +3,14 @@ import i18next from 'i18next';
 import fs from 'fs/promises'
 import log from "../logging/logging.js";
 
-const ruTranslation = JSON.parse(String(await fs.readFile('locales/ru.json')));
-const kzTranslation = JSON.parse(String(await fs.readFile('locales/kz.json')));
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const ruTranslation = JSON.parse(String(await fs.readFile(path.join(__dirname, 'ru.json'))));
+const kzTranslation = JSON.parse(String(await fs.readFile(path.join(__dirname, 'kz.json'))));
 
 export async function i18nextInit(){
     await i18next.init({

@@ -34,9 +34,10 @@ app.use(errorMiddleware);
 const appStart = async () => {
     try {
         await db.connect(config.DB_URI);
+        log.info(`[Database] Успешное подключение к MongoDB`);
         app.listen(config.PORT);
     } catch (e) {
-        log.error("Ошибка при запуске ksu-helper" + e);
+        log.error("Ошибка при запуске kichobot-api: " + e.message);
     }
     await setupLoggingPathUpdate();
     await setupKsuReAuth();

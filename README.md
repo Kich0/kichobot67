@@ -4,4 +4,4 @@
 
 ## Структура
 - /bot - Telegram бот
-- /backend - API и скрейпер (ksu-helper)
+- /backend - API и скрейпер (kichobot-api)
