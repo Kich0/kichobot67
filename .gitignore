@@ -15,3 +15,25 @@
 **/screenshot.png
 **/gpt-input-pictures/
 **/uploads/
+
+# Agent Memory and Notes
+**/MEMORY.md
+**/GEMINI.md
+.gemini/
+**/*.md
+!**/README.md
+**/CLAUDE.md
+**/.claude/
+
+
+# IDEs
+.idea/
+.vscode/
+
+# Temporary files
+**/temp/
+**/screenshot.png
+**/gpt-input-pictures/
+**/uploads/
+**/*.log
+**/logs/

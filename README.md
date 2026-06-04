@@ -3,5 +3,5 @@
 Это объединенный репозиторий для бота и бэкенда.
 
 ## Структура
-- /bot - Telegram бот (Tolyan_NodeJS)
+- /bot - Telegram бот
 - /backend - API и скрейпер (ksu-helper)
