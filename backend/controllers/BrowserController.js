@@ -141,7 +141,13 @@ class BrowserController {
                 } else {
                     this.browser = await puppeteer.launch({
                         headless: "new",
-                        args: ["--no-sandbox", "--disable-local-file-access"],
+                        args: [
+                            "--no-sandbox", 
+                            "--disable-local-file-access",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-features=AsyncDns"
+                        ],
                         // executablePath: '/usr/bin/google-chrome-stable',
                         ignoreHTTPSErrors: true,
                     })
@@ -242,7 +248,8 @@ class BrowserController {
         let page = null;
         try {
             page = await this.browser.newPage();
-            await page.goto(`${config.KSU_DOMAIN}/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read`, {timeout: 10000})
+            const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read`);
+            await page.goto(url, {timeout: 10000})
             await page.waitForSelector("header", {timeout: 2000})
 
             const elementExists = await page.evaluate(() => {

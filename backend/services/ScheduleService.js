@@ -148,7 +148,8 @@ class ScheduleService {
 
         const page = await BrowserController.browser.newPage();
         try {
-            await page.goto(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`, {waitUntil: "domcontentloaded", timeout: 7000})
+            const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
+            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 7000})
 
             await page.waitForSelector("body", {timeout: 2000})
 
