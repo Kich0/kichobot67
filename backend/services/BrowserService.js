@@ -19,8 +19,7 @@ class BrowserService {
 
             const element = await page.$(`#screen-container`);
 
-            await element.screenshot({path: 'screenshot.png'})
-            return await fs.promises.readFile('screenshot.png')
+            return await element.screenshot();
         } catch (e) {
             throw e
         } finally {

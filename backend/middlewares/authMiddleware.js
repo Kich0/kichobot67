@@ -4,23 +4,16 @@ import ApiError from "../exceptions/apiError.js";
 
 const authMiddleware = (req, res, next) => {
   if (req.method === "OPTIONS") {
-    next();
+    return next();
   }
   try {
-    if (req.headers.cookie) {
-      const matches = req.headers.cookie.match(
-        /refreshToken=([^;]+).*?accessToken=([^;]+)|accessToken=([^;]+).*?refreshToken=([^;]+)/
-      );
-      const accessToken = matches[2] || matches[3];
+    const accessToken = req.cookies?.accessToken;
 
-      if (!accessToken) {
-        return next(ApiError.UnauthorizedError());
-      }
-      req.user = jwt.verify(accessToken, config.JWT_ACCESS_SECRET);
-      next();
-    } else {
+    if (!accessToken) {
       return next(ApiError.UnauthorizedError());
     }
+    req.user = jwt.verify(accessToken, config.JWT_ACCESS_SECRET);
+    next();
   } catch (e) {
     next(ApiError.UnauthorizedError());
   }

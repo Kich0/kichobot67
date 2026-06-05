@@ -40,7 +40,10 @@ export function fileCheckMiddleware(req, res, next) {
     next();
 }
 
-export const upload = multer({storage: storage})
+export const upload = multer({
+    storage: storage,
+    limits: { fileSize: 20 * 1024 * 1024 } // 20 MB limit to prevent DoS
+})
 
 export async function wordToHtml(req, res, next) {
     try {

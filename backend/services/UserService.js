@@ -10,7 +10,7 @@ class UserService {
         if (candidate) {
             throw ApiError.Conflict("Пользователь с таким именем уже существует", )
         }
-        const salt = await bcrypt.genSalt(8);
+        const salt = await bcrypt.genSalt(12);
         const hashPassword = await bcrypt.hash(password, salt);
 
         const userRole = await Role.findOne({value: "User"})
