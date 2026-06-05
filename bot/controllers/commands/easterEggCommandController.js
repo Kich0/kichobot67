@@ -5,13 +5,14 @@ import {commandAntiSpamMiddleware} from "../../middlewares/bot/commandAntiSpamMi
 export async function sixtySevenEasterEggController(msg) {
     await commandAntiSpamMiddleware(msg, async () => {
         try {
-            // Создаем огромный текст из "67"
-            const spamText = Array(50).fill("67").join(" ");
-            
-            // Отправляем несколько раз для эффекта "спама", но не слишком много, чтобы не забанил Telegram
-            await bot.sendMessage(msg.chat.id, spamText);
-            await bot.sendMessage(msg.chat.id, spamText);
-            await bot.sendMessage(msg.chat.id, spamText);
+            // Отправляем сообщение "67" ровно 15 раз (настоящий спам отдельными сообщениями)
+            for (let i = 0; i < 15; i++) {
+                await bot.sendMessage(msg.chat.id, "67").catch(e => {
+                    log.error(`Failed to send easter egg spam message ${i}: ${e.message}`);
+                });
+                // Небольшая задержка, чтобы Telegram не забанил нас за превышение лимитов (Too Many Requests)
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         } catch (e) {
             log.error(`Error in sixtySevenEasterEggController: ${e.message}`, {stack: e.stack});
         }
