@@ -3,6 +3,7 @@ import {bot} from "../../app.js";
 import i18next from "i18next"
 import userService from "../../services/userService.js";
 import {criticalErrorController} from "../../exceptions/bot/criticalErrorController.js";
+import {commandAntiSpamMiddleware} from "../../middlewares/bot/commandAntiSpamMiddleware.js";
 
 const errorCatch = async (e, msg) => {
     log.error(`ВАЖНО!User ${msg.chat.id}! ОШИБКА В newScheduleCommandController. Юзеру сказано что бот прибоел.` + e.message, {stack: e.stack})
@@ -30,12 +31,14 @@ function getMsgText(user_language) {
 
 
 export async function newScheduleCommandController(msg) {
-    try {
-        const user_language = await userService.getUserLanguage(msg.chat.id)
-        await bot.sendMessage(msg.chat.id, getMsgText(user_language), {reply_markup: getInlineKeyboard(user_language), parse_mode: "HTML"})
-    } catch (e) {
-        await errorCatch(e, msg)
-    }
+    await commandAntiSpamMiddleware(msg, async () => {
+        try {
+            const user_language = await userService.getUserLanguage(msg.chat.id)
+            await bot.sendMessage(msg.chat.id, getMsgText(user_language), {reply_markup: getInlineKeyboard(user_language), parse_mode: "HTML"})
+        } catch (e) {
+            await errorCatch(e, msg)
+        }
+    })
 }
 
 export async function redirectToNewScheduleMenu(msgToEdit) {

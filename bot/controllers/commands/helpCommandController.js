@@ -3,6 +3,7 @@ import log from "../../logging/logging.js";
 import userService from "../../services/userService.js";
 import i18next from "i18next";
 import {criticalErrorController} from "../../exceptions/bot/criticalErrorController.js";
+import {commandAntiSpamMiddleware} from "../../middlewares/bot/commandAntiSpamMiddleware.js";
 
 const errorCatch = async (e, msg) => {
     log.error(`ВАЖНО!User ${msg.chat.id}! ОШИБКА В helpCommandController. Юзеру сказано что бот прибоел.` + e.message, {
@@ -13,12 +14,14 @@ const errorCatch = async (e, msg) => {
 }
 
 export async function helpCommandController(msg) {
-    try {
-        const user_language = await userService.getUserLanguage(msg.chat.id)
+    await commandAntiSpamMiddleware(msg, async () => {
+        try {
+            const user_language = await userService.getUserLanguage(msg.chat.id)
 
-        const msg_text = i18next.t('help_command_content', {lng:user_language})
-        await bot.sendMessage(msg.chat.id, msg_text)
-    } catch (e) {
-        await errorCatch(e, msg)
-    }
+            const msg_text = i18next.t('help_command_content', {lng:user_language})
+            await bot.sendMessage(msg.chat.id, msg_text)
+        } catch (e) {
+            await errorCatch(e, msg)
+        }
+    })
 }
