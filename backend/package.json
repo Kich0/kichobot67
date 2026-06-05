@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "nodemon app.js",
-    "start": "node app.js"
+    "start": "node app.js",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
   "author": "",
   "license": "ISC",
