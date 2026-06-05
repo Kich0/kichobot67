@@ -135,14 +135,14 @@ class BrowserController {
                     this.browser = await puppeteer.launch({
                         headless: "new",
                         args: ["--no-sandbox", "--disable-local-file-access", `--proxy-server=${config.HTTP_PROXY}`],
-                        executablePath: '/usr/bin/google-chrome-stable',
+                        // executablePath: '/usr/bin/google-chrome-stable',
                         ignoreHTTPSErrors: true,
                     })
                 } else {
                     this.browser = await puppeteer.launch({
                         headless: "new",
                         args: ["--no-sandbox", "--disable-local-file-access"],
-                        executablePath: '/usr/bin/google-chrome-stable',
+                        // executablePath: '/usr/bin/google-chrome-stable',
                         ignoreHTTPSErrors: true,
                     })
                 }
