@@ -145,9 +145,7 @@ class BrowserController {
                             "--no-sandbox", 
                             "--disable-local-file-access",
                             "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-features=AsyncDns",
-                            "--host-resolver-rules=MAP schedule.buketov.edu.kz 188.0.155.151"
+                            "--disable-dev-shm-usage"
                         ],
                         // executablePath: '/usr/bin/google-chrome-stable',
                         ignoreHTTPSErrors: true,

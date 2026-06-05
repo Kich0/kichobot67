@@ -1,4 +1,5 @@
 import express from "express";
+import dns from "dns";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import db from "./db/connection.js";
@@ -44,6 +45,12 @@ const appStart = async () => {
     await setupKsuReAuth();
 };
 
-appStart().then(() =>
+appStart().then(() => {
     log.info(`App has been ran! http://localhost:${config.PORT}`)
-).catch(e => console.log("Ошибка при запуске express приложения: " + e.stack))
+    
+    // TEST DNS RESOLUTION ON RENDER
+    dns.resolve('schedule.buketov.edu.kz', (err, addresses) => {
+        if (err) log.error("DNS TEST FAILED: " + err.message);
+        else log.info("DNS TEST SUCCESS: " + addresses.join(', '));
+    });
+}).catch(e => console.log("Ошибка при запуске express приложения: " + e.stack))
