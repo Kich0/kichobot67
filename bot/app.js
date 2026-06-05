@@ -110,6 +110,7 @@ const server = app.listen(port, async () => {
 });
 
 export const userLastRequest = {};
+export const userWarningSent = {};
 
 (async () => {
     await db.connect(config.DB_URI)
