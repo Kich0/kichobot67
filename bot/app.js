@@ -72,7 +72,8 @@ app.use(express.json());
 app.use("/bot", router);
 app.use(errorMiddleware)
 
-const port = 5001;
+const port = process.env.PORT || 5001;
+app.get('/', (req, res) => res.send('Bot is working!'));
 const server = app.listen(port, async () => {
     log.info(`Kichobot bot started at ${port} port.`);
 

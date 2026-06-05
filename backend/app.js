@@ -29,6 +29,7 @@ app.use((req, res, next) => {
     next();
 });
 app.use('/express/api', router);
+app.get('/', (req, res) => res.send('Backend is alive!'));
 app.use(errorMiddleware);
 
 const appStart = async () => {
