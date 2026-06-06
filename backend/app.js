@@ -47,15 +47,11 @@ const appStart = async () => {
 
 appStart().then(() => {
     log.info(`App has been ran! http://localhost:${config.PORT}`)
-    log.info(`USE_FREE_PROXIES Config is: ${config.USE_FREE_PROXIES}`);
+    log.info(`USE_FREE_PROXIES Config is: ${config.USE_FREE_PROXIES}`);
+    
+    // TEST DNS RESOLUTION ON RENDER
     dns.resolve('schedule.buketov.edu.kz', (err, addresses) => {
         if (err) log.error("DNS TEST FAILED: " + err.message);
         else log.info("DNS TEST SUCCESS: " + addresses.join(', '));
     });
-}).catch(e => console.log("Ошибка при запуске express приложения: " + e.stack))
-process.on('uncaughtException', (err) => {
-    log.error(`[CRASH PREVENTED] uncaughtException: ${err.message}`, { stack: err.stack });
-});
-process.on('unhandledRejection', (reason) => {
-    log.error(`[CRASH PREVENTED] unhandledRejection: ${reason?.message || reason}`, { stack: reason?.stack });
-});
+}).catch(e => console.log("Ошибка при запуске express приложения: " + e.stack))

@@ -20,11 +20,9 @@ const config = {
     TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
     AUTO_KSU_AUTH: process.env.AUTO_KSU_AUTH?.trim() === "true",
     USE_FREE_PROXIES: process.env.USE_FREE_PROXIES?.trim() === "true",
-}
-if (config.USE_FREE_PROXIES) {
-    config.START_BROWSER = true;
-    config.AUTO_KSU_AUTH = true;
-}
+}
+
+// Validate critical variables
 const criticalVars = ['DB_URI', 'PORT', 'KSU_LOGIN', 'KSU_PASSWORD'];
 criticalVars.forEach(key => {
     if (config[key] === undefined) {

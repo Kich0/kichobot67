@@ -22,7 +22,18 @@ class GroupController {
             console.log(e)
             next(e)
         }
-    }
+    }
+
+    // async get_all(req, res, next) {
+    //     try {
+    //         // Есть смысл пагинацию сделать. Фильтры, Ордеринг
+    //         const groups = await GroupService.get_all()
+    //         return res.json(groups)
+    //     } catch (e) {
+    //         console.log(e)
+    //         next(e)
+    //     }
+    // }
 
     async get_one(req, res, next) {
         try {
@@ -134,7 +145,28 @@ class GroupController {
         } catch (e) {
             next(e)
         }
-    }
+    }
+
+
+
+    // async give_group_admin_rights(req,res, next){
+    //     try{
+    //         const userId = req.body.userId
+    //
+    //         const group = req.group
+    //         if (!group.members.includes(userId)){
+    //             next(ApiError.Not_Found("Пользователь с указанным идентификатором не найден в группе."))
+    //         }
+    //         if (group.admins.includes(userId)){
+    //             next(ApiError.Conflict("Пользователь уже является администратором группы."))
+    //         }
+    //
+    //         res.json(GroupService.give_group_admin_rights(group.userId))
+    //     }catch (e) {
+    //         console.log(e)
+    //         next(e)
+    //     }
+    // }
 }
 
 export default new GroupController()

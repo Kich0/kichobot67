@@ -1,5 +1,11 @@
 import { spawn } from "child_process";
-
+/*
+* wordToHtmlByLibreOffice
+* @param docName - путь к файлу doc
+* @param outdir - путь к директории, куда сохранить docx
+* @param args - дополнительные аргументы для libreoffice
+* @returns Promise<void>
+* */
 export async function docToDocxByLibreOffice(docName, outdir, args = []) {
     return new Promise((resolve, reject) => {
         const commandPrompt = ['--headless', '--convert-to', 'docx', docName, '--outdir', outdir, ...args];
@@ -23,7 +29,13 @@ export async function docToDocxByLibreOffice(docName, outdir, args = []) {
         });
     });
 }
-
+/*
+* wordToHtmlByPandoc
+* @param wordName - путь к файлу word
+* @param htmlName - путь к файлу html
+* @param args - дополнительные аргументы для pandoc
+* @returns Promise<void>
+* */
 export async function wordToHtmlByPandoc(wordName, htmlName, args = []) {
     return new Promise((resolve, reject) => {
         const commandPrompt = [wordName, '-o', htmlName, '--self-contained', ...args];

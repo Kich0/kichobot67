@@ -2,7 +2,7 @@ import log from "../logging/logging.js";
 import HtmlService from "./HtmlService.js";
 import config from "../config.js";
 import BrowserController from "../controllers/BrowserController.js";
-import * as cheerio from "cheerio";
+import BrowserService from "./BrowserService.js";
 
 export function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -10,124 +10,133 @@ export function sleep(ms) {
 
 class ScheduleService {
 
-    get_faculty_list = async (axiosClient) => {
+    get_faculty_list = async (browser) => {
+        const pages = await browser.pages();
+        const page = pages.length > 0 ? pages[0] : await browser.newPage();
+        const domain = `${config.KSU_DOMAIN}`
         try {
-            const authData = new URLSearchParams();
-            authData.append('login', config.KSU_LOGIN);
-            authData.append('password', config.KSU_PASSWORD);
+            await page.goto(`${domain}/login.php`, {waitUntil: 'domcontentloaded'});
+            // Дождемся, когда загрузится содержимое сайта
+            await page.waitForSelector('input', {timeout: 10 * 1000});
+            await page.type('input[name="login"]', config.KSU_LOGIN)
+            await page.type('input[name="password"]', config.KSU_PASSWORD)
+            await page.click('input[type="submit"]')
 
-            const res1 = await axiosClient.post('/login.php', authData.toString(), {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                maxRedirects: 0,
-                validateStatus: status => status >= 200 && status < 400
-            });
+            await page.waitForTimeout(1000)
 
-            const setCookie = res1.headers['set-cookie'];
-            let auth_cookie = '';
-            if (setCookie) {
-                const sessionCookie = setCookie.find(c => c.includes('PHPSESSID'));
-                if (sessionCookie) {
-                    auth_cookie = sessionCookie.split(';')[0];
-                }
-            }
-            if (!auth_cookie) throw new Error("Не удалось получить PHPSESSID из заголовков ответа");
+            await page.goto(`${domain}`, {waitUntil: "domcontentloaded"});
 
-            const res2 = await axiosClient.get('/', { headers: { Cookie: auth_cookie } });
-            const $ = cheerio.load(res2.data);
-            
-            const faculties_data = [];
-            $('select[name="Login"] option').each((i, el) => {
-                faculties_data.push({ name: $(el).text(), id: i });
-            });
+            await page.waitForSelector("select")
+            // Получаем список опций селекта
+            const webFacultyList = await page.evaluate((selector) => {
+                const select = document.querySelector(selector);
+                return Array.from(select.options).map((option) => option.text);
+            }, 'select[name="Login"]');
+            const faculties_data = webFacultyList.map((faculty, index) => {
+                return {name: faculty, id: index}
+            })
 
-            if (faculties_data.length > 0) {
-                const facData = new URLSearchParams();
-                facData.append('Login', faculties_data[0].name);
-                await axiosClient.post('/index.php?x', facData.toString(), {
-                    headers: { 
-                        Cookie: auth_cookie,
-                        'Content-Type': 'application/x-www-form-urlencoded' 
-                    }
-                });
-            }
+            await page.select('select[name="Login"]', webFacultyList[0]);
+            await page.click('input[type="submit"]')
 
-            return { faculties_data, auth_cookie };
+            await page.waitForSelector("center center p")
+            const cookies = await page.cookies()
+            const auth_cookie = await cookies.find(cookie => cookie.name === "PHPSESSID");
+
+            // Не закрываем главную страницу, чтобы она оставалась видимой и не было about:blank
+            // await page.close() 
+
+            return {faculties_data, auth_cookie}
         } catch (e) {
-            throw new Error("Ошибка при HTTP авторизации: " + e.message)
+            const path = `logs/error_auth_${Date.now()}.png`
+            await page.screenshot({
+                path,
+                fullPage: true
+            }).catch(e => console.log("Не получилось заскринить ошибочку" + e.message));
+            await page.close()
+            throw new Error("Ошибка при авторизации. Ошибку заскринил" + e.message)
         }
     }
 
-    get_program_list_by_facultyId = async (axiosClient, faculties_data, id) => {
+    get_program_list_by_facultyId = async (browser, faculties_data, id) => {
+        const page = await browser.newPage();
         try {
-            const facData = new URLSearchParams();
-            facData.append('Login', faculties_data[id].name);
-            
-            await axiosClient.post('/index.php?x', facData.toString(), {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-            });
-            const res = await axiosClient.get('/stud.php');
-            const $ = cheerio.load(res.data);
+            await page.goto(`${config.KSU_DOMAIN}/`)
 
-            const facultyName = $("div.wrap p").text().replace("Факультет: ", "").trim();
+            await page.select('select[name="Login"]', faculties_data[id].name);
+            await page.click('input[type="submit"]')
 
-            const programs = [];
-            $('a.genric-btn').each((i, el) => {
-                const href = $(el).attr('href') || "";
-                if (href.includes("grupps")) {
-                    const progIdMatch = href.split("=")[1];
-                    if (progIdMatch) {
-                        programs.push({
-                            id: Number(progIdMatch),
-                            name: String($(el).text().trim()),
-                            href: String(href),
-                            facultyId: id,
+            await page.waitForSelector('a.genric-btn');
+
+            const programs = await page.evaluate((facultyId) => {
+                const links = document.querySelectorAll('a.genric-btn');
+                const facultyName = document.querySelector("div.wrap p").textContent.replace("Факультет: ", "")
+                // Преобразуем NodeList в массив и извлекаем данные
+                return Array.from(links)
+                    .filter((link) => link.getAttribute("href").includes("grupps"))
+                    .map((link) => {
+                        return {
+                            name: String(link.textContent.trim()),
+                            href: String(link.getAttribute('href')),
+                            id: Number(link.getAttribute('href').split("=")[1]),
+                            facultyId,
                             facultyName
-                        });
-                    }
-                }
-            });
-            return programs;
+                        };
+                    });
+            }, id);
+            await page.close()
+            return programs
         } catch (e) {
-            throw new Error("Ошибка при получении программ (HTTP): " + e.message)
+            const path = `logs/error_${Date.now()}.png`
+            await page.screenshot({path, fullPage: true});
+            await page.close()
+            throw new Error("Ошибка при получении программ. Ошибку заскринил." + e.message)
         }
+
     }
 
-    get_group_list_by_programId = async (axiosClient, id) => {
+    get_group_list_by_programId = async (browser, id) => {
+        const page = await browser.newPage();
         try {
-            const res = await axiosClient.get(`/grupps1.php?id=${id}`);
-            const $ = cheerio.load(res.data);
-            
-            const groups = [];
-            $('table tbody tr:not(:first-child)').each((i, row) => {
-                const link = $(row).find('td a');
-                if (link.length > 0) {
-                    const name = link.text().trim();
-                    const href = link.attr('href');
-                    const idMatch = href.match(/id=(\d+)/);
-                    const langMatch = href.match(/Otdel=([^&]+)/);
-                    const ageMatch = href.match(/Kurs=(\d+)/);
-                    const studMatch = href.match(/Stud=(\d+)/);
+            await page.goto(`${config.KSU_DOMAIN}/grupps1.php?id=${id}`)
 
-                    if (idMatch && langMatch && ageMatch && studMatch) {
-                        groups.push({
-                            name,
-                            id: Number(idMatch[1]),
-                            href,
-                            language: decodeURIComponent(langMatch[1]),
-                            age: Number(ageMatch[1]),
-                            studentCount: studMatch[1],
-                            programId: id
-                        });
-                    }
-                }
-            });
-            return groups;
+            await page.waitForSelector("table")
+
+            let groups = await page.$$eval('tbody tr:not(:first-child)', (rows, programId) => {
+                return rows.map((row) => {
+                    const name = row.querySelector('td a').textContent.trim();
+                    const id = Number(row.querySelector('td a').getAttribute('href').match(/id=(\d+)/)[1]);
+                    const href = row.querySelector('td a').getAttribute('href');
+                    const language = href.match(/Otdel=([^&]+)/)[1];
+                    const age = Number(href.match(/Kurs=(\d+)/)[1]);
+                    const studentCount = href.match(/Stud=(\d+)/)[1];
+
+                    return {
+                        name,
+                        id,
+                        href,
+                        language,
+                        age,
+                        studentCount,
+                        programId
+                    };
+                });
+            }, id);
+            await page.close()
+            return groups
         } catch (e) {
-            throw new Error("Ошибка при получении групп (HTTP): " + e.message)
+            const path = `logs/error_${Date.now()}.png`
+            await page.screenshot({path, fullPage: true});
+            await page.close()
+            throw new Error("Ошибка при получении групп. Ошибку заскринил." + e.message)
         }
+
     }
 
     get_schedule_by_groupId = async (id, language, attemption = 1) => {
+        if (attemption > 2) {
+            throw new Error("Ошибка при получении расписания. слишком много рекурсий")
+        }
 
         function removeBrTags(text) {
             if (text.includes('<br>')) {
@@ -137,32 +146,43 @@ class ScheduleService {
             }
         }
 
+        const page = await BrowserController.browser.newPage();
         try {
-            const axiosClient = BrowserController.axiosClient;
-            if (!axiosClient) throw new Error("HTTP клиент не инициализирован");
+            const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
+            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 7000})
 
-            const url = encodeURI(`/view1.php?id=${id}&Otdel=${language}`);
-            const res = await axiosClient.get(url, {timeout: 60000});
-            const $ = cheerio.load(res.data);
+            await page.waitForSelector("body", {timeout: 2000})
 
-            const isForbidden = $('h1').text().includes("Forbidden");
+            const isForbidden = await page.evaluate(() => {
+                const h1 = document.querySelector(`h1`);
+                return h1 ? h1.textContent.includes("Forbidden") : false
+            });
+
             if (isForbidden) {
-                if (attemption >= 10) throw new Error("Forbidden even after 10 attempts");
-                log.warn("(варн временный) Нас забанило, перезапускаю сессию (HTTP)!")
-                try { await BrowserController.auth() } catch(e) {}
-                return await this.get_schedule_by_groupId(id, language, attemption + 1)
+                log.warn("(варн временный) Нас забанило, перезапускаю браузер!")
+                await BrowserService.restartBrowser()
+                return await this.get_schedule_by_groupId(id, language, ++attemption)
             }
 
-            const isTableNotExists = $('table').length === 0;
+            const isTableNotExists = await page.evaluate(() => {
+                return !document.querySelector('table');
+            });
+
             if (isTableNotExists) {
-                if (attemption >= 10) throw new Error("Table not exists even after 10 attempts");
-                await sleep(5000)
+                await sleep(10000)
                 log.info("table not exists handler, attemption = " + attemption)
-                try { await BrowserController.auth() } catch(e) {}
-                return await this.get_schedule_by_groupId(id, language, attemption + 1)
+                await page.close()
+                await BrowserController.auth()
+                return await this.get_schedule_by_groupId(id, language, ++attemption)
             }
 
-            const tableHTML = $.html($('table'));
+            const tableHTML = await page.evaluate((selector) => {
+                const table = document.querySelector(selector);
+                return table ? table.outerHTML : null;
+            }, "table");
+
+            await page.close()
+
             const tableData = HtmlService.htmlTableToJson(tableHTML)
 
             const headers = tableData.shift();
@@ -212,7 +232,9 @@ class ScheduleService {
                 let trimmedDailySubjects = []
                 if (firstSubjectIndex !== -1) {
                     const lastSubjectIndex = daily_subjects.reverse().findIndex(item => item.subject !== '');
+
                     daily_subjects.reverse();
+
                     trimmedDailySubjects = daily_subjects.slice(firstSubjectIndex, daily_subjects.length - lastSubjectIndex);
                 } else {
                     trimmedDailySubjects = []
@@ -223,35 +245,42 @@ class ScheduleService {
                     subjects: trimmedDailySubjects
                 }
 
+
+                // const lastSubjectIndex = daily_schedule.reverse().findIndex(item => item.subject !== '');
+                //
+                // daily_schedule.reverse();
+                //
+                // const trimmedDailySchedule = daily_schedule.slice(firstSubjectIndex, daily_schedule.length - lastSubjectIndex);
+
+
                 schedule.push(daily_schedule)
             }
 
             for (const daily_schedule of schedule) {
                 for (const subject of daily_schedule.subjects) {
                     if (subject.subject === "\n") {
-                        if (attemption >= 10) throw new Error("Bad schedule parse even after 10 attempts");
-                        log.warn("[test] Вижу кривое расписание на сайте КарГУ. Делаю рестарт (HTTP). Group: " + id)
-                        try { await BrowserController.auth() } catch(e) {}
+                        log.warn("[test] Вижу кривое расписание в ксу хелпере. Запускаю рестарт браузера. Group: " + id)
+                        await BrowserService.restartBrowser()
                         log.warn("[test] Делаю рекурсию для получения расписания повторно. ")
-                        return await this.get_schedule_by_groupId(id, language, attemption + 1)
+                        return await this.get_schedule_by_groupId(id, language, ++attemption)
                     }
                 }
             }
 
             return schedule
         } catch (e) {
-            log.error(`[get_schedule_by_groupId] Ошибка (попытка ${attemption}): ${e.message}`);
-            if (attemption < 10) {
-                log.info(`[get_schedule_by_groupId] Запрашиваю новую авторизацию из-за ошибки сети/парсинга...`);
-                try {
-                    await BrowserController.auth();
-                } catch (authErr) {
-                    log.warn(`[get_schedule_by_groupId] Авторизация не удалась: ${authErr.message}. Идем на следующую попытку...`);
-                }
+            if (attemption < 1) {
+                await page.close().catch(e => console.log(e))
                 await sleep(1000);
-                return await this.get_schedule_by_groupId(id, language, attemption + 1)
+                return await this.get_schedule_by_groupId(id, language, ++attemption)
             } else {
-                throw new Error("Ошибка при получении студенческого расписания (HTTP): " + e.message)
+                const path = `logs/error_studentSchedule_${Date.now()}.png`
+                await page.screenshot({
+                    path,
+                    fullPage: true
+                }).catch(e => console.log("Не получиось заскринить ошибку( " + e.message))
+                await page.close().catch(e => console.log(e))
+                throw new Error("Ошибка при получении студенческого расписания. Ошибку заскринил." + e.message)
             }
         }
     }

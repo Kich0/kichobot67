@@ -75,7 +75,7 @@ class ScheduleController {
             return res.json(schedule)
         } catch (e) {
             log.error("Ошибка при получении student расписания: " + e.message + "\n\n На всякий случай запустил функцию authIfNot!", {stack: e.stack})
-            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("net::ERR")? ApiError.ServiceUnavailable("Сайт КарГУ не отвечает", [e.stack]) : e)
+            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("net::ERR")? ApiError.ServiceUnavailable("Ксу не отвечает", [e.stack]) : e)
             await BrowserController.authIfNot()
         }
     }

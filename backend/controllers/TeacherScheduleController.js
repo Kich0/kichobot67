@@ -53,7 +53,7 @@ class TeacherScheduleController {
             return res.json(schedule)
         } catch (e) {
             log.error("Ошибка при получении teacher расписания: " + e.message + "\n\n На всякий случай запустил функцию authIfNot!", {stack: e.stack})
-            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("ERR_ADDRESS_UNREACHABLE") ? ApiError.ServiceUnavailable("Сайт КарГУ не отвечает", [e.stack]) : e)
+            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("ERR_ADDRESS_UNREACHABLE") ? ApiError.ServiceUnavailable("Ксу не отвечает", [e.stack]) : e)
             await BrowserController.authIfNot()
         }
     }
