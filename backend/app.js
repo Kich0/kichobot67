@@ -33,6 +33,8 @@ app.use('/express/api', router);
 app.get('/', (req, res) => res.send('Backend is alive!'));
 app.use(errorMiddleware);
 
+import FreeProxyService from "./services/FreeProxyService.js";
+
 const appStart = async () => {
     try {
         await db.connect(config.DB_URI);
@@ -43,6 +45,10 @@ const appStart = async () => {
     }
     await setupLoggingPathUpdate();
     await setupKsuReAuth();
+    
+    if (config.USE_FREE_PROXIES) {
+        FreeProxyService.initPool().catch(e => log.error("[ProxyPool] Ошибка автопополнения: " + e.message));
+    }
 };
 
 appStart().then(() => {

@@ -226,38 +226,52 @@ class BrowserController {
     }
 
     async auth() {
-        try {
-            console.log("Начинаю авторизацию")
-            this.isAuthing = true;
-            
-            if (config.USE_FREE_PROXIES) {
-                const proxy = await FreeProxyService.getWorkingProxy();
-                if (!proxy) {
-                    throw new Error("Не удалось найти рабочий бесплатный прокси. Авторизация отменена.");
-                }
-                log.info(`Перезапускаю браузер с бесплатным прокси: ${proxy}`);
-                await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
-                this.browser = await puppeteer.launch({
-                    headless: "new",
-                    args: [
-                        "--no-sandbox",
-                        "--disable-local-file-access",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        `--proxy-server=http://${proxy}`
-                    ],
-                    ignoreHTTPSErrors: true,
-                });
-            }
+        console.log("Начинаю авторизацию");
+        this.isAuthing = true;
+        let success = false;
+        let attempts = 0;
+        const maxAttempts = 15;
 
-            const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.browser)
-            console.log("Мы авторизованы")
-            this.faculties_data = faculties_data
-            this.auth_cookie = {cookie: auth_cookie, time: Date.now()}
-            log.info("Произведена авторизация/получен список факультетов на schedule.buketov.edu.kz")
+        try {
+            while (!success && attempts < maxAttempts) {
+                attempts++;
+                try {
+                    if (config.USE_FREE_PROXIES) {
+                        const proxy = await FreeProxyService.getWorkingProxy();
+                        if (!proxy) {
+                            throw new Error("Не удалось найти рабочий бесплатный прокси. Авторизация отменена.");
+                        }
+                        log.info(`[Auth Attempt ${attempts}/${maxAttempts}] Запускаю браузер с прокси: ${proxy}`);
+                        await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
+                        this.browser = await puppeteer.launch({
+                            headless: "new",
+                            args: [
+                                "--no-sandbox",
+                                "--disable-local-file-access",
+                                "--disable-setuid-sandbox",
+                                "--disable-dev-shm-usage",
+                                `--proxy-server=http://${proxy}`
+                            ],
+                            ignoreHTTPSErrors: true,
+                        });
+                    }
+
+                    const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.browser);
+                    console.log("Мы авторизованы");
+                    this.faculties_data = faculties_data;
+                    this.auth_cookie = {cookie: auth_cookie, time: Date.now()};
+                    log.info("Произведена авторизация/получен список факультетов на schedule.buketov.edu.kz");
+                    success = true;
+                } catch (innerError) {
+                    log.error(`[Auth Attempt ${attempts}/${maxAttempts}] Ошибка: ` + innerError.message);
+                    if (attempts >= maxAttempts) {
+                        throw new Error("Исчерпан лимит попыток авторизации.");
+                    }
+                }
+            }
         } catch (e) {
-            log.error("Не получилось авторизоваться на schedule.buketov.edu.kz | " + e.message)
-        }finally {
+            log.error("Не получилось авторизоваться на schedule.buketov.edu.kz | " + e.message);
+        } finally {
             this.isAuthing = false;
         }
     }
