@@ -59,6 +59,7 @@ class BrowserController {
             baseURL: KSU_IP_URL,
             httpAgent,
             httpsAgent,
+            timeout: 10000,
             headers: {
                 'Host': 'schedule.buketov.edu.kz',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
