@@ -3,6 +3,7 @@ import puppeteer from "puppeteer";
 import ScheduleService from "../services/ScheduleService.js";
 import log from "../logging/logging.js";
 import BrowserService from "../services/BrowserService.js";
+import FreeProxyService from "../services/FreeProxyService.js";
 // import ping from "ping";
 // import ApiError from "../exceptions/apiError.js";
 // import axios from "axios";
@@ -211,6 +212,27 @@ class BrowserController {
         try {
             console.log("Начинаю авторизацию")
             this.isAuthing = true;
+            
+            if (config.USE_FREE_PROXIES) {
+                const proxy = await FreeProxyService.getWorkingProxy();
+                if (!proxy) {
+                    throw new Error("Не удалось найти рабочий бесплатный прокси. Авторизация отменена.");
+                }
+                log.info(`Перезапускаю браузер с бесплатным прокси: ${proxy}`);
+                await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
+                this.browser = await puppeteer.launch({
+                    headless: "new",
+                    args: [
+                        "--no-sandbox",
+                        "--disable-local-file-access",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        `--proxy-server=http://${proxy}`
+                    ],
+                    ignoreHTTPSErrors: true,
+                });
+            }
+
             const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.browser)
             console.log("Мы авторизованы")
             this.faculties_data = faculties_data
