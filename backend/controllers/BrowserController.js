@@ -184,6 +184,23 @@ class BrowserController {
         }
     }
 
+    async createOptimizedPage() {
+        if (!this.browser?.isConnected()) {
+            await this.launchBrowser();
+        }
+        const page = await this.browser.newPage();
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+                req.abort().catch(() => {});
+            } else {
+                req.continue().catch(() => {});
+            }
+        });
+        return page;
+    }
+
     // need to fix this shit.
     async restartBrowser(req, res, next) {
         try {
@@ -269,7 +286,7 @@ class BrowserController {
 
         let page = null;
         try {
-            page = await this.browser.newPage();
+            page = await this.createOptimizedPage();
             const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read`);
             await page.goto(url, {timeout: 10000})
             await page.waitForSelector("header", {timeout: 2000})

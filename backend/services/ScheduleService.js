@@ -146,10 +146,11 @@ class ScheduleService {
             }
         }
 
-        const page = await BrowserController.browser.newPage();
+        const page = await BrowserController.createOptimizedPage();
+        let tableHTML = null;
         try {
             const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
-            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 7000})
+            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 15000})
 
             await page.waitForSelector("body", {timeout: 2000})
 
@@ -160,6 +161,7 @@ class ScheduleService {
 
             if (isForbidden) {
                 log.warn("(варн временный) Нас забанило, перезапускаю браузер!")
+                if (!page.isClosed()) await page.close().catch(()=>{});
                 await BrowserService.restartBrowser()
                 return await this.get_schedule_by_groupId(id, language, ++attemption)
             }
@@ -169,120 +171,117 @@ class ScheduleService {
             });
 
             if (isTableNotExists) {
-                await sleep(10000)
+                await sleep(5000)
                 log.info("table not exists handler, attemption = " + attemption)
-                await page.close()
+                if (!page.isClosed()) await page.close().catch(()=>{});
                 await BrowserController.auth()
                 return await this.get_schedule_by_groupId(id, language, ++attemption)
             }
 
-            const tableHTML = await page.evaluate((selector) => {
+            tableHTML = await page.evaluate((selector) => {
                 const table = document.querySelector(selector);
                 return table ? table.outerHTML : null;
             }, "table");
 
-            await page.close()
-
-            const tableData = HtmlService.htmlTableToJson(tableHTML)
-
-            const headers = tableData.shift();
-            const schedule_data = tableData.map(row => {
-                const obj = {};
-                headers.forEach((header, index) => {
-                    obj[header] = row[index];
-                });
-                return obj;
-            });
-
-            let days_list = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
-            if (language === "каз") {
-                days_list = ['Дүйсенбі', 'Сейсенбі', 'Сәрсенбі', 'Бейсенбі', 'Жұма', 'Сенбі']
-            }
-
-            let schedule = []
-            let item_number = 0
-            for (let i = 0; i < 6; i++) {
-                let daily_subjects = []
-                let day = ''
-                for (let j = 0; j < 13; j++) {
-                    let item = schedule_data[item_number]
-                    if (j === 0) {
-                        day = days_list[i]
-                    } else {
-                        const values = Object.values(item);
-                        item = {
-                            [Object.keys(item)[0]]: day,
-                            [Object.keys(item)[1]]: values[0],
-                            [Object.keys(item)[2]]: values[1],
-                        };
-                    }
-                    const values = Object.values(item);
-                    if (values[2] === "&nbsp;") {
-                        values[2] = ""
-                    }
-                    daily_subjects.push({
-                        time: values[1],
-                        subject: removeBrTags(values[2])
-                    })
-
-                    item_number += 1
-                }
-
-                const firstSubjectIndex = daily_subjects.findIndex(item => item.subject !== '');
-                let trimmedDailySubjects = []
-                if (firstSubjectIndex !== -1) {
-                    const lastSubjectIndex = daily_subjects.reverse().findIndex(item => item.subject !== '');
-
-                    daily_subjects.reverse();
-
-                    trimmedDailySubjects = daily_subjects.slice(firstSubjectIndex, daily_subjects.length - lastSubjectIndex);
-                } else {
-                    trimmedDailySubjects = []
-                }
-
-                let daily_schedule = {
-                    day,
-                    subjects: trimmedDailySubjects
-                }
-
-
-                // const lastSubjectIndex = daily_schedule.reverse().findIndex(item => item.subject !== '');
-                //
-                // daily_schedule.reverse();
-                //
-                // const trimmedDailySchedule = daily_schedule.slice(firstSubjectIndex, daily_schedule.length - lastSubjectIndex);
-
-
-                schedule.push(daily_schedule)
-            }
-
-            for (const daily_schedule of schedule) {
-                for (const subject of daily_schedule.subjects) {
-                    if (subject.subject === "\n") {
-                        log.warn("[test] Вижу кривое расписание в ксу хелпере. Запускаю рестарт браузера. Group: " + id)
-                        await BrowserService.restartBrowser()
-                        log.warn("[test] Делаю рекурсию для получения расписания повторно. ")
-                        return await this.get_schedule_by_groupId(id, language, ++attemption)
-                    }
-                }
-            }
-
-            return schedule
         } catch (e) {
-            if (attemption < 1) {
-                await page.close().catch(e => console.log(e))
+            if (attemption < 2) {
+                if (!page.isClosed()) await page.close().catch(err => console.log(err))
                 await sleep(1000);
                 return await this.get_schedule_by_groupId(id, language, ++attemption)
             } else {
                 const path = `logs/error_studentSchedule_${Date.now()}.png`
-                await page.screenshot({
-                    path,
-                    fullPage: true
-                }).catch(e => console.log("Не получиось заскринить ошибку( " + e.message))
-                await page.close().catch(e => console.log(e))
+                if (!page.isClosed()) {
+                    await page.screenshot({
+                        path,
+                        fullPage: true
+                    }).catch(err => console.log("Не получиось заскринить ошибку( " + err.message))
+                    await page.close().catch(err => console.log(err))
+                }
                 throw new Error("Ошибка при получении студенческого расписания. Ошибку заскринил." + e.message)
             }
+        } finally {
+            if (!page.isClosed()) {
+                await page.close().catch(e => console.log(e))
+            }
         }
+
+        const tableData = HtmlService.htmlTableToJson(tableHTML)
+
+        const headers = tableData.shift();
+        const schedule_data = tableData.map(row => {
+            const obj = {};
+            headers.forEach((header, index) => {
+                obj[header] = row[index];
+            });
+            return obj;
+        });
+
+        let days_list = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+        if (language === "каз") {
+            days_list = ['Дүйсенбі', 'Сейсенбі', 'Сәрсенбі', 'Бейсенбі', 'Жұма', 'Сенбі']
+        }
+
+        let schedule = []
+        let item_number = 0
+        for (let i = 0; i < 6; i++) {
+            let daily_subjects = []
+            let day = ''
+            for (let j = 0; j < 13; j++) {
+                let item = schedule_data[item_number]
+                if (j === 0) {
+                    day = days_list[i]
+                } else {
+                    const values = Object.values(item);
+                    item = {
+                        [Object.keys(item)[0]]: day,
+                        [Object.keys(item)[1]]: values[0],
+                        [Object.keys(item)[2]]: values[1],
+                    };
+                }
+                const values = Object.values(item);
+                if (values[2] === "&nbsp;") {
+                    values[2] = ""
+                }
+                daily_subjects.push({
+                    time: values[1],
+                    subject: removeBrTags(values[2])
+                })
+
+                item_number += 1
+            }
+
+            const firstSubjectIndex = daily_subjects.findIndex(item => item.subject !== '');
+            let trimmedDailySubjects = []
+            if (firstSubjectIndex !== -1) {
+                const lastSubjectIndex = daily_subjects.reverse().findIndex(item => item.subject !== '');
+
+                daily_subjects.reverse();
+
+                trimmedDailySubjects = daily_subjects.slice(firstSubjectIndex, daily_subjects.length - lastSubjectIndex);
+            } else {
+                trimmedDailySubjects = []
+            }
+
+            let daily_schedule = {
+                day,
+                subjects: trimmedDailySubjects
+            }
+
+            schedule.push(daily_schedule)
+        }
+
+        for (const daily_schedule of schedule) {
+            for (const subject of daily_schedule.subjects) {
+                if (subject.subject === "\n") {
+                    log.warn("[test] Вижу кривое расписание в ксу хелпере. Запускаю рестарт браузера. Group: " + id)
+                    await BrowserService.restartBrowser()
+                    log.warn("[test] Делаю рекурсию для получения расписания повторно. ")
+                    return await this.get_schedule_by_groupId(id, language, ++attemption)
+                }
+            }
+        }
+
+        return schedule
     }
 }
 
