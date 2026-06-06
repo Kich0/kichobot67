@@ -1,257 +1,113 @@
 import config from "../config.js";
-import puppeteer from "puppeteer";
 import ScheduleService from "../services/ScheduleService.js";
 import log from "../logging/logging.js";
-import BrowserService from "../services/BrowserService.js";
 import FreeProxyService from "../services/FreeProxyService.js";
-// import ping from "ping";
-// import ApiError from "../exceptions/apiError.js";
-// import axios from "axios";
-
+import axios from "axios";
+import { HttpProxyAgent } from "http-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import https from "https";
+import * as cheerio from "cheerio";
 
 class BrowserController {
-    browser;
-    auth_cookie;
+    axiosClient;
+    auth_cookie; // string: "PHPSESSID=..."
     faculties_data;
     isAuthing;
-    isRecovering; // Флаг для блокировки параллельных попыток восстановления
-    recoveryTimeout; // Таймер для автосброса флага восстановления
-    isLaunching; // Флаг для блокировки параллельных запусков браузера
-    launchTimeout; // Таймер для автосброса флага запуска
+    isRecovering; 
+    recoveryTimeout;
+    isLaunching; 
+    launchTimeout;
 
     constructor() {
         this.isRecovering = false;
         this.recoveryTimeout = null;
         this.isLaunching = false;
-        this.launchTimeout = null;
+        this.isAuthing = false;
+
+        this.initAxiosClient();
+
         if (config.START_BROWSER) {
             this.isAuthing = true;
-            // Сначала инициализируем пул прокси, потом запускаем браузер
             if (config.USE_FREE_PROXIES) {
                 FreeProxyService.initPool().then(() => {
-                    this.launchBrowser().then(() => log.info("Браузер запущен"))
+                    this.auth().then(() => log.info("HTTP клиент запущен и авторизован"))
                 });
             } else {
-                this.launchBrowser().then(() => log.info("Браузер запущен"))
+                this.auth().then(() => log.info("HTTP клиент запущен и авторизован"))
             }
         }
+    }
+
+    initAxiosClient(proxyString = null) {
+        const agentOptions = { rejectUnauthorized: false };
+        let httpAgent = null;
+        let httpsAgent = new https.Agent(agentOptions);
+
+        if (proxyString) {
+            const proxyUrl = `http://${proxyString}`;
+            httpAgent = new HttpProxyAgent(proxyUrl);
+            httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
+        } else if (config.USE_PROXY && config.PROXY_LOGIN) {
+            const proxyUrl = `http://${config.PROXY_LOGIN}:${config.PROXY_PASSWORD}@${config.HTTP_PROXY}`;
+            httpAgent = new HttpProxyAgent(proxyUrl);
+            httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
+        }
+
+        const KSU_IP_URL = config.KSU_DOMAIN.replace('schedule.buketov.edu.kz', '188.0.155.151');
+
+        this.axiosClient = axios.create({
+            baseURL: KSU_IP_URL,
+            httpAgent,
+            httpsAgent,
+            headers: {
+                'Host': 'schedule.buketov.edu.kz',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            maxRedirects: 5,
+            validateStatus: status => status >= 200 && status < 500
+        });
     }
 
     allChecksCall = async (req, res, next) => {
         try {
-            // Если идёт запуск — тихо возвращаем 503 без логирования ERROR
-            if (this.isLaunching) {
-                return res.status(503).set('Retry-After', '10').json({
-                    error: "Идёт запуск браузера, попробуйте через несколько секунд"
-                });
-            }
-
-            if (!this.browser?.isConnected()) {
-                await this.launchBrowser();
-            }
-
-            // Если идёт авторизация — тихо 503
             if (this.isAuthing) {
                 return res.status(503).set('Retry-After', '10').json({
-                    error: "Идёт авторизация в КСУ, попробуйте через несколько секунд"
+                    error: "Идёт авторизация в КарГУ, попробуйте через несколько секунд"
                 });
             }
 
-            // Если идёт восстановление — тихо 503
             if (this.isRecovering) {
                 return res.status(503).set('Retry-After', '10').json({
-                    error: "Идёт восстановление соединения с КСУ, попробуйте через несколько секунд"
+                    error: "Идёт восстановление соединения с КарГУ, попробуйте через несколько секунд"
                 });
-            }
-
-            // Защита от утечки памяти - проверяем количество открытых страниц
-            const pages = await this.browser.pages();
-            const openPagesCount = pages.length;
-
-            log.info(`[Memory Check] Открыто страниц: ${openPagesCount}`);
-
-            // Если открыто более 20 страниц - закрываем все кроме первой и перезапускаем браузер
-            if (openPagesCount > 20) {
-                log.warn(`[Memory Protection] Обнаружено ${openPagesCount} открытых страниц! Закрываю все и перезапускаю браузер.`);
-
-                // Закрываем все страницы кроме первой (about:blank)
-                for (let i = 1; i < pages.length; i++) {
-                    try {
-                        await pages[i].close();
-                    } catch (e) {
-                        log.error(`Ошибка при закрытии страницы ${i}: ${e.message}`);
-                    }
-                }
-
-                // Перезапускаем браузер для гарантии очистки памяти
-                await this.browser?.close().catch(e => log.error("Ошибка при закрытии браузера: " + e.message));
-                await this.launchBrowser();
-
-                return res.status(503).set('Retry-After', '5').json({
-                    error: "Браузер был перезапущен из-за утечки памяти. Попробуйте запрос снова."
-                });
-            }
-
-            // Дополнительная проверка - если открыто 10-20 страниц, закрываем лишние
-            if (openPagesCount > 10) {
-                log.warn(`[Memory Warning] Открыто ${openPagesCount} страниц. Закрываю лишние.`);
-                for (let i = 1; i < pages.length; i++) {
-                    try {
-                        await pages[i].close();
-                    } catch (e) {
-                        log.error(`Ошибка при закрытии страницы ${i}: ${e.message}`);
-                    }
-                }
             }
 
             next();
         } catch (e) {
-            log.error("Ошибка в allChecksCall мидлваре(" + e.message, e)
+            log.error("Ошибка в allChecksCall мидлваре: " + e.message, e)
             next(e)
         }
-    }
-
+    }
     async launchBrowser() {
-        // Если браузер уже запускается - ждём его запуска, не создаём новый
-        if (this.isLaunching) {
-            log.info("[Launch Lock] Браузер уже запускается, жду завершения...");
-            // Ждём максимум 120 секунд пока запустится (прокси + авторизация занимают время)
-            for (let i = 0; i < 240; i++) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                if (!this.isLaunching && this.browser?.isConnected()) {
-                    log.info("[Launch Lock] Браузер запустился, продолжаю работу");
-                    return;
-                }
-            }
-            throw new Error("Таймаут ожидания запуска браузера (120 сек)");
-        }
-
-        this.isLaunching = true;
-        log.info("[Launch Start] Начинаю запуск браузера");
-
-        // Защита от зависания - увеличен таймаут для поиска прокси
-        if (this.launchTimeout) {
-            clearTimeout(this.launchTimeout);
-        }
-        this.launchTimeout = setTimeout(() => {
-            if (this.isLaunching) {
-                log.error("[Launch Timeout] Запуск браузера занял больше 120 секунд, принудительно сбрасываю флаг!");
-                this.isLaunching = false;
-            }
-        }, 120000);
-
-        try {
-            const memorySavingArgs = [
-                "--no-sandbox",
-                "--disable-local-file-access",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--single-process",
-                "--no-zygote"
-            ];
-
-            if (config.DEBUG) {
-                this.browser = await puppeteer.launch({
-                    headless: false,
-                    args: ['--window-size=900,800', '--window-position=-10,0',],
-                    ignoreHTTPSErrors: true,
-                })
-            } else if (config.PROXY_LOGIN && config.USE_PROXY) {
-                this.browser = await puppeteer.launch({
-                    headless: "new",
-                    args: [...memorySavingArgs, `--proxy-server=${config.HTTP_PROXY}`],
-                    ignoreHTTPSErrors: true,
-                })
-            } else if (config.USE_FREE_PROXIES) {
-                // Ищем рабочий прокси ДО запуска браузера
-                log.info("[Launch] USE_FREE_PROXIES включен, ищу прокси перед запуском...");
-                const proxy = await FreeProxyService.getWorkingProxy();
-                if (proxy) {
-                    this.currentProxy = proxy;
-                    log.info(`[Launch] Запускаю браузер с прокси: ${proxy}`);
-                    this.browser = await puppeteer.launch({
-                        headless: "new",
-                        args: [...memorySavingArgs, `--proxy-server=http://${proxy}`],
-                        ignoreHTTPSErrors: true,
-                    });
-                } else {
-                    log.warn("[Launch] Прокси не найден, запускаю браузер без прокси");
-                    this.browser = await puppeteer.launch({
-                        headless: "new",
-                        args: memorySavingArgs,
-                        ignoreHTTPSErrors: true,
-                    });
-                }
-            } else {
-                this.browser = await puppeteer.launch({
-                    headless: "new",
-                    args: memorySavingArgs,
-                    ignoreHTTPSErrors: true,
-                })
-            }
-
-            if (config.PROXY_LOGIN && config.USE_PROXY) {
-                const page = await this.browser.newPage()
-                await page.authenticate({username: config.PROXY_LOGIN, password: config.PROXY_PASSWORD});
-                await page.goto('https://2ip.ru');
-                await page.close()
-                console.log("Прокси авторизован")
-            }
-
-            // НЕ переходим на KSU_DOMAIN сразу — auth() сделает это правильно
-            if (!config.USE_FREE_PROXIES) {
-                const pages = await this.browser.pages();
-                if (pages.length > 0) {
-                    await pages[0].goto(config.KSU_DOMAIN).catch(e => log.error("Ошибка при переходе на главную страницу: " + e.message));
-                }
-            }
-
-            if (config.AUTO_KSU_AUTH) {
-                await this.auth()
-            }
-            log.info("[Launch Success] Браузер успешно запущен");
-        } catch (e) {
-            log.error("[Launch Error] Ошибка при запуске браузера: " + e.message);
-            throw new Error(e)
-        } finally {
-            if (this.launchTimeout) {
-                clearTimeout(this.launchTimeout);
-                this.launchTimeout = null;
-            }
-            this.isLaunching = false;
-            log.info("[Launch End] Завершил процесс запуска браузера");
-        }
+        await this.auth();
     }
 
-    // need to fix this shit.
     async restartBrowser(req, res, next) {
         try {
-            await BrowserService.restartBrowser()
-            return res.json("Restarted")
+            await this.auth();
+            return res.json("Restarted (HTTP)")
         } catch (e) {
             next(e)
         }
     }
 
-    async makeHtmlScreenShot(req, res, next) {
-        const htmlCode = req.body
-        console.log(htmlCode)
-        try {
-            const screenshotBuffer = await BrowserService.getScreenshotBufferByHtml(htmlCode)
-            res.setHeader('Content-Type', 'image/png');
-            res.setHeader('Content-Length', screenshotBuffer.length);
-
-            res.send(screenshotBuffer);
-        } catch (e) {
-            next(e)
-        }
+    async makeHtmlScreenShot(req, res, next) {
+        return res.status(404).send("Screenshots disabled in pure HTTP mode");
     }
 
     async auth() {
         try {
-            console.log("Начинаю авторизацию")
+            log.info("Начинаю HTTP авторизацию");
             this.isAuthing = true;
             
             if (config.USE_FREE_PROXIES) {
@@ -267,53 +123,35 @@ class BrowserController {
                     log.info(`[Proxy Auth] Попытка ${attempt}/${maxProxyRetries} с прокси: ${proxy}`);
                     
                     try {
-                        await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
-                        const memorySavingArgs = [
-                            "--no-sandbox",
-                            "--disable-local-file-access",
-                            "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-gpu",
-                            "--disable-software-rasterizer",
-                            "--single-process",
-                            "--no-zygote"
-                        ];
-                        this.browser = await puppeteer.launch({
-                            headless: "new",
-                            args: [...memorySavingArgs, `--proxy-server=http://${proxy}`],
-                            ignoreHTTPSErrors: true,
-                        });
-
-                        const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.browser);
-                        console.log("Мы авторизованы через прокси " + proxy);
+                        this.initAxiosClient(proxy);
+                        const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.axiosClient);
                         this.faculties_data = faculties_data;
-                        this.auth_cookie = {cookie: auth_cookie, time: Date.now()};
-                        log.info("Произведена авторизация/получен список факультетов на schedule.buketov.edu.kz через прокси " + proxy);
+                        this.auth_cookie = {cookie: auth_cookie, time: Date.now()};
+                        this.axiosClient.defaults.headers.common['Cookie'] = auth_cookie;
+                        
+                        log.info("HTTP Авторизация успешна через прокси " + proxy);
                         return; // Успех!
                     } catch (proxyErr) {
                         lastError = proxyErr;
                         log.warn(`[Proxy Auth] Прокси ${proxy} не сработал (попытка ${attempt}): ${proxyErr.message}`);
-                        // Продолжаем цикл — попробуем другой прокси
                     }
                 }
-                
                 throw lastError || new Error("Все прокси-попытки провалились");
-            }
-
-            const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.browser)
-            console.log("Мы авторизованы")
-            this.faculties_data = faculties_data
-            this.auth_cookie = {cookie: auth_cookie, time: Date.now()}
-            log.info("Произведена авторизация/получен список факультетов на schedule.buketov.edu.kz")
+            }
+            this.initAxiosClient(null);
+            const {faculties_data, auth_cookie} = await ScheduleService.get_faculty_list(this.axiosClient);
+            this.faculties_data = faculties_data;
+            this.auth_cookie = {cookie: auth_cookie, time: Date.now()};
+            this.axiosClient.defaults.headers.common['Cookie'] = auth_cookie;
+            log.info("HTTP Авторизация успешна (без прокси)");
         } catch (e) {
-            log.error("Не получилось авторизоваться на schedule.buketov.edu.kz | " + e.message)
-        }finally {
+            log.error("Не получилось авторизоваться на schedule.buketov.edu.kz | " + e.message);
+        } finally {
             this.isAuthing = false;
         }
     }
 
     async authIfNot() {
-        // Если уже идёт восстановление - выходим, не создаём лишних страниц
         if (this.isRecovering) {
             log.info("[Recovery Lock] Восстановление уже идёт, пропускаю authIfNot");
             return;
@@ -322,48 +160,36 @@ class BrowserController {
         this.isRecovering = true;
         log.info("[Recovery Start] Начинаю проверку авторизации и восстановление");
 
-        // Защита от зависания - если через 180 секунд флаг не сброшен, сбрасываем принудительно
-        // (поиск бесплатного прокси может занять до 2 минут)
         if (this.recoveryTimeout) {
             clearTimeout(this.recoveryTimeout);
         }
         this.recoveryTimeout = setTimeout(() => {
             if (this.isRecovering) {
-                log.error("[Recovery Timeout] Восстановление зависло больше 180 секунд, принудительно сбрасываю флаг!");
+                log.error("[Recovery Timeout] Восстановление зависло больше 180 секунд!");
                 this.isRecovering = false;
             }
         }, 180000);
 
-        let page = null;
-        try {
-            page = await this.browser.newPage();
-            const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read`);
-            await page.goto(url, {timeout: 10000})
-            await page.waitForSelector("header", {timeout: 2000})
+        try {
+            const res = await this.axiosClient.get('/view1.php?id=5044&Kurs=3&Otdel=%D1%80%D1%83%D1%81&Stud=10&d=1&m=Read', {timeout: 10000});
+            const $ = cheerio.load(res.data);
+            const elementExists = $('table').length > 0;
 
-            const elementExists = await page.evaluate(() => {
-                return !!document.querySelector('table');
-            });
-
-            if (!elementExists) {
-                log.warn("[Recovery] Таблица не найдена, запускаю полную авторизацию");
-                await this.auth()
+            if (!elementExists || $('h1').text().includes('Forbidden')) {
+                log.warn("[Recovery] Таблица не найдена или Forbidden, запускаю полную авторизацию");
+                await this.auth();
             } else {
                 log.info("[Recovery] Проверка прошла успешно, авторизация не требуется");
             }
         } catch (e) {
-            log.error("[Recovery Error] Ошибка при попытке проверить авторизацию: " + e.message, {stack: e.stack})
-            // Даже при ошибке пытаемся переавторизоваться
+            log.error("[Recovery Error] Ошибка при попытке проверить авторизацию: " + e.message);
             try {
                 log.warn("[Recovery Fallback] Запускаю авторизацию после ошибки проверки");
-                await this.auth()
+                await this.auth();
             } catch (authError) {
-                log.error("[Recovery Fatal] Не удалось восстановить авторизацию: " + authError.message)
+                log.error("[Recovery Fatal] Не удалось восстановить авторизацию: " + authError.message);
             }
         } finally {
-            if (page) {
-                await page.close().catch(e => log.error("Ошибка при закрытии страницы в authIfNot: " + e.message))
-            }
             if (this.recoveryTimeout) {
                 clearTimeout(this.recoveryTimeout);
                 this.recoveryTimeout = null;
@@ -371,22 +197,7 @@ class BrowserController {
             this.isRecovering = false;
             log.info("[Recovery End] Завершил попытку восстановления");
         }
-
     }
-
-    // async isKsuAlive() {
-    //     const page = await this.browser.newPage();
-    //     try {
-    //         await page.goto("https://schedule.buketov.edu.kz/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read", {timeout:3000})
-    //         return true; // Возвращает true, если сайт доступен, иначе false
-    //     } catch (e) {
-    //         log.error("Ошибка при попытке пингануть ксу: " + e.message, e)
-    //         return false;
-    //     }finally {
-    //         await page.close()
-    //     }
-    // }
-
 }
 
-export default new BrowserController()
+export default new BrowserController();

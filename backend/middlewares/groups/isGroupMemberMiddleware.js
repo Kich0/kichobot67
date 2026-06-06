@@ -6,8 +6,7 @@ const isGroupMember = async (req, res, next) => {
         next()
     }
 
-    try {
-        // Check for Global Site Admin role.
+    try {
         if (req.user.roles.includes("Admin")){
             return next()
         }

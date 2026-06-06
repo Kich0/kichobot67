@@ -90,14 +90,10 @@ class ScheduleController {
             const days = Math.floor(diffInSeconds / 86400);
             return `${statusEmoji} ${days} ${i18next.t('day', {lng:user_language})}`;
         }
-    }
-
-    // Смещение Казахстана: UTC+5 (в миллисекундах)
+    }
     static KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
 
-    /**
-     * Возвращает текущее время в Казахстане (UTC+5)
-     */
+    
     static getKZDate(date = new Date()) {
         return new Date(date.getTime() + ScheduleController.KZ_OFFSET_MS);
     }

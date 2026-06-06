@@ -7,34 +7,23 @@ export async function commandAntiSpamMiddleware(msg, next) {
     try {
 
         const userId = msg.chat.id;
-        const currentTime = new Date().getTime();
-
-        // Проверяем, был ли предыдущий запрос от пользователя
+        const currentTime = new Date().getTime();
         if (userLastRequest[userId]) {
-            const timeDiff = currentTime - userLastRequest[userId];
-
-            // Если прошло менее 2.5 секунд с предыдущего запроса, считаем это спамом
-            if (timeDiff < 2500) {
-                // Отправляем уведомление не чаще чем раз в 5 секунд, чтобы бот сам не спамил
+            const timeDiff = currentTime - userLastRequest[userId];
+            if (timeDiff < 2500) {
                 if (!userWarningSent[userId] || (currentTime - userWarningSent[userId] > 5000)) {
                     userWarningSent[userId] = currentTime;
                     const user_language = await userService.getUserLanguage(msg.chat.id)
-                    const msg_text = i18next.t('antispam', {lng:user_language})
-                    // Отправляем уведомление о спаме пользователю
+                    const msg_text = i18next.t('antispam', {lng:user_language})
                     await bot.sendMessage(msg.chat.id, msg_text, {reply_to_message_id: msg.message_id})
                         .catch(e => {
                             log.error(`User ${msg.chat.id} got an error в command антиспам мидлваре` + e.message, {stack: e.stack})
                         })
-                }
-                // Пропускаем выполнение хендлера
+                }
                 return;
             }
-        }
-
-        // Сохраняем время текущего запроса пользователя
-        userLastRequest[userId] = currentTime;
-
-        // Выполняем следующий хендлер
+        }
+        userLastRequest[userId] = currentTime;
         await next();
     } catch (e) {
         log.error("ВАЖНО! Ошибка в commandAntiSpamMiddleware. " + e.message, {stack: e.stack})

@@ -10,7 +10,7 @@ import cron from "node-cron";
 export async function setupDailyDataUpdate(){
     cron.schedule('00 5 * * *', async () => {
         const startTime = Date.now()
-        log.info("Начинаю ежедневное обновление резервных данных из ксу.")
+        log.info("Начинаю ежедневное обновление резервных данных из КарГУ.")
         try{
             await updateFacultiesCommandController()
             await updateProgramsCommandController()

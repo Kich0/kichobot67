@@ -1,10 +1,7 @@
 import log from '../logging/logging.js';
 import config from '../config.js';
 
-/**
- * Webhook Retry Manager
- * Handles automatic retry of webhook setup with exponential backoff
- */
+
 class WebhookRetryManager {
     constructor(bot) {
         this.bot = bot;
@@ -18,26 +15,17 @@ class WebhookRetryManager {
         this.lastSuccessfulSetup = null;
     }
 
-    /**
-     * Set webhook with automatic retry on failure
-     * @param {string} webhookUrl - The webhook URL to set
-     * @returns {Promise<boolean>} - True if webhook was set successfully
-     */
+    
     async setWebhookWithRetry(webhookUrl) {
         this.webhookUrl = webhookUrl;
         return await this._attemptWebhookSetup();
     }
 
-    /**
-     * Internal method to attempt webhook setup
-     * @private
-     */
+    
     async _attemptWebhookSetup() {
         try {
             await this.bot.setWebHook(this.webhookUrl);
-            log.info(`Webhook set successfully: ${this.webhookUrl}`);
-
-            // Verify webhook was actually set
+            log.info(`Webhook set successfully: ${this.webhookUrl}`);
             const webhookInfo = await this.bot.getWebHookInfo();
             if (webhookInfo.url === this.webhookUrl) {
                 log.info('Webhook verification passed', {
@@ -60,16 +48,12 @@ class WebhookRetryManager {
                 stack: e.stack,
                 attempt: this.retryCount + 1,
                 maxRetries: this.maxRetries
-            });
-
-            // Notify admin on first failure
+            });
             if (this.retryCount === 0 && !config.DEBUG) {
                 this.bot.sendMessage(config.LOG_CHANEL_ID,
                     `⚠️ Failed to set webhook! Will retry automatically.\n\nError: ${e.message}\nAttempt: ${this.retryCount + 1}/${this.maxRetries}`
                 ).catch(err => log.error('Failed to send webhook error notification', { stack: err.stack }));
-            }
-
-            // Schedule retry if haven't exceeded max retries
+            }
             if (this.retryCount < this.maxRetries) {
                 await this._scheduleRetry();
                 return false;
@@ -77,9 +61,7 @@ class WebhookRetryManager {
                 log.error('Max webhook retry attempts reached!', {
                     maxRetries: this.maxRetries,
                     lastError: e.message
-                });
-
-                // Critical notification - all retries failed
+                });
                 if (!config.DEBUG) {
                     this.bot.sendMessage(config.LOG_CHANEL_ID,
                         `🚨 CRITICAL: Webhook setup failed after ${this.maxRetries} attempts!\n\nLast error: ${e.message}\n\nBot may not receive updates!`
@@ -92,38 +74,26 @@ class WebhookRetryManager {
         }
     }
 
-    /**
-     * Schedule next retry attempt with exponential backoff
-     * @private
-     */
+    
     async _scheduleRetry() {
         this.retryCount++;
-        this.isRetrying = true;
-
-        // Calculate delay with exponential backoff: baseDelay * 2^retryCount
+        this.isRetrying = true;
         const delay = Math.min(
             this.baseDelay * Math.pow(2, this.retryCount - 1),
             this.maxDelay
         );
 
-        log.info(`Scheduling webhook retry in ${delay}ms (attempt ${this.retryCount + 1}/${this.maxRetries})`);
-
-        // Clear existing timer if any
+        log.info(`Scheduling webhook retry in ${delay}ms (attempt ${this.retryCount + 1}/${this.maxRetries})`);
         if (this.retryTimer) {
             clearTimeout(this.retryTimer);
-        }
-
-        // Schedule retry
+        }
         this.retryTimer = setTimeout(async () => {
             log.info(`Retrying webhook setup (attempt ${this.retryCount + 1}/${this.maxRetries})...`);
             await this._attemptWebhookSetup();
         }, delay);
     }
 
-    /**
-     * Monitor webhook health and retry if needed
-     * Should be called periodically
-     */
+    
     async monitorWebhookHealth() {
         if (this.isRetrying) {
             log.debug('Webhook retry already in progress, skipping health check');
@@ -131,35 +101,25 @@ class WebhookRetryManager {
         }
 
         try {
-            const webhookInfo = await this.bot.getWebHookInfo();
-
-            // Check if webhook is set correctly
+            const webhookInfo = await this.bot.getWebHookInfo();
             if (!webhookInfo.url || webhookInfo.url !== this.webhookUrl) {
                 log.warn('Webhook URL mismatch detected!', {
                     expected: this.webhookUrl,
                     actual: webhookInfo.url
-                });
-
-                // Reset retry count and attempt to fix
+                });
                 this.retryCount = 0;
                 await this._attemptWebhookSetup();
                 return;
-            }
-
-            // Check for recent errors
+            }
             if (webhookInfo.last_error_date) {
                 const errorDate = new Date(webhookInfo.last_error_date * 1000);
-                const timeSinceError = Date.now() - errorDate.getTime();
-
-                // If error is recent (within last 5 minutes), log warning
+                const timeSinceError = Date.now() - errorDate.getTime();
                 if (timeSinceError < 5 * 60 * 1000) {
                     log.warn('Recent webhook error detected', {
                         last_error_date: errorDate.toISOString(),
                         last_error_message: webhookInfo.last_error_message,
                         pending_update_count: webhookInfo.pending_update_count
-                    });
-
-                    // If there are many pending updates, notify admin
+                    });
                     if (webhookInfo.pending_update_count > 50) {
                         if (!config.DEBUG) {
                             this.bot.sendMessage(config.LOG_CHANEL_ID,
@@ -180,9 +140,7 @@ class WebhookRetryManager {
         }
     }
 
-    /**
-     * Cancel any pending retry attempts
-     */
+    
     cancelRetry() {
         if (this.retryTimer) {
             clearTimeout(this.retryTimer);
@@ -192,9 +150,7 @@ class WebhookRetryManager {
         this.retryCount = 0;
     }
 
-    /**
-     * Get current retry status
-     */
+    
     getStatus() {
         return {
             isRetrying: this.isRetrying,

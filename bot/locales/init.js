@@ -17,8 +17,7 @@ export async function i18nextInit(){
         lng: 'ru', // Устанавливаем язык по умолчанию
         resources: {
             ru: {translation: ruTranslation},
-            kz: {translation: kzTranslation},
-            // Другие языковые ресурсы по мере необходимости
+            kz: {translation: kzTranslation},
         },
     })
     log.info("i18next инициализирован!")

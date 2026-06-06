@@ -115,8 +115,7 @@ export default function setupAdminCommandHandler() {
     if (!await userService.isAdmin(msg.from.id)) {
       return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
     }
-    try {
-      // Юзеров за сегодня
+    try {
       const activeUsersToday = await userActivityService.getTodayUserCount()
       const registeredUsersToday = await userRegistrationStatService.getTodayRegisteredUserCount()
 

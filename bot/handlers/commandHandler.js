@@ -54,8 +54,6 @@ export function setupCommandHandlers() {
     bot.onText(/^Оқытушы/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
 
     bot.onText(/^\/search/i, safeHandler(searchHelpCommandController, 'searchHelp'))
-    bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
-
-    // Пасхалка 67
+    bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
     bot.onText(/^(сикс|север|севен|six|seven|67|шестьдесят семь)/i, safeHandler(sixtySevenEasterEggController, 'easterEgg67'))
 }

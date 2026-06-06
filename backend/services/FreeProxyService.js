@@ -17,10 +17,7 @@ class FreeProxyService {
         this.isMaintaining = false;   // Флаг чтобы не запускать параллельное обслуживание
     }
 
-    /**
-     * Инициализация пула при старте.
-     * Вызывается один раз из BrowserController.
-     */
+    
     async initPool() {
         if (this.isInitialized) return;
         log.info(`[ProxyPool] Инициализация пула (цель: ${POOL_SIZE} прокси)...`);
@@ -29,17 +26,13 @@ class FreeProxyService {
             await this._fillPool();
             this.isInitialized = true;
             log.info(`[ProxyPool] Пул готов: ${this.proxyPool.length}/${POOL_SIZE} прокси`);
-
-            // Запускаем фоновое обслуживание
             this._startMaintenance();
         } catch (e) {
             log.error(`[ProxyPool] Ошибка инициализации пула: ${e.message}`);
         }
     }
 
-    /**
-     * Фоновое обслуживание пула каждые MAINTAIN_INTERVAL мс.
-     */
+    
     _startMaintenance() {
         setInterval(async () => {
             if (this.isMaintaining) {
@@ -50,16 +43,12 @@ class FreeProxyService {
 
             try {
                 log.info(`[ProxyPool Maintain] Проверяю здоровье пула (${this.proxyPool.length}/${POOL_SIZE})...`);
-
-                // Проверяем каждый прокси в пуле параллельно
                 const healthChecks = await Promise.all(
                     this.proxyPool.map(async (proxy) => {
                         const alive = await this.testProxy(proxy);
                         return { proxy, alive };
                     })
                 );
-
-                // Оставляем только живые
                 const aliveProxies = healthChecks.filter(r => r.alive).map(r => r.proxy);
                 const deadCount = this.proxyPool.length - aliveProxies.length;
 
@@ -68,8 +57,6 @@ class FreeProxyService {
                 }
 
                 this.proxyPool = aliveProxies;
-
-                // Дозаполняем пул если нужно
                 if (this.proxyPool.length < POOL_SIZE) {
                     await this._fillPool();
                 }
@@ -83,16 +70,12 @@ class FreeProxyService {
         }, MAINTAIN_INTERVAL);
     }
 
-    /**
-     * Дозаполняет пул до POOL_SIZE рабочими прокси.
-     */
+    
     async _fillPool() {
         const needed = POOL_SIZE - this.proxyPool.length;
         if (needed <= 0) return;
 
         log.info(`[ProxyPool Fill] Нужно ещё ${needed} прокси...`);
-
-        // Скачиваем новый список если кэш пуст или исчерпан
         if (this.cachedProxies.length === 0 || this.proxyIndex >= this.cachedProxies.length) {
             this.cachedProxies = await this.getProxies();
             this.proxyIndex = 0;
@@ -102,8 +85,6 @@ class FreeProxyService {
             log.error("[ProxyPool Fill] Список прокси пуст!");
             return;
         }
-
-        // Исключаем из кэша то что уже в пуле
         const poolSet = new Set(this.proxyPool);
 
         let found = 0;
@@ -147,8 +128,6 @@ class FreeProxyService {
     async getProxies() {
         log.info("Скачиваю списки бесплатных прокси из нескольких источников...");
         let allProxies = [];
-
-        // Источник 1: ProxyScrape — только HTTPS-совместимые
         try {
             const res1 = await axios.get(
                 "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=all",
@@ -160,8 +139,6 @@ class FreeProxyService {
         } catch (e) {
             log.error("Ошибка ProxyScrape: " + e.message);
         }
-
-        // Источник 2: ProxyScrape — все прокси (ssl=all), на случай если ssl=yes мало
         try {
             const res2 = await axios.get(
                 "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all",
@@ -173,10 +150,7 @@ class FreeProxyService {
         } catch (e) {
             log.error("Ошибка ProxyScrape (all): " + e.message);
         }
-
-        // Убираем дубликаты
         allProxies = [...new Set(allProxies)];
-        // Перемешиваем случайно, чтобы не застревать на одних и тех же мертвых
         allProxies.sort(() => Math.random() - 0.5);
 
         log.info(`Итого уникальных прокси: ${allProxies.length}`);
@@ -202,8 +176,6 @@ class FreeProxyService {
                 }
             });
             clearTimeout(timeoutId);
-
-            // Проверяем что ответ РЕАЛЬНО от КСУ, а не от самого прокси
             if (res.data && typeof res.data === 'string') {
                 const body = res.data;
                 const isKSU = body.includes('buketov') || 
@@ -222,22 +194,14 @@ class FreeProxyService {
         }
     }
 
-    /**
-     * Возвращает рабочий прокси из пула (мгновенно).
-     * Если пул пуст — ищет вручную (старый путь).
-     */
+    
     async getWorkingProxy() {
-        // Если в пуле есть прокси — забираем первый
         if (this.proxyPool.length > 0) {
             const proxy = this.proxyPool.shift();
             log.info(`[ProxyPool] Выдан прокси из пула: ${proxy} (осталось: ${this.proxyPool.length})`);
             return proxy;
         }
-
-        // Пул пуст — ищем вручную (fallback)
         log.warn("[ProxyPool] Пул пуст! Ищу прокси вручную...");
-
-        // Скачиваем новый список если кэш пуст или исчерпан
         if (this.cachedProxies.length === 0 || this.proxyIndex >= this.cachedProxies.length) {
             this.cachedProxies = await this.getProxies();
             this.proxyIndex = 0;
@@ -274,13 +238,11 @@ class FreeProxyService {
             }
         }
 
-        log.error(`❌ Проверено ${checkedCount} прокси — ни один не смог открыть КСУ.`);
+        log.error(`❌ Проверено ${checkedCount} прокси — ни один не смог открыть КарГУ.`);
         return null;
     }
 
-    /**
-     * Возвращает статус пула для мониторинга.
-     */
+    
     getPoolStatus() {
         return {
             poolSize: this.proxyPool.length,

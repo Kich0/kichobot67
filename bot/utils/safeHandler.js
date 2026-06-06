@@ -2,19 +2,12 @@ import log from "../logging/logging.js";
 import config from "../config.js";
 import {bot} from "../app.js";
 
-/**
- * Wraps bot command/callback handlers with error handling
- * Prevents uncaught errors from crashing the bot
- * @param {Function} handler - The handler function to wrap
- * @param {string} handlerName - Name of the handler for logging
- * @returns {Function} - Wrapped handler
- */
+
 export function safeHandler(handler, handlerName = 'unknown') {
     return async (...args) => {
         try {
             await handler(...args);
-        } catch (error) {
-            // Extract user ID for logging
+        } catch (error) {
             let userId = 'unknown';
             if (args[0]?.chat?.id) {
                 userId = args[0].chat.id;
@@ -27,16 +20,12 @@ export function safeHandler(handler, handlerName = 'unknown') {
                 error: error.message,
                 stack: error.stack,
                 handlerName
-            });
-
-            // Notify admin in production
+            });
             if (!config.DEBUG) {
                 bot.sendMessage(config.LOG_CHANEL_ID,
                     `⚠️ Error in handler: ${handlerName}\n\nUser: ${userId}\nError: ${error.message}`
                 ).catch(e => log.error('Failed to send error notification', { stack: e.stack }));
-            }
-
-            // Try to inform user
+            }
             try {
                 const chatId = args[0]?.chat?.id || args[0]?.message?.chat?.id;
                 if (chatId) {
@@ -51,10 +40,7 @@ export function safeHandler(handler, handlerName = 'unknown') {
     };
 }
 
-/**
- * Safe wrapper for callback query handlers
- * Similar to safeHandler but specifically for callback queries
- */
+
 export function safeCallbackHandler(handler, handlerName = 'unknown') {
     return async (call) => {
         try {
@@ -68,16 +54,12 @@ export function safeCallbackHandler(handler, handlerName = 'unknown') {
                 stack: error.stack,
                 data: call?.data,
                 handlerName
-            });
-
-            // Notify admin in production
+            });
             if (!config.DEBUG) {
                 bot.sendMessage(config.LOG_CHANEL_ID,
                     `⚠️ Error in callback: ${handlerName}\n\nUser: ${userId}\nCallback: ${call?.data}\nError: ${error.message}`
                 ).catch(e => log.error('Failed to send error notification', { stack: e.stack }));
-            }
-
-            // Try to answer callback query to remove loading state
+            }
             try {
                 if (call?.id) {
                     await bot.answerCallbackQuery(call.id, {

@@ -9,9 +9,7 @@ export async function isAdminMiddleware(msg, next) {
         if (!await userService.isAdmin(msg.from.id)) {
             const msg_text = i18next.t('no_permissions', {lng:user_language})
             return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
-        }
-
-        // Выполняем следующий хендлер
+        }
         await next();
     }catch (e) {
         log.error(`ВАЖНО! user: ${msg.chat.id}! Ошибка при проверке на админа!!!`)

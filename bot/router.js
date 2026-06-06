@@ -11,9 +11,7 @@ import config from "./config.js";
 import botHealthMonitor from "./utils/botHealthMonitor.js";
 import {bot} from "./app.js";
 
-const router = new Router()
-
-// Health check endpoint
+const router = new Router()
 router.get('/health', async (req, res) => {
     try {
         const healthStatus = await botHealthMonitor.getStatus();
@@ -31,17 +29,11 @@ router.get('/health', async (req, res) => {
             error: e.message
         });
     }
-});
-
-// Webhook endpoint (works in both polling and webhook modes)
+});
 router.post('/webhook', async (req, res) => {
     try {
-        const update = req.body;
-
-        // Update bot activity
-        botHealthMonitor.updateActivity();
-
-        // Process the update
+        const update = req.body;
+        botHealthMonitor.updateActivity();
         await bot.processUpdate(update);
 
         return res.sendStatus(200);
@@ -49,9 +41,7 @@ router.post('/webhook', async (req, res) => {
         log.error('Error processing webhook update', { stack: e.stack, update: req.body });
         return res.sendStatus(500);
     }
-});
-
-// Test webhook endpoint - для тестирования доступности webhook
+});
 router.post('/webhook/test', async (req, res) => {
     try {
         const testData = req.body;

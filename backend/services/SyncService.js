@@ -9,11 +9,11 @@ import BrowserController from "../controllers/BrowserController.js";
 class SyncService {
     async syncAll() {
         try {
-            log.info("[Sync] Начинаю полную синхронизацию данных с КСУ");
+            log.info("[Sync] Начинаю полную синхронизацию данных с КарГУ (HTTP)");
             const startTime = Date.now();
 
-            if (!BrowserController.browser || !BrowserController.browser.isConnected()) {
-                await BrowserController.launchBrowser();
+            if (!BrowserController.axiosClient) {
+                await BrowserController.auth();
             }
 
             if (!BrowserController.faculties_data) {
@@ -21,19 +21,15 @@ class SyncService {
             }
 
             const faculties = BrowserController.faculties_data;
-            if (!faculties) throw new Error("Не удалось получить список факультетов");
-
-            // 1. Сохраняем факультеты
+            if (!faculties) throw new Error("Не удалось получить список факультетов");
             await Faculty.deleteMany({});
             await Faculty.insertMany(faculties);
-            log.info(`[Sync] Сохранено ${faculties.length} факультетов`);
-
-            // 2. Получаем и сохраняем программы
+            log.info(`[Sync] Сохранено ${faculties.length} факультетов`);
             await Program.deleteMany({});
             let allPrograms = [];
             for (const faculty of faculties) {
                 log.info(`[Sync] Получаю программы для факультета: ${faculty.name}`);
-                const programs = await ScheduleService.get_program_list_by_facultyId(BrowserController.browser, faculties, faculty.id);
+                const programs = await ScheduleService.get_program_list_by_facultyId(BrowserController.axiosClient, faculties, faculty.id);
                 allPrograms.push(...programs.map(p => ({
                     name: p.name,
                     id: p.id,
@@ -43,15 +39,13 @@ class SyncService {
                 await new Promise(r => setTimeout(r, 1000));
             }
             await Program.insertMany(allPrograms);
-            log.info(`[Sync] Сохранено ${allPrograms.length} программ`);
-
-            // 3. Получаем и сохраняем группы
+            log.info(`[Sync] Сохранено ${allPrograms.length} программ`);
             await UniversityGroup.deleteMany({});
             let allGroups = [];
             for (const program of allPrograms) {
                 log.info(`[Sync] Получаю группы для программы: ${program.name}`);
                 try {
-                    const groups = await ScheduleService.get_group_list_by_programId(BrowserController.browser, program.id);
+                    const groups = await ScheduleService.get_group_list_by_programId(BrowserController.axiosClient, program.id);
                     allGroups.push(...groups.map(g => ({
                         name: g.name,
                         id: g.id,
@@ -67,10 +61,7 @@ class SyncService {
                 await new Promise(r => setTimeout(r, 1000));
             }
             await UniversityGroup.insertMany(allGroups);
-            log.info(`[Sync] Сохранено ${allGroups.length} групп`);
-
-            // 4. Получаем и сохраняем расписания
-            // Это самая тяжелая часть, будем делать по одной группе с задержкой
+            log.info(`[Sync] Сохранено ${allGroups.length} групп`);
             log.info(`[Sync] Начинаю скачивание расписаний для ${allGroups.length} групп...`);
             let scheduleCount = 0;
             for (const group of allGroups) {

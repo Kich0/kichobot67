@@ -43,8 +43,7 @@ export function setupAnyMessageHandler() {
                                 ],
                                 one_time_keyboard: false,
                                 resize_keyboard: true
-                            };
-                            // Отвечаем мемом из TikTok + показываем клавиатуру с меню
+                            };
                             const memeText = getRandomMemeResponse();
                             await bot.sendMessage(msg.chat.id, memeText, {reply_markup: keyboard});
                         } catch (e) {

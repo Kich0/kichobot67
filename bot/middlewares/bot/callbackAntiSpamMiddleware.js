@@ -6,16 +6,13 @@ import userService from "../../services/userService.js";
 export async function callbackAntiSpamMiddleware(call, next) {
     try {
         const userId = call.message.chat.id;
-        const currentTime = new Date().getTime();
-
-        // Проверяем, был ли предыдущий запрос от пользователя
+        const currentTime = new Date().getTime();
         if (userLastRequest[userId]) {
             const timeDiff = currentTime - userLastRequest[userId];
 
             if (timeDiff < 1500) {
                 if (!userWarningSent[userId] || (currentTime - userWarningSent[userId] > 5000)) {
-                    userWarningSent[userId] = currentTime;
-                    // Отправляем уведомление о спаме пользователю
+                    userWarningSent[userId] = currentTime;
                     const user_language = await userService.getUserLanguage(call.message.chat.id)
                     const msg_text = i18next.t('antispam', {lng:user_language})
 
@@ -29,16 +26,11 @@ export async function callbackAntiSpamMiddleware(call, next) {
                                 log.error(`User ${call.message.chat.id} got an double!!! error в коллбек антиспам мидлваре` + e.message, {stack: e.stack})
                             }
                         })
-                }
-                // Пропускаем выполнение хендлера
+                }
                 return;
             }
-        }
-
-        // Сохраняем время текущего запроса пользователя
-        userLastRequest[userId] = currentTime;
-
-        // Выполняем следующий хендлер
+        }
+        userLastRequest[userId] = currentTime;
         await next();
     } catch (e) {
         log.error(`User ${call.message.chat.id} got an error в коллбек антиспам мидлваре` + e.message, {stack: e.stack})

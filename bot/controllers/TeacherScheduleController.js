@@ -36,38 +36,24 @@ class TeacherScheduleController {
         }
     }
 
-    transformGroupString(inputString) {
-        // Используем регулярное выражение для поиска всех вхождений "(X/Y)" в строке
-        const regex = /\((\d+)\/(\d+)\)/g;
-
-        // Используем метод replace с регулярным выражением для замены формата
-        let resultString = inputString.replace(regex, '(Ауд. $1 | $2 корпус)');
-
-        // Разбиваем результат на массив по скобкам
-        const parts = resultString.split(') ');
-
-        // Если есть более одной скобки, добавляем символ новой строки между ними
+    transformGroupString(inputString) {
+        const regex = /\((\d+)\/(\d+)\)/g;
+        let resultString = inputString.replace(regex, '(Ауд. $1 | $2 корпус)');
+        const parts = resultString.split(') ');
         if (parts.length > 1) {
             for (let i = 0; i < parts.length - 1; i++) {
                 parts[i] += ')\n';
             }
             resultString = parts.join('');
-        }
-
-        // Убираем лишний символ новой строки в конце строки
+        }
         resultString = resultString.trim();
 
         return resultString;
     }
 
-    addSymbolToEachLine(inputString, symbol) {
-        // Разбиваем строку на массив по символу новой строки "\n"
-        const lines = inputString.split('\n');
-
-        // Добавляем указанный символ в начало каждой строки
-        const linesWithSymbol = lines.map((line) => `${symbol} ${line}`);
-
-        // Объединяем строки обратно в одну строку с символами новой строки "\n"
+    addSymbolToEachLine(inputString, symbol) {
+        const lines = inputString.split('\n');
+        const linesWithSymbol = lines.map((line) => `${symbol} ${line}`);
         return linesWithSymbol.join('\n');
     }
 

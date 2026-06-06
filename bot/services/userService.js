@@ -120,26 +120,7 @@ class UserService {
         } catch (e) {
             throw new Error("Ошибка при set языка пользователя. " + e.stack)
         }
-    }
-
-    // updateAll = async (users) => {
-    //     try {
-    //         await User.deleteMany({})
-    //
-    //         await User.insertMany(users)
-    //     } catch (e) {
-    //         throw e
-    //     }
-    // }
-
-// // Удаление пользователя по ID
-//     async deleteUserById(userId) {
-//         try {
-//             return await User.findOneAndDelete({userId: userId});
-//         } catch (error) {
-//             throw new Error('Ошибка при удалении пользователя: ' + error.message);
-//         }
-//     }
+    }
 }
 
 

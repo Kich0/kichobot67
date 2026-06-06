@@ -19,9 +19,7 @@ import {setupAnyMessageHandler} from "./handlers/anyMessageHandler.js";
 import {i18nextInit} from "./locales/init.js";
 import botHealthMonitor from "./utils/botHealthMonitor.js";
 import webhookTester from "./utils/webhookTester.js";
-import WebhookRetryManager from "./utils/webhookRetry.js";
-
-// Initialize bot based on mode (polling or webhook)
+import WebhookRetryManager from "./utils/webhookRetry.js";
 let botOptions = {};
 if (config.BOT_MODE === 'webhook') {
     botOptions = { polling: false, webHook: false };
@@ -31,23 +29,17 @@ if (config.BOT_MODE === 'webhook') {
     log.info(`Bot is running in POLLING mode.`);
 }
 
-export const bot = new TelegramBot(config.TG_TOKEN, botOptions);
-
-// Initialize webhook retry manager
+export const bot = new TelegramBot(config.TG_TOKEN, botOptions);
 let webhookRetryManager = null;
 if (config.BOT_MODE === 'webhook') {
     webhookRetryManager = new WebhookRetryManager(bot);
-}
-
-// Bot error handlers
+}
 bot.on('polling_error', (error) => {
     log.error('Polling error occurred!', {
         error: error.message,
         code: error.code,
         stack: error.stack
-    });
-
-    // Critical error - notify admin if not in DEBUG mode
+    });
     if (!config.DEBUG) {
         bot.sendMessage(config.LOG_CHANEL_ID,
             `⚠️ POLLING ERROR!\n\nError: ${error.message}\nCode: ${error.code}\n\nBot may have stopped receiving updates!`
@@ -60,9 +52,7 @@ bot.on('webhook_error', (error) => {
         error: error.message,
         stack: error.stack
     });
-});
-
-// Track bot activity for health monitoring
+});
 bot.on('message', () => botHealthMonitor.updateActivity());
 bot.on('callback_query', () => botHealthMonitor.updateActivity());
 
@@ -75,26 +65,17 @@ app.use(errorMiddleware)
 const port = process.env.PORT || 5001;
 app.get('/', (req, res) => res.send('Bot is working!'));
 const server = app.listen(port, async () => {
-    log.info(`Kichobot bot started at ${port} port.`);
-
-    // Set webhook if in webhook mode (with automatic retry)
+    log.info(`Kichobot bot started at ${port} port.`);
     if (config.BOT_MODE === 'webhook' && webhookRetryManager) {
         const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
-        await webhookRetryManager.setWebhookWithRetry(webhookUrl);
-
-        // Setup periodic webhook health monitoring (every 5 minutes)
+        await webhookRetryManager.setWebhookWithRetry(webhookUrl);
         setInterval(async () => {
             await webhookRetryManager.monitorWebhookHealth();
         }, 5 * 60 * 1000);
-    }
-
-    // Test webhook connectivity (works in both polling and webhook modes)
-    // Небольшая задержка чтобы сервер точно был готов
+    }
     setTimeout(async () => {
         try {
-            const testResults = await webhookTester.testOnStartup();
-
-            // В режиме webhook проверяем готовность к миграции
+            const testResults = await webhookTester.testOnStartup();
             if (config.BOT_MODE === 'polling' && config.WEBHOOK_DOMAIN) {
                 log.info('--- Checking migration readiness ---');
                 const readiness = await webhookTester.checkMigrationReadiness();
@@ -126,23 +107,16 @@ export const userWarningSent = {};
 
     await setupCommandHandlers();
     await setupAdminCommandHandler();
-    await setupCallbackHandlers();
-    // Setup document and message handlers
+    await setupCallbackHandlers();
     await setupDocumentHandler()
     await setupNewChatMemberHandler()
-    await setupAnyMessageHandler();
-
-    // Настройка меню команд (гамбургер)
+    await setupAnyMessageHandler();
     await bot.setMyCommands([
         { command: '/start', description: 'Меню / Мәзір' }
-    ]);
-
-    // Описание бота — видно когда юзер впервые заходит в бота (до нажатия Start)
+    ]);
     await bot.setMyDescription({
         description: 'Kicho - расписание КарГУ Букетов 📚'
-    }).catch(e => log.error('Failed to set bot description', { stack: e.stack }));
-
-    // Короткое описание — видно в профиле бота
+    }).catch(e => log.error('Failed to set bot description', { stack: e.stack }));
     await bot.setMyShortDescription({
         short_description: 'Kicho - расписание КарГУ Букетов 📚'
     }).catch(e => log.error('Failed to set bot short description', { stack: e.stack }));
@@ -153,9 +127,7 @@ export const userWarningSent = {};
 })().catch(async (e) => {
     console.error(e)
     await bot.sendMessage(config.LOG_CHANEL_ID, "Прозошла какая то лютая ошибка. Сработал кетч из апп.жс. Данные об ошибке в логах pm2 будут.")
-});
-
-// Node.js process error handlers
+});
 process.on('uncaughtException', async (error) => {
     log.error('Uncaught Exception!', {
         error: error.message,
@@ -180,35 +152,25 @@ process.on('unhandledRejection', async (reason, promise) => {
             `🚨 UNHANDLED REJECTION!\n\nReason: ${reason}\n\nBot is still running but this needs attention!`
         ).catch(e => log.error('Failed to send unhandled rejection notification', { stack: e.stack }));
     }
-});
-
-// Graceful shutdown
+});
 const gracefulShutdown = async (signal) => {
     log.info(`${signal} received. Starting graceful shutdown...`);
 
-    try {
-        // Stop accepting new requests
+    try {
         server.close(() => {
             log.info('HTTP server closed');
-        });
-
-        // Remove webhook if in webhook mode
+        });
         if (config.BOT_MODE === 'webhook') {
             await bot.deleteWebHook();
             log.info('Webhook removed');
-        } else {
-            // Stop polling
+        } else {
             await bot.stopPolling();
             log.info('Polling stopped');
-        }
-
-        // Close database connection
+        }
         if (mongoose.connection.readyState !== 0) {
             await mongoose.connection.close();
             log.info('Database connection closed');
-        }
-
-        // Cancel any pending webhook retries
+        }
         if (webhookRetryManager) {
             webhookRetryManager.cancelRetry();
             log.info('Webhook retry manager stopped');

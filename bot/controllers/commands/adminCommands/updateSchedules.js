@@ -13,8 +13,7 @@ export async function updateSchedulesCommandController(hard = false) {
                 return response.data
             }
         } catch (e) {
-            log.error(`Ошибка при получении расписания для группы ${groupId}. Ошибка: ` + e.message)
-            // Если ошибка 503 или таймаут, подождем немного
+            log.error(`Ошибка при получении расписания для группы ${groupId}. Ошибка: ` + e.message)
             await sleep(5000)
             return null
         }
@@ -29,9 +28,7 @@ export async function updateSchedulesCommandController(hard = false) {
         let errorCount = 0
 
         for (let i = 0; i < groups.length; i++) {
-            const group = groups[i]
-            
-            // Небольшая задержка чтобы не спамить бэкенд слишком сильно
+            const group = groups[i]
             await sleep(1000)
 
             const scheduleData = await getSchedule(group.id, group.language)
