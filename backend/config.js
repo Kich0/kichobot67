@@ -18,8 +18,8 @@ const config = {
     USE_PROXY: process.env.USE_PROXY === "true",
     START_BROWSER: process.env.START_BROWSER === "true",
     TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-    AUTO_KSU_AUTH: process.env.AUTO_KSU_AUTH === "true",
-    USE_FREE_PROXIES: process.env.USE_FREE_PROXIES === "true",
+    AUTO_KSU_AUTH: process.env.AUTO_KSU_AUTH?.trim() === "true",
+    USE_FREE_PROXIES: process.env.USE_FREE_PROXIES?.trim() === "true",
 }
 
 // Validate critical variables
