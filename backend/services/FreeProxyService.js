@@ -178,7 +178,7 @@ class FreeProxyService {
             clearTimeout(timeoutId);
             if (res.data && typeof res.data === 'string') {
                 const body = res.data;
-                const isKSU = body.includes('Авторизация') || body.includes('пайдаланушы') || body.includes('Выбор факультета');
+                const isKSU = body.includes('URL=login.php') || body.includes('Университетская') || body.includes('buketov');
                 const isCloudflare = body.includes('Cloudflare') || body.includes('Just a moment');
                 if (isKSU && !isCloudflare) {
                     return true;
