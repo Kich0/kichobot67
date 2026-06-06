@@ -148,14 +148,18 @@ class TeacherScheduleController {
             let msg_text = preMessage + headerText + schedule_text + end_text
 
             const preCallback = data_array.slice(0, -1).join("|")
+            const departmentId = teacher.department || 0;
 
             let markup = {
-                inline_keyboard: [[{ text: `⬅️${i18next.t('go_back', {lng:user_language})}`, callback_data: preCallback + `|${+dayNumber - 1}` }, {
-                    text: `🔄`,
-                    callback_data: 'refresh' + call.data
-                }, {
-                    text: `${i18next.t('go_forward', {lng:user_language})}➡️`, callback_data: preCallback + `|${+dayNumber + 1}`
-                }],]
+                inline_keyboard: [
+                    [{ text: `⬅️${i18next.t('go_back', {lng:user_language})}`, callback_data: preCallback + `|${+dayNumber - 1}` }, {
+                        text: `🔄`,
+                        callback_data: 'refresh' + call.data
+                    }, {
+                        text: `${i18next.t('go_forward', {lng:user_language})}➡️`, callback_data: preCallback + `|${+dayNumber + 1}`
+                    }],
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
+                ]
             }
             await bot.editMessageText(msg_text,
                 {
