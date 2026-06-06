@@ -3,6 +3,11 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import log from "../logging/logging.js";
 
 class FreeProxyService {
+    constructor() {
+        this.cachedProxies = [];
+        this.proxyIndex = 0;
+    }
+
     async getProxies() {
         try {
             log.info("Скачиваю список бесплатных прокси...");
@@ -41,23 +46,26 @@ class FreeProxyService {
 
     async getWorkingProxy() {
         log.info("Начинаю поиск бесплатного рабочего прокси...");
-        const proxies = await this.getProxies();
         
-        if (proxies.length === 0) {
+        if (this.cachedProxies.length === 0 || this.proxyIndex >= this.cachedProxies.length) {
+            this.cachedProxies = await this.getProxies();
+            this.proxyIndex = 0;
+        }
+        
+        if (this.cachedProxies.length === 0) {
             log.error("Список бесплатных прокси пуст!");
             return null;
         }
 
-        log.info(`Скачано ${proxies.length} бесплатных прокси. Начинаю асинхронную проверку первых 50 шт...`);
+        log.info(`В кэше ${this.cachedProxies.length - this.proxyIndex} непроверенных прокси. Начинаю проверку...`);
 
-        // Тестируем прокси батчами по 10 штук параллельно, чтобы ускорить процесс
-        const maxProxiesToTest = Math.min(proxies.length, 50);
-        const proxiesToTest = proxies.slice(0, maxProxiesToTest);
-        
-        const batchSize = 10;
-        for (let i = 0; i < proxiesToTest.length; i += batchSize) {
-            const batch = proxiesToTest.slice(i, i + batchSize);
-            log.info(`Тестирую батч прокси ${i + 1} - ${i + batch.length}...`);
+        const batchSize = 20; // Увеличил до 20 для ускорения
+        const maxAttempts = 200; // Проверяем максимум 200 штук за один вызов
+        let checkedCount = 0;
+
+        while (this.proxyIndex < this.cachedProxies.length && checkedCount < maxAttempts) {
+            const batch = this.cachedProxies.slice(this.proxyIndex, this.proxyIndex + batchSize);
+            log.info(`Тестирую батч прокси ${this.proxyIndex + 1} - ${this.proxyIndex + batch.length}...`);
             
             const results = await Promise.all(
                 batch.map(async (proxy) => {
@@ -66,6 +74,9 @@ class FreeProxyService {
                 })
             );
             
+            this.proxyIndex += batch.length;
+            checkedCount += batch.length;
+
             const workingProxy = results.find(r => r.isWorking);
             if (workingProxy) {
                 log.info(`✅ Найден рабочий прокси: ${workingProxy.proxy}`);
@@ -73,7 +84,7 @@ class FreeProxyService {
             }
         }
         
-        log.error("❌ Не удалось найти рабочий бесплатный прокси среди проверенных.");
+        log.error("❌ Не удалось найти рабочий бесплатный прокси среди проверенных батчей. В следующем запросе проверка продолжится.");
         return null;
     }
 }
