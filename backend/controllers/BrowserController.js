@@ -26,28 +26,42 @@ class BrowserController {
         this.launchTimeout = null;
         if (config.START_BROWSER) {
             this.isAuthing = true;
-            this.launchBrowser().then(() => log.info("Браузер запущен"))
+            // Сначала инициализируем пул прокси, потом запускаем браузер
+            if (config.USE_FREE_PROXIES) {
+                FreeProxyService.initPool().then(() => {
+                    this.launchBrowser().then(() => log.info("Браузер запущен"))
+                });
+            } else {
+                this.launchBrowser().then(() => log.info("Браузер запущен"))
+            }
         }
     }
 
     allChecksCall = async (req, res, next) => {
         try {
-            // Блокируем входящие запросы если идёт запуск браузера
+            // Если идёт запуск — тихо возвращаем 503 без логирования ERROR
             if (this.isLaunching) {
-                throw new Error("Идёт запуск браузера, попробуйте через несколько секунд")
+                return res.status(503).set('Retry-After', '10').json({
+                    error: "Идёт запуск браузера, попробуйте через несколько секунд"
+                });
             }
 
             if (!this.browser?.isConnected()) {
                 await this.launchBrowser();
             }
 
-            // Блокируем входящие запросы если идёт авторизация или восстановление
+            // Если идёт авторизация — тихо 503
             if (this.isAuthing) {
-                throw new Error("Идёт авторизация в КСУ, попробуйте через несколько секунд")
+                return res.status(503).set('Retry-After', '10').json({
+                    error: "Идёт авторизация в КСУ, попробуйте через несколько секунд"
+                });
             }
 
+            // Если идёт восстановление — тихо 503
             if (this.isRecovering) {
-                throw new Error("Идёт восстановление соединения с КСУ, попробуйте через несколько секунд")
+                return res.status(503).set('Retry-After', '10').json({
+                    error: "Идёт восстановление соединения с КСУ, попробуйте через несколько секунд"
+                });
             }
 
             // Защита от утечки памяти - проверяем количество открытых страниц
@@ -73,7 +87,9 @@ class BrowserController {
                 await this.browser?.close().catch(e => log.error("Ошибка при закрытии браузера: " + e.message));
                 await this.launchBrowser();
 
-                throw new Error("Браузер был перезапущен из-за утечки памяти. Попробуйте запрос снова.");
+                return res.status(503).set('Retry-After', '5').json({
+                    error: "Браузер был перезапущен из-за утечки памяти. Попробуйте запрос снова."
+                });
             }
 
             // Дополнительная проверка - если открыто 10-20 страниц, закрываем лишние
