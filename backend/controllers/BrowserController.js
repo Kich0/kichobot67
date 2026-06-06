@@ -141,6 +141,17 @@ class BrowserController {
         }, 120000);
 
         try {
+            const memorySavingArgs = [
+                "--no-sandbox",
+                "--disable-local-file-access",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--single-process",
+                "--no-zygote"
+            ];
+
             if (config.DEBUG) {
                 this.browser = await puppeteer.launch({
                     headless: false,
@@ -150,7 +161,7 @@ class BrowserController {
             } else if (config.PROXY_LOGIN && config.USE_PROXY) {
                 this.browser = await puppeteer.launch({
                     headless: "new",
-                    args: ["--no-sandbox", "--disable-local-file-access", `--proxy-server=${config.HTTP_PROXY}`],
+                    args: [...memorySavingArgs, `--proxy-server=${config.HTTP_PROXY}`],
                     ignoreHTTPSErrors: true,
                 })
             } else if (config.USE_FREE_PROXIES) {
@@ -162,39 +173,21 @@ class BrowserController {
                     log.info(`[Launch] Запускаю браузер с прокси: ${proxy}`);
                     this.browser = await puppeteer.launch({
                         headless: "new",
-                        args: [
-                            "--no-sandbox",
-                            "--disable-local-file-access",
-                            "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-gpu",
-                            "--disable-software-rasterizer",
-                            `--proxy-server=http://${proxy}`
-                        ],
+                        args: [...memorySavingArgs, `--proxy-server=http://${proxy}`],
                         ignoreHTTPSErrors: true,
                     });
                 } else {
                     log.warn("[Launch] Прокси не найден, запускаю браузер без прокси");
                     this.browser = await puppeteer.launch({
                         headless: "new",
-                        args: [
-                            "--no-sandbox",
-                            "--disable-local-file-access",
-                            "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage"
-                        ],
+                        args: memorySavingArgs,
                         ignoreHTTPSErrors: true,
                     });
                 }
             } else {
                 this.browser = await puppeteer.launch({
                     headless: "new",
-                    args: [
-                        "--no-sandbox", 
-                        "--disable-local-file-access",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage"
-                    ],
+                    args: memorySavingArgs,
                     ignoreHTTPSErrors: true,
                 })
             }
@@ -275,17 +268,19 @@ class BrowserController {
                     
                     try {
                         await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
+                        const memorySavingArgs = [
+                            "--no-sandbox",
+                            "--disable-local-file-access",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-software-rasterizer",
+                            "--single-process",
+                            "--no-zygote"
+                        ];
                         this.browser = await puppeteer.launch({
                             headless: "new",
-                            args: [
-                                "--no-sandbox",
-                                "--disable-local-file-access",
-                                "--disable-setuid-sandbox",
-                                "--disable-dev-shm-usage",
-                                `--proxy-server=http://${proxy}`,
-                                "--disable-gpu",
-                                "--disable-software-rasterizer"
-                            ],
+                            args: [...memorySavingArgs, `--proxy-server=http://${proxy}`],
                             ignoreHTTPSErrors: true,
                         });
 
