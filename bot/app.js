@@ -18,7 +18,6 @@ import setupNewChatMemberHandler from "./handlers/newChatMemberHandler.js";
 import {setupAnyMessageHandler} from "./handlers/anyMessageHandler.js";
 import {i18nextInit} from "./locales/init.js";
 import botHealthMonitor from "./utils/botHealthMonitor.js";
-import webhookTester from "./utils/webhookTester.js";
 import WebhookRetryManager from "./utils/webhookRetry.js";
 let botOptions = {};
 if (config.BOT_MODE === 'webhook') {
@@ -66,29 +65,14 @@ const port = process.env.PORT || 5001;
 app.get('/', (req, res) => res.send('Bot is working!'));
 const server = app.listen(port, async () => {
     log.info(`Kichobot bot started at ${port} port.`);
+    log.info(`Kichobot bot started at ${port} port.`);
     if (config.BOT_MODE === 'webhook' && webhookRetryManager) {
         const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
-        await webhookRetryManager.setWebhookWithRetry(webhookUrl);
+        await webhookRetryManager.setWebhookWithRetry(webhookUrl);
         setInterval(async () => {
             await webhookRetryManager.monitorWebhookHealth();
         }, 5 * 60 * 1000);
-    }
-    setTimeout(async () => {
-        try {
-            const testResults = await webhookTester.testOnStartup();
-            if (config.BOT_MODE === 'polling' && config.WEBHOOK_DOMAIN) {
-                log.info('--- Checking migration readiness ---');
-                const readiness = await webhookTester.checkMigrationReadiness();
-
-                if (readiness.isReady) {
-                    log.info('🎉 Bot is ready to migrate to webhook mode!');
-                    log.info('💡 To migrate: set BOT_MODE=webhook in .env and restart');
-                }
-            }
-        } catch (e) {
-            log.error('Error during webhook testing', { stack: e.stack });
-        }
-    }, 2000); // 2 секунды задержка
+    }
 });
 
 export const userLastRequest = {};
