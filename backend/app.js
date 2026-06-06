@@ -55,3 +55,11 @@ appStart().then(() => {
         else log.info("DNS TEST SUCCESS: " + addresses.join(', '));
     });
 }).catch(e => console.log("Ошибка при запуске express приложения: " + e.stack))
+
+// Глобальные обработчики ошибок — не дают серверу упасть
+process.on('uncaughtException', (err) => {
+    log.error(`[CRASH PREVENTED] uncaughtException: ${err.message}`, { stack: err.stack });
+});
+process.on('unhandledRejection', (reason) => {
+    log.error(`[CRASH PREVENTED] unhandledRejection: ${reason?.message || reason}`, { stack: reason?.stack });
+});

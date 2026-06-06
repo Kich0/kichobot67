@@ -15,18 +15,18 @@ class ScheduleService {
         const page = pages.length > 0 ? pages[0] : await browser.newPage();
         const domain = `${config.KSU_DOMAIN}`
         try {
-            await page.goto(`${domain}/login.php`, {waitUntil: 'domcontentloaded'});
+            await page.goto(`${domain}/login.php`, {waitUntil: 'domcontentloaded', timeout: 45000});
             // Дождемся, когда загрузится содержимое сайта
-            await page.waitForSelector('input', {timeout: 10 * 1000});
+            await page.waitForSelector('input', {timeout: 20 * 1000});
             await page.type('input[name="login"]', config.KSU_LOGIN)
             await page.type('input[name="password"]', config.KSU_PASSWORD)
             await page.click('input[type="submit"]')
 
             await page.waitForTimeout(1000)
 
-            await page.goto(`${domain}`, {waitUntil: "domcontentloaded"});
+            await page.goto(`${domain}`, {waitUntil: "domcontentloaded", timeout: 45000});
 
-            await page.waitForSelector("select")
+            await page.waitForSelector("select", {timeout: 20000})
             // Получаем список опций селекта
             const webFacultyList = await page.evaluate((selector) => {
                 const select = document.querySelector(selector);
@@ -149,7 +149,7 @@ class ScheduleService {
         const page = await BrowserController.browser.newPage();
         try {
             const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
-            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 7000})
+            await page.goto(url, {waitUntil: "domcontentloaded", timeout: 30000})
 
             await page.waitForSelector("body", {timeout: 2000})
 
