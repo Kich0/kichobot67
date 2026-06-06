@@ -137,6 +137,16 @@ export const userWarningSent = {};
         { command: '/start', description: 'Меню / Мәзір' }
     ]);
 
+    // Описание бота — видно когда юзер впервые заходит в бота (до нажатия Start)
+    await bot.setMyDescription({
+        description: 'Kicho - расписание КарГУ Букетов 📚'
+    }).catch(e => log.error('Failed to set bot description', { stack: e.stack }));
+
+    // Короткое описание — видно в профиле бота
+    await bot.setMyShortDescription({
+        short_description: 'Kicho - расписание КарГУ Букетов 📚'
+    }).catch(e => log.error('Failed to set bot short description', { stack: e.stack }));
+
     await setupUserDailyStatisticsLogging()
     await setupDailyDataUpdate()
     await setupLoggingPathUpdate()

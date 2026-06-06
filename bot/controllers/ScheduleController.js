@@ -92,22 +92,32 @@ class ScheduleController {
         }
     }
 
-    formatTimestamp(timestamp) {
-        const date = new Date(timestamp);
+    // Смещение Казахстана: UTC+5 (в миллисекундах)
+    static KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
 
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
+    /**
+     * Возвращает текущее время в Казахстане (UTC+5)
+     */
+    static getKZDate(date = new Date()) {
+        return new Date(date.getTime() + ScheduleController.KZ_OFFSET_MS);
+    }
+
+    formatTimestamp(timestamp) {
+        const kzDate = ScheduleController.getKZDate(new Date(timestamp));
+
+        const hours = String(kzDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(kzDate.getUTCMinutes()).padStart(2, '0');
+        const seconds = String(kzDate.getUTCSeconds()).padStart(2, '0');
 
         return `${hours}:${minutes}:${seconds}`;
     }
 
     getCurrentDayNumber() {
-        const currentDate = new Date();
-        if (currentDate.getHours() >= 18) {
-            return ((currentDate.getDay() + 6) % 7) + 1;
+        const kzDate = ScheduleController.getKZDate();
+        if (kzDate.getUTCHours() >= 18) {
+            return ((kzDate.getUTCDay() + 6) % 7) + 1;
         }
-        return (currentDate.getDay() + 6) % 7;
+        return (kzDate.getUTCDay() + 6) % 7;
     }
 
     addGoBackBtnToMarkup(markup, refTo, lng) {

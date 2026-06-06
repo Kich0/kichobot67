@@ -4,6 +4,7 @@ import {bot} from "../app.js";
 import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddleware.js";
 import userService from "../services/userService.js";
 import i18next from "i18next";
+import {getRandomMemeResponse} from "../controllers/commands/memeResponseController.js";
 
 const COMMAND_REGEXES = [
     /^\/start/i, /^🗒 Новое расписание/i, /^🗒 Жаңа кесте/i, /^\/new$/i, /^\/new (.+)/i,
@@ -43,8 +44,9 @@ export function setupAnyMessageHandler() {
                                 one_time_keyboard: false,
                                 resize_keyboard: true
                             };
-                            const msg_text = `${i18next.t('welcome_page', {lng:user_language})}`;
-                            await bot.sendMessage(msg.chat.id, msg_text, {reply_markup: keyboard, parse_mode: "HTML"});
+                            // Отвечаем мемом из TikTok + показываем клавиатуру с меню
+                            const memeText = getRandomMemeResponse();
+                            await bot.sendMessage(msg.chat.id, memeText, {reply_markup: keyboard});
                         } catch (e) {
                             log.error(`User ${msg.chat.id} error in text fallback: ${e.message}`, {stack: e.stack});
                         }
@@ -54,3 +56,4 @@ export function setupAnyMessageHandler() {
         }
     });
 }
+
