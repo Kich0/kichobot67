@@ -255,16 +255,17 @@ class BrowserController {
         this.isRecovering = true;
         log.info("[Recovery Start] Начинаю проверку авторизации и восстановление");
 
-        // Защита от зависания - если через 60 секунд флаг не сброшен, сбрасываем принудительно
+        // Защита от зависания - если через 180 секунд флаг не сброшен, сбрасываем принудительно
+        // (поиск бесплатного прокси может занять до 2 минут)
         if (this.recoveryTimeout) {
             clearTimeout(this.recoveryTimeout);
         }
         this.recoveryTimeout = setTimeout(() => {
             if (this.isRecovering) {
-                log.error("[Recovery Timeout] Восстановление зависло больше 60 секунд, принудительно сбрасываю флаг!");
+                log.error("[Recovery Timeout] Восстановление зависло больше 180 секунд, принудительно сбрасываю флаг!");
                 this.isRecovering = false;
             }
-        }, 60000);
+        }, 180000);
 
         let page = null;
         try {
