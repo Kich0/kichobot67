@@ -142,7 +142,7 @@ class ScheduleService {
             if (!axiosClient) throw new Error("HTTP клиент не инициализирован");
 
             const url = encodeURI(`/view1.php?id=${id}&Otdel=${language}`);
-            const res = await axiosClient.get(url, {timeout: 30000});
+            const res = await axiosClient.get(url, {timeout: 60000});
             const $ = cheerio.load(res.data);
 
             const isForbidden = $('h1').text().includes("Forbidden");
