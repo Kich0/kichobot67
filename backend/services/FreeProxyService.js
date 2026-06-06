@@ -33,7 +33,7 @@ class FreeProxyService {
             if (res.data && res.data.includes('<TITLE>Жүйе пайдаланушысының авторизациясы</TITLE>')) {
                 return true;
             }
-            return true;
+            return false;
         } catch (e) {
             return false;
         }
