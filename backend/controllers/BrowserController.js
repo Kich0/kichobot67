@@ -59,13 +59,20 @@ class BrowserController {
             baseURL: KSU_IP_URL,
             httpAgent,
             httpsAgent,
-            timeout: 10000,
+            timeout: 15000,
             headers: {
                 'Host': 'schedule.buketov.edu.kz',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
             maxRedirects: 5,
             validateStatus: status => status >= 200 && status < 500
+        });
+
+        this.axiosClient.interceptors.request.use(config => {
+            if (!config.signal) {
+                config.signal = AbortSignal.timeout(15000);
+            }
+            return config;
         });
     }
 
