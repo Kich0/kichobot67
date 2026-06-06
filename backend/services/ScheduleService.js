@@ -147,7 +147,7 @@ class ScheduleService {
 
             const isForbidden = $('h1').text().includes("Forbidden");
             if (isForbidden) {
-                if (attemption >= 3) throw new Error("Forbidden even after 3 attempts");
+                if (attemption >= 10) throw new Error("Forbidden even after 10 attempts");
                 log.warn("(варн временный) Нас забанило, перезапускаю сессию (HTTP)!")
                 await BrowserController.auth()
                 return await this.get_schedule_by_groupId(id, language, attemption + 1)
@@ -155,7 +155,7 @@ class ScheduleService {
 
             const isTableNotExists = $('table').length === 0;
             if (isTableNotExists) {
-                if (attemption >= 3) throw new Error("Table not exists even after 3 attempts");
+                if (attemption >= 10) throw new Error("Table not exists even after 10 attempts");
                 await sleep(5000)
                 log.info("table not exists handler, attemption = " + attemption)
                 await BrowserController.auth()
@@ -229,7 +229,7 @@ class ScheduleService {
             for (const daily_schedule of schedule) {
                 for (const subject of daily_schedule.subjects) {
                     if (subject.subject === "\n") {
-                        if (attemption >= 3) throw new Error("Bad schedule parse even after 3 attempts");
+                        if (attemption >= 10) throw new Error("Bad schedule parse even after 10 attempts");
                         log.warn("[test] Вижу кривое расписание на сайте КарГУ. Делаю рестарт (HTTP). Group: " + id)
                         await BrowserController.auth()
                         log.warn("[test] Делаю рекурсию для получения расписания повторно. ")
@@ -241,7 +241,7 @@ class ScheduleService {
             return schedule
         } catch (e) {
             log.error(`[get_schedule_by_groupId] Ошибка (попытка ${attemption}): ${e.message}`);
-            if (attemption < 3) {
+            if (attemption < 10) {
                 log.info(`[get_schedule_by_groupId] Запрашиваю новую авторизацию из-за ошибки сети/парсинга...`);
                 await BrowserController.auth();
                 await sleep(1000);
