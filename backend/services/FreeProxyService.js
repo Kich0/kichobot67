@@ -159,7 +159,7 @@ class FreeProxyService {
 
     async testProxy(proxy) {
         try {
-            const httpsAgent = new HttpsProxyAgent(`http://${proxy}`);
+            const httpsAgent = new HttpsProxyAgent(`http://${proxy}`, { rejectUnauthorized: false });
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), PROXY_TEST_TIMEOUT + 1000);
@@ -170,7 +170,7 @@ class FreeProxyService {
                 proxy: false,
                 timeout: PROXY_TEST_TIMEOUT,
                 signal: controller.signal,
-                validateStatus: status => true,
+                validateStatus: status => status === 200,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
@@ -178,13 +178,9 @@ class FreeProxyService {
             clearTimeout(timeoutId);
             if (res.data && typeof res.data === 'string') {
                 const body = res.data;
-                const isKSU = body.includes('buketov') || 
-                              body.includes('schedule') || 
-                              body.includes('login') ||
-                              body.includes('авторизация') ||
-                              body.includes('Авторизация') ||
-                              body.includes('пайдаланушы');
-                if (isKSU) {
+                const isKSU = body.includes('Авторизация') || body.includes('пайдаланушы') || body.includes('Выбор факультета');
+                const isCloudflare = body.includes('Cloudflare') || body.includes('Just a moment');
+                if (isKSU && !isCloudflare) {
                     return true;
                 }
             }

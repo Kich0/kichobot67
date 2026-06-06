@@ -119,7 +119,7 @@ class BrowserController {
             this.isAuthing = true;
             
             if (config.USE_FREE_PROXIES) {
-                const maxProxyRetries = 3;
+                const maxProxyRetries = 5;
                 let lastError = null;
 
                 for (let attempt = 1; attempt <= maxProxyRetries; attempt++) {
