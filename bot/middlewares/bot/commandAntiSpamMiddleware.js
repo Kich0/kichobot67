@@ -13,8 +13,8 @@ export async function commandAntiSpamMiddleware(msg, next) {
         if (userLastRequest[userId]) {
             const timeDiff = currentTime - userLastRequest[userId];
 
-            // Если прошло менее секунды с предыдущего запроса, считаем это спамом
-            if (timeDiff < 1000) {
+            // Если прошло менее 2.5 секунд с предыдущего запроса, считаем это спамом
+            if (timeDiff < 2500) {
                 // Отправляем уведомление не чаще чем раз в 5 секунд, чтобы бот сам не спамил
                 if (!userWarningSent[userId] || (currentTime - userWarningSent[userId] > 5000)) {
                     userWarningSent[userId] = currentTime;

@@ -12,7 +12,7 @@ export async function callbackAntiSpamMiddleware(call, next) {
         if (userLastRequest[userId]) {
             const timeDiff = currentTime - userLastRequest[userId];
 
-            if (timeDiff < 750) {
+            if (timeDiff < 1500) {
                 if (!userWarningSent[userId] || (currentTime - userWarningSent[userId] > 5000)) {
                     userWarningSent[userId] = currentTime;
                     // Отправляем уведомление о спаме пользователю
