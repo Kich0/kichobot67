@@ -149,7 +149,7 @@ class ScheduleService {
             if (isForbidden) {
                 if (attemption >= 10) throw new Error("Forbidden even after 10 attempts");
                 log.warn("(варн временный) Нас забанило, перезапускаю сессию (HTTP)!")
-                await BrowserController.auth()
+                try { await BrowserController.auth() } catch(e) {}
                 return await this.get_schedule_by_groupId(id, language, attemption + 1)
             }
 
@@ -158,7 +158,7 @@ class ScheduleService {
                 if (attemption >= 10) throw new Error("Table not exists even after 10 attempts");
                 await sleep(5000)
                 log.info("table not exists handler, attemption = " + attemption)
-                await BrowserController.auth()
+                try { await BrowserController.auth() } catch(e) {}
                 return await this.get_schedule_by_groupId(id, language, attemption + 1)
             }
 
@@ -231,7 +231,7 @@ class ScheduleService {
                     if (subject.subject === "\n") {
                         if (attemption >= 10) throw new Error("Bad schedule parse even after 10 attempts");
                         log.warn("[test] Вижу кривое расписание на сайте КарГУ. Делаю рестарт (HTTP). Group: " + id)
-                        await BrowserController.auth()
+                        try { await BrowserController.auth() } catch(e) {}
                         log.warn("[test] Делаю рекурсию для получения расписания повторно. ")
                         return await this.get_schedule_by_groupId(id, language, attemption + 1)
                     }
@@ -243,7 +243,11 @@ class ScheduleService {
             log.error(`[get_schedule_by_groupId] Ошибка (попытка ${attemption}): ${e.message}`);
             if (attemption < 10) {
                 log.info(`[get_schedule_by_groupId] Запрашиваю новую авторизацию из-за ошибки сети/парсинга...`);
-                await BrowserController.auth();
+                try {
+                    await BrowserController.auth();
+                } catch (authErr) {
+                    log.warn(`[get_schedule_by_groupId] Авторизация не удалась: ${authErr.message}. Идем на следующую попытку...`);
+                }
                 await sleep(1000);
                 return await this.get_schedule_by_groupId(id, language, attemption + 1)
             } else {
