@@ -70,7 +70,8 @@ class BrowserController {
 
         this.axiosClient.interceptors.request.use(config => {
             if (!config.signal) {
-                config.signal = AbortSignal.timeout(15000);
+                const timeoutMs = config.timeout || 15000;
+                config.signal = AbortSignal.timeout(timeoutMs);
             }
             return config;
         });
