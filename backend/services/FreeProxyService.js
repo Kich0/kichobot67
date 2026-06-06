@@ -5,7 +5,7 @@ import log from "../logging/logging.js";
 
 const POOL_SIZE = 5;              // Сколько прокси держать в пуле
 const MAINTAIN_INTERVAL = 3 * 60 * 1000; // Проверка пула каждые 3 минуты
-const PROXY_TEST_TIMEOUT = 7000;  // Таймаут теста одного прокси
+const PROXY_TEST_TIMEOUT = 5000;  // Таймаут теста одного прокси
 const BATCH_SIZE = 10;            // СНИЖЕНО ДО 10: Параллельная проверка батчами (чтобы не было Out of Memory на 512MB)
 
 class FreeProxyService {
