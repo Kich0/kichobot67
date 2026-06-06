@@ -99,30 +99,30 @@ class BrowserController {
         // Если браузер уже запускается - ждём его запуска, не создаём новый
         if (this.isLaunching) {
             log.info("[Launch Lock] Браузер уже запускается, жду завершения...");
-            // Ждём максимум 30 секунд пока запустится
-            for (let i = 0; i < 60; i++) {
+            // Ждём максимум 120 секунд пока запустится (прокси + авторизация занимают время)
+            for (let i = 0; i < 240; i++) {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 if (!this.isLaunching && this.browser?.isConnected()) {
                     log.info("[Launch Lock] Браузер запустился, продолжаю работу");
                     return;
                 }
             }
-            throw new Error("Таймаут ожидания запуска браузера (30 сек)");
+            throw new Error("Таймаут ожидания запуска браузера (120 сек)");
         }
 
         this.isLaunching = true;
         log.info("[Launch Start] Начинаю запуск браузера");
 
-        // Защита от зависания - если через 45 секунд флаг не сброшен, сбрасываем принудительно
+        // Защита от зависания - увеличен таймаут для поиска прокси
         if (this.launchTimeout) {
             clearTimeout(this.launchTimeout);
         }
         this.launchTimeout = setTimeout(() => {
             if (this.isLaunching) {
-                log.error("[Launch Timeout] Запуск браузера зависло больше 45 секунд, принудительно сбрасываю флаг!");
+                log.error("[Launch Timeout] Запуск браузера занял больше 120 секунд, принудительно сбрасываю флаг!");
                 this.isLaunching = false;
             }
-        }, 45000);
+        }, 120000);
 
         try {
             if (config.DEBUG) {
@@ -131,28 +131,58 @@ class BrowserController {
                     args: ['--window-size=900,800', '--window-position=-10,0',],
                     ignoreHTTPSErrors: true,
                 })
-            } else {
-                if (config.PROXY_LOGIN && config.USE_PROXY) {
-                    this.browser = await puppeteer.launch({
-                        headless: "new",
-                        args: ["--no-sandbox", "--disable-local-file-access", `--proxy-server=${config.HTTP_PROXY}`],
-                        // executablePath: '/usr/bin/google-chrome-stable',
-                        ignoreHTTPSErrors: true,
-                    })
-                } else {
+            } else if (config.PROXY_LOGIN && config.USE_PROXY) {
+                this.browser = await puppeteer.launch({
+                    headless: "new",
+                    args: ["--no-sandbox", "--disable-local-file-access", `--proxy-server=${config.HTTP_PROXY}`],
+                    ignoreHTTPSErrors: true,
+                })
+            } else if (config.USE_FREE_PROXIES) {
+                // Ищем рабочий прокси ДО запуска браузера
+                log.info("[Launch] USE_FREE_PROXIES включен, ищу прокси перед запуском...");
+                const proxy = await FreeProxyService.getWorkingProxy();
+                if (proxy) {
+                    this.currentProxy = proxy;
+                    log.info(`[Launch] Запускаю браузер с прокси: ${proxy}`);
                     this.browser = await puppeteer.launch({
                         headless: "new",
                         args: [
-                            "--no-sandbox", 
+                            "--no-sandbox",
+                            "--disable-local-file-access",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-software-rasterizer",
+                            `--proxy-server=http://${proxy}`
+                        ],
+                        ignoreHTTPSErrors: true,
+                    });
+                } else {
+                    log.warn("[Launch] Прокси не найден, запускаю браузер без прокси");
+                    this.browser = await puppeteer.launch({
+                        headless: "new",
+                        args: [
+                            "--no-sandbox",
                             "--disable-local-file-access",
                             "--disable-setuid-sandbox",
                             "--disable-dev-shm-usage"
                         ],
-                        // executablePath: '/usr/bin/google-chrome-stable',
                         ignoreHTTPSErrors: true,
-                    })
+                    });
                 }
+            } else {
+                this.browser = await puppeteer.launch({
+                    headless: "new",
+                    args: [
+                        "--no-sandbox", 
+                        "--disable-local-file-access",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage"
+                    ],
+                    ignoreHTTPSErrors: true,
+                })
             }
+
             if (config.PROXY_LOGIN && config.USE_PROXY) {
                 const page = await this.browser.newPage()
                 await page.authenticate({username: config.PROXY_LOGIN, password: config.PROXY_PASSWORD});
@@ -161,10 +191,12 @@ class BrowserController {
                 console.log("Прокси авторизован")
             }
 
-            // Направляем первую страницу на домен КСУ сразу после запуска
-            const pages = await this.browser.pages();
-            if (pages.length > 0) {
-                await pages[0].goto(config.KSU_DOMAIN).catch(e => log.error("Ошибка при переходе на главную страницу: " + e.message));
+            // НЕ переходим на KSU_DOMAIN сразу — auth() сделает это правильно
+            if (!config.USE_FREE_PROXIES) {
+                const pages = await this.browser.pages();
+                if (pages.length > 0) {
+                    await pages[0].goto(config.KSU_DOMAIN).catch(e => log.error("Ошибка при переходе на главную страницу: " + e.message));
+                }
             }
 
             if (config.AUTO_KSU_AUTH) {

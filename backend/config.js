@@ -22,6 +22,12 @@ const config = {
     USE_FREE_PROXIES: process.env.USE_FREE_PROXIES?.trim() === "true",
 }
 
+// Если USE_FREE_PROXIES включен — автоматически включаем запуск браузера и авторизацию
+if (config.USE_FREE_PROXIES) {
+    config.START_BROWSER = true;
+    config.AUTO_KSU_AUTH = true;
+}
+
 // Validate critical variables
 const criticalVars = ['DB_URI', 'PORT', 'KSU_LOGIN', 'KSU_PASSWORD'];
 criticalVars.forEach(key => {
