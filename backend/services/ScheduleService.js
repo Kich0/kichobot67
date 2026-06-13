@@ -51,7 +51,6 @@ class ScheduleService {
             const path = `logs/error_auth_${Date.now()}.png`
             await page.screenshot({
                 path,
-                fullPage: true
             }).catch(e => console.log("Не получилось заскринить ошибочку" + e.message));
             await page.close()
             throw new Error("Ошибка при авторизации. Ошибку заскринил" + e.message)
@@ -88,7 +87,7 @@ class ScheduleService {
             return programs
         } catch (e) {
             const path = `logs/error_${Date.now()}.png`
-            await page.screenshot({path, fullPage: true});
+            await page.screenshot({path});
             await page.close()
             throw new Error("Ошибка при получении программ. Ошибку заскринил." + e.message)
         }
@@ -126,7 +125,7 @@ class ScheduleService {
             return groups
         } catch (e) {
             const path = `logs/error_${Date.now()}.png`
-            await page.screenshot({path, fullPage: true});
+            await page.screenshot({path});
             await page.close()
             throw new Error("Ошибка при получении групп. Ошибку заскринил." + e.message)
         }
@@ -193,7 +192,6 @@ class ScheduleService {
                 if (!page.isClosed()) {
                     await page.screenshot({
                         path,
-                        fullPage: true
                     }).catch(err => console.log("Не получиось заскринить ошибку( " + err.message))
                     await page.close().catch(err => console.log(err))
                 }

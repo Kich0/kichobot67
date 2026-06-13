@@ -20,10 +20,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json({
-    limit: '50mb'
+    limit: '5mb'
 }));
 app.use(cookieParser());
-app.use(bodyParser.text({type: 'text/html', limit: '50mb'}));
+app.use(bodyParser.text({type: 'text/html', limit: '5mb'}));
 app.use((req, res, next) => {
     const decodedUrl = decodeURIComponent(req.url);
     log.info(`${req.method} ${decodedUrl}`);

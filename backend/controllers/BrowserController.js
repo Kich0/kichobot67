@@ -57,7 +57,7 @@ class BrowserController {
             log.info(`[Memory Check] Открыто страниц: ${openPagesCount}`);
 
             // Если открыто более 20 страниц - закрываем все кроме первой и перезапускаем браузер
-            if (openPagesCount > 20) {
+            if (openPagesCount > 5) {
                 log.warn(`[Memory Protection] Обнаружено ${openPagesCount} открытых страниц! Закрываю все и перезапускаю браузер.`);
 
                 // Закрываем все страницы кроме первой (about:blank)
@@ -77,7 +77,7 @@ class BrowserController {
             }
 
             // Дополнительная проверка - если открыто 10-20 страниц, закрываем лишние
-            if (openPagesCount > 10) {
+            if (openPagesCount > 3) {
                 log.warn(`[Memory Warning] Открыто ${openPagesCount} страниц. Закрываю лишние.`);
                 for (let i = 1; i < pages.length; i++) {
                     try {
@@ -132,23 +132,32 @@ class BrowserController {
                     ignoreHTTPSErrors: true,
                 })
             } else {
+                const memoryFlags = [
+                    "--no-sandbox",
+                    "--disable-local-file-access",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--single-process",
+                    "--no-zygote",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-default-apps",
+                    "--disable-translate",
+                    "--no-first-run",
+                    "--js-flags=--max-old-space-size=128"
+                ];
                 if (config.PROXY_LOGIN && config.USE_PROXY) {
                     this.browser = await puppeteer.launch({
                         headless: "new",
-                        args: ["--no-sandbox", "--disable-local-file-access", `--proxy-server=${config.HTTP_PROXY}`],
-                        // executablePath: '/usr/bin/google-chrome-stable',
+                        args: [...memoryFlags, `--proxy-server=${config.HTTP_PROXY}`],
                         ignoreHTTPSErrors: true,
                     })
                 } else {
                     this.browser = await puppeteer.launch({
                         headless: "new",
-                        args: [
-                            "--no-sandbox", 
-                            "--disable-local-file-access",
-                            "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage"
-                        ],
-                        // executablePath: '/usr/bin/google-chrome-stable',
+                        args: memoryFlags,
                         ignoreHTTPSErrors: true,
                     })
                 }
@@ -243,6 +252,8 @@ class BrowserController {
                         }
                         log.info(`[Auth Attempt ${attempts}/${maxAttempts}] Запускаю браузер с прокси: ${proxy}`);
                         await this.browser?.close().catch(e => log.error("Ошибка при закрытии старого браузера: " + e.message));
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        global.gc?.();
                         this.browser = await puppeteer.launch({
                             headless: "new",
                             args: [
@@ -250,6 +261,14 @@ class BrowserController {
                                 "--disable-local-file-access",
                                 "--disable-setuid-sandbox",
                                 "--disable-dev-shm-usage",
+                                "--single-process",
+                                "--no-zygote",
+                                "--disable-gpu",
+                                "--disable-software-rasterizer",
+                                "--disable-extensions",
+                                "--disable-background-networking",
+                                "--no-first-run",
+                                "--js-flags=--max-old-space-size=128",
                                 `--proxy-server=http://${proxy}`
                             ],
                             ignoreHTTPSErrors: true,

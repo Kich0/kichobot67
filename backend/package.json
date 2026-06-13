@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "nodemon app.js",
-    "start": "node app.js",
+    "start": "node --max-old-space-size=350 --expose-gc app.js",
     "postinstall": "npx puppeteer browsers install chrome"
   },
   "author": "",

@@ -20,7 +20,7 @@ const log = createLogger({
 
         new transports.File({
             filename: "logs.log",
-            level: 'silly',
+            level: 'info',
             format: format.combine(format.timestamp(), format.json())
         }),
         new transports.File({
@@ -29,7 +29,7 @@ const log = createLogger({
             format: format.combine(format.timestamp(), format.json())
         }),
         new DailyRotateFile({
-            level: 'silly',
+            level: 'info',
             format: format.combine(format.timestamp(), format.json()),
             filename: 'logs/%DATE%.log',
             datePattern: 'DD.MM.YYYY',

@@ -19,6 +19,10 @@ class GptAssistantController{
             fs.writeFileSync(`gpt-input-pictures/${newFileName}`, buffer, 'utf-8')
 
             const answer = await gptAssistantService.getAnswerByScreenshot(newFileName);
+
+            // Удаляем файл после использования чтобы не копить на диске (RAM на Render)
+            try { fs.rmSync(`gpt-input-pictures/${newFileName}`); } catch(e) {}
+
             return res.json(answer);
         } catch (e) {
             log.error("Ошибка при получении ответа на скриншот: ", e)

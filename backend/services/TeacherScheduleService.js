@@ -21,7 +21,7 @@ function getQueryParam(url, paramName) {
 
 class TeacherScheduleService {
     async get_departments_list() {
-        const page = await BrowserController.browser.newPage()
+        const page = await BrowserController.createOptimizedPage()
         try {
             await page.goto(`${config.KSU_DOMAIN}/kafedra.php`)
 
@@ -40,18 +40,16 @@ class TeacherScheduleService {
                 linkObjects.push({name, href, id})
             }
 
-
-            await page.close()
-
             return linkObjects
         } catch (e) {
-            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_departments_list: " + err.message))
             throw e
+        } finally {
+            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_departments_list: " + err.message))
         }
     }
 
     async get_teachers_list(departmentId) {
-        const page = await BrowserController.browser.newPage()
+        const page = await BrowserController.createOptimizedPage()
         try {
             await page.goto(`${config.KSU_DOMAIN}/report_prep.php?d=1&IdKaf=${departmentId}`)
 
@@ -80,17 +78,16 @@ class TeacherScheduleService {
                 linkObjects.push({name, href, id, departmentId})
             }
 
-            await page.close()
-
             return linkObjects
         } catch (e) {
-            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_teachers_list: " + err.message))
             throw e
+        } finally {
+            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_teachers_list: " + err.message))
         }
     }
 
     async get_teacher_schedule(id, attemption = 1) {
-        const page = await BrowserController.browser.newPage()
+        const page = await BrowserController.createOptimizedPage()
         try {
             await page.goto(`${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`, {timeout:7000})
 
@@ -103,6 +100,7 @@ class TeacherScheduleService {
 
             if (isForbidden){
                 log.warn("(варн временный) Нас забанило, перезапускаю браузер!")
+                await page.close().catch(()=>{});
                 await BrowserService.restartBrowser()
                 return await this.get_teacher_schedule(id, ++attemption)
             }
@@ -114,7 +112,7 @@ class TeacherScheduleService {
             if (isTableNotExists){
                 await sleep(10000)
                 log.info("teacher table not exists handler, attemption = " + attemption)
-                await page.close()
+                await page.close().catch(()=>{});
                 await BrowserController.auth()
                 return await this.get_teacher_schedule(id, ++attemption)
             }
@@ -124,8 +122,6 @@ class TeacherScheduleService {
                 const table = document.querySelector(selector);
                 return table ? table.outerHTML : null;
             }, "table");
-
-            await page.close()
 
             const tableData = HtmlService.htmlTableToJson(tableHTML)
 
@@ -168,10 +164,12 @@ class TeacherScheduleService {
                 await sleep(1000);
                 return await this.get_teacher_schedule(id, ++attemption)
             } else {
-                // const path = `logs/error_${Date.now()}.png`
-                // await page.screenshot({path, fullPage: true});
                 await page.close().catch(e => console.log(e))
                 throw new Error("Ошибка при получении преподского расписания. Ошибку заскринил." + e.message)
+            }
+        } finally {
+            if (!page.isClosed()) {
+                await page.close().catch(e => console.log(e))
             }
         }
     }
