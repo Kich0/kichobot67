@@ -24,7 +24,7 @@ class CustomTransport extends Transport {
             const token = config.LOGGER_TG_TOKEN
             const url = `https://api.telegram.org/bot${token}/sendMessage?chat_id=${log_chanel_id}&text=${text}`
 
-            https.get(url)
+            https.get(url).on('error', () => {})
         }catch (e){
             console.log("ОШИБКА ПРИ ПОПЫТКЕ ОТОСЛАТЬ ЛОГ В ТЕЛЕГРААААМ!")
         }finally {

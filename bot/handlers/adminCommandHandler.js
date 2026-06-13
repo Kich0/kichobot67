@@ -104,7 +104,7 @@ export default function setupAdminCommandHandler() {
       return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
     }
     try {
-      await axios.get("https://schedule.ksu.kz")
+      await axios.get(config.KSU_DOMAIN)
     } catch (e) {
       console.log(e)
       log.error("Ошибочка в /test", {stack: e.stack})

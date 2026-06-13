@@ -6,6 +6,6 @@
     "esModuleInterop": true
   },
   "include": [
-    "./services/ConverterService/convertWordToHtmlAsync.ts"
+    "./services/ConverterService/wordToHtmlConverter.ts"
   ]
 }
