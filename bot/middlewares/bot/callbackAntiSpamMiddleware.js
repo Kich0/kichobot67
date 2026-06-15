@@ -2,10 +2,13 @@ import i18next from "i18next";
 import {bot, userLastRequest, userWarningSent} from "../../app.js";
 import log from "../../logging/logging.js";
 import userService from "../../services/userService.js";
+import {isUserBanned} from "./messageGateMiddleware.js";
 
 export async function callbackAntiSpamMiddleware(call, next) {
     try {
-        const userId = call.message.chat.id;
+        const userId = call.message?.chat?.id;
+        if (!userId) return;
+        if (isUserBanned(userId)) return;
         const currentTime = new Date().getTime();
         if (userLastRequest[userId]) {
             const timeDiff = currentTime - userLastRequest[userId];

@@ -5,6 +5,7 @@ import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddl
 import userService from "../services/userService.js";
 import i18next from "i18next";
 import {getRandomMemeResponse} from "../controllers/commands/memeResponseController.js";
+import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
 
 const COMMAND_REGEXES = [
     /^\/start/i, /^🗒 Новое расписание/i, /^🗒 Жаңа кесте/i, /^\/new$/i, /^\/new (.+)/i,
@@ -19,7 +20,7 @@ const COMMAND_REGEXES = [
 export function setupAnyMessageHandler() {
     bot.on('message', async (msg) => {
         const isBlackListed = await blackListService.isBlackListed(msg.chat.id)
-        if (!isBlackListed) {
+        if (!isBlackListed && !isMessageBlocked(msg)) {
             if (msg.chat.type !== 'private') {
                 log.silly(`User ${msg.chat.id} || ${msg.from.id} написал в чат: ${msg.text}`, {
                     msg,

@@ -18,7 +18,8 @@ import setupNewChatMemberHandler from "./handlers/newChatMemberHandler.js";
 import {setupAnyMessageHandler} from "./handlers/anyMessageHandler.js";
 import {i18nextInit} from "./locales/init.js";
 import botHealthMonitor from "./utils/botHealthMonitor.js";
-import WebhookRetryManager from "./utils/webhookRetry.js";
+import WebhookRetryManager from "./utils/webhookRetry.js";
+import {processMessageGate} from "./middlewares/bot/messageGateMiddleware.js";
 let botOptions = {};
 if (config.BOT_MODE === 'webhook') {
     botOptions = { polling: false, webHook: false };
@@ -52,6 +53,7 @@ bot.on('webhook_error', (error) => {
         stack: error.stack
     });
 });
+bot.on('message', (msg) => processMessageGate(msg, bot));
 bot.on('message', () => botHealthMonitor.updateActivity());
 bot.on('callback_query', () => botHealthMonitor.updateActivity());
 

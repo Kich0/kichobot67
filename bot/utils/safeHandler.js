@@ -1,10 +1,13 @@
 import log from "../logging/logging.js";
 import config from "../config.js";
 import {bot} from "../app.js";
+import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
 
 
 export function safeHandler(handler, handlerName = 'unknown') {
     return async (...args) => {
+        const msg = args[0];
+        if (msg && isMessageBlocked(msg)) return;
         try {
             await handler(...args);
         } catch (error) {

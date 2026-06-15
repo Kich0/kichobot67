@@ -47,7 +47,7 @@ export async function searchGroupCommandController(msg){
             const msg_text = i18next.t('group_search_success_result', {lng:user_language, searchQuery:groupName, searchCountResult:groups.length})
             await bot.sendMessage(msg.chat.id, msg_text, {reply_markup:markup, parse_mode:"HTML"})
         }catch (e) {
-            await errorCatch();
+            await errorCatch(e, msg);
         }
     })
 }

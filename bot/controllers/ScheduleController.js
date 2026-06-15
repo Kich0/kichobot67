@@ -355,7 +355,7 @@ class ScheduleController {
             }).catch((e) => log.error("Ошибка при обновлении данных о пользователе при получении расписания. ", {
                 stack: e.stack, call, userId: call.message.chat.id
             }))
-            if (!userOldData.group){
+            if (userOldData && !userOldData.group){
                 log.warn(`User ${call.message.chat.id} получил своё первое расписание. Юхууу! Щас вышлю инфу о нем. `)
                 try {
                     await getAndSendUserInfoByUserId(call.message.chat.id, config.LOG_CHANEL_ID)
