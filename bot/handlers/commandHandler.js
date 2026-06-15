@@ -34,8 +34,8 @@ export function setupCommandHandlers() {
     bot.onText(/^профиль/i, safeHandler(profileCommandController, 'profile'));
 
     bot.onText(/^\/help/i, safeHandler(helpCommandController, 'help'))
-    bot.onText(/^💡 Помощь/i, safeHandler(helpCommandController, 'help'))
-    bot.onText(/^💡 Көмек/i, safeHandler(helpCommandController, 'help'))
+    bot.onText(/^[💡❓]\s*Помощь/i, safeHandler(helpCommandController, 'help'))
+    bot.onText(/^[💡❓]\s*Көмек/i, safeHandler(helpCommandController, 'help'))
 
     bot.onText(/^\/remove/i, safeHandler(removeKeyboardCommandController, 'removeKeyboard'))
 
