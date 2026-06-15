@@ -46,7 +46,7 @@ class SearchTeacherController{
                 parse_mode: "HTML"
             })
         }catch (e) {
-            await this.errorCatch()
+            await this.errorCatch(e, msg)
         }
     }
 

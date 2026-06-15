@@ -7,6 +7,12 @@ const authMiddleware = (req, res, next) => {
     return next();
   }
   try {
+    // Проверка предустановленного секретного токена бота
+    const botToken = req.headers["x-bot-token"];
+    if (botToken && botToken === config.TG_TOKEN) {
+      return next();
+    }
+
     const accessToken = req.cookies?.accessToken;
 
     if (!accessToken) {

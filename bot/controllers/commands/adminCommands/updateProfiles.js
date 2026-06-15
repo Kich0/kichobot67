@@ -5,16 +5,20 @@ import {sleep} from "../../../handlers/adminCommandHandler.js";
 import config from "../../../config.js";
 
 export async function updateProfilesCommandController(hard = false){
-    async function getProfileList() {
+    async function getProfileList(attempts = 1) {
         try {
             const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/teacher/get_all_teachers`)
             if (response.status === 200){
                 return response.data
             }
         } catch (e) {
-            log.error("Ошибка при получении списка профилей. Жду 5 минут и пробую снова. Ошибка: " + e.message, {stack: e.stack})
+            if (attempts >= 3) {
+                log.error("[Sync Error] Не удалось получить список профилей после 3 попыток. Прерываю.");
+                throw e;
+            }
+            log.error(`Ошибка при получении списка профилей (попытка ${attempts}/3). Жду 5 минут и пробую снова. Ошибка: ` + e.message, {stack: e.stack})
             await sleep(5 * 60 * 1000)
-            return await getProfileList()
+            return await getProfileList(attempts + 1)
         }
     }
 

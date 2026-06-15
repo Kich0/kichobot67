@@ -6,16 +6,20 @@ import {sleep} from "../../../handlers/adminCommandHandler.js";
 import config from "../../../config.js";
 
 export async function updateGroupsCommandController(hard = false){
-    async function getGroupList(programId) {
+    async function getGroupList(programId, attempts = 1) {
         try {
             const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_group_list_by_programId/${programId}`)
             if (response.status === 200){
                 return response.data
             }
         } catch (e) {
-            log.error("Ошибка при получении списка групп. Жду 5 минут и пробую снова. programId: " + programId + "Ошибка: " + e.message, {stack: e.stack})
+            if (attempts >= 3) {
+                log.error(`[Sync Error] Не удалось получить список групп для programId ${programId} после 3 попыток. Прерываю.`);
+                throw e;
+            }
+            log.error(`Ошибка при получении списка групп (попытка ${attempts}/3). Жду 5 минут и пробую снова. programId: ${programId}. Ошибка: ` + e.message, {stack: e.stack})
             await sleep(5 * 60 * 1000)
-            return await getGroupList(programId)
+            return await getGroupList(programId, attempts + 1)
         }
     }
 

@@ -6,16 +6,20 @@ import config from "../../../config.js";
 
 
 export async function updateFacultiesCommandController(hard = false) {
-    async function getFacultyList() {
+    async function getFacultyList(attempts = 1) {
         try {
             const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_faculty_list`)
             if (response.status === 200){
                 return response.data
             }
         } catch (e) {
-            log.error("Ошибка при получении списка факультетов. Жду 5 минут и пробую снова. Ошибка: " + e.message, {stack: e.stack})
+            if (attempts >= 3) {
+                log.error("[Sync Error] Не удалось получить список факультетов после 3 попыток. Прерываю.");
+                throw e;
+            }
+            log.error(`Ошибка при получении списка факультетов (попытка ${attempts}/3). Жду 5 минут и пробую снова. Ошибка: ` + e.message, {stack: e.stack})
             await sleep(5 * 60 * 1000)
-            return await getFacultyList()
+            return await getFacultyList(attempts + 1)
         }
     }
 

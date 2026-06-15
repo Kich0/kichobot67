@@ -23,13 +23,7 @@ class SyncService {
             const faculties = BrowserController.faculties_data;
             if (!faculties) throw new Error("Не удалось получить список факультетов");
 
-            // 1. Сохраняем факультеты
-            await Faculty.deleteMany({});
-            await Faculty.insertMany(faculties);
-            log.info(`[Sync] Сохранено ${faculties.length} факультетов`);
-
-            // 2. Получаем и сохраняем программы
-            await Program.deleteMany({});
+            // 1. Получаем все программы в память
             let allPrograms = [];
             for (const faculty of faculties) {
                 log.info(`[Sync] Получаю программы для факультета: ${faculty.name}`);
@@ -42,11 +36,8 @@ class SyncService {
                 })));
                 await new Promise(r => setTimeout(r, 1000));
             }
-            await Program.insertMany(allPrograms);
-            log.info(`[Sync] Сохранено ${allPrograms.length} программ`);
 
-            // 3. Получаем и сохраняем группы
-            await UniversityGroup.deleteMany({});
+            // 2. Получаем все группы в память
             let allGroups = [];
             for (const program of allPrograms) {
                 log.info(`[Sync] Получаю группы для программы: ${program.name}`);
@@ -66,6 +57,19 @@ class SyncService {
                 }
                 await new Promise(r => setTimeout(r, 1000));
             }
+
+            // 3. Записываем скачанные метаданные в БД (только когда всё успешно получено)
+            log.info("[Sync] Все метаданные успешно получены в память. Начинаю обновление БД...");
+            
+            await Faculty.deleteMany({});
+            await Faculty.insertMany(faculties);
+            log.info(`[Sync] Сохранено ${faculties.length} факультетов`);
+
+            await Program.deleteMany({});
+            await Program.insertMany(allPrograms);
+            log.info(`[Sync] Сохранено ${allPrograms.length} программ`);
+
+            await UniversityGroup.deleteMany({});
             await UniversityGroup.insertMany(allGroups);
             log.info(`[Sync] Сохранено ${allGroups.length} групп`);
 

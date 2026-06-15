@@ -5,16 +5,20 @@ import departmentService from "../../../services/departmentService.js";
 import config from "../../../config.js";
 
 export async function updateDepartmentsCommandController(hard = false){
-    async function getDepartmentList() {
+    async function getDepartmentList(attempts = 1) {
         try {
             const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/teacherSchedule/get_departments_list`)
             if (response.status === 200){
                 return response.data
             }
         } catch (e) {
-            log.error("Ошибка при получении списка кафедр. Жду 5 минут и пробую снова. Ошибка: " + e.message, {stack: e.stack})
+            if (attempts >= 3) {
+                log.error("[Sync Error] Не удалось получить список кафедр после 3 попыток. Прерываю.");
+                throw e;
+            }
+            log.error(`Ошибка при получении списка кафедр (попытка ${attempts}/3). Жду 5 минут и пробую снова. Ошибка: ` + e.message, {stack: e.stack})
             await sleep(5 * 60 * 1000)
-            return await getDepartmentList()
+            return await getDepartmentList(attempts + 1)
         }
     }
     try{

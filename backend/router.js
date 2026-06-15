@@ -7,7 +7,6 @@ import {teacherRouter} from "./routers/teacherRouter.js";
 import {teacherScheduleRouter} from "./routers/teacherScheduleRouter.js";
 import {groupRouter} from "./routers/groupRouter.js";
 import {usersRouter} from "./routers/usersRouter.js";
-import {converterRouter} from "./routers/converterRouter.js";
 import {browserRouter} from "./routers/browserRouter.js";
 import {gptAssistantRouter} from "./routers/gptAssistantRouter.js";
 
@@ -23,7 +22,6 @@ router.use("/teacher", teacherRouter)
 router.use("/teacherSchedule", teacherScheduleRouter)
 router.use("/groups", groupRouter)
 router.use("/users", usersRouter)
-router.use("/converter", converterRouter)
 router.use("/browser", browserRouter)
 router.use('/gpt', gptAssistantRouter)
 

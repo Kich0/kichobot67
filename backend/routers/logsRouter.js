@@ -1,5 +1,5 @@
 import {Router} from "express";
-// import roleMiddleware from "../middlewares/roleMiddleware.js";
+import authMiddleware from "../middlewares/authMiddleware.js";
 import log from "../logging/logging.js";
 import LogService from "../services/LogService.js";
 
@@ -41,7 +41,7 @@ logsRouter.post('/add_error_log', async (req, res, next) => {
     }
 })
 
-logsRouter.get("/get_logs", async (req,res, next) => {
+logsRouter.get("/get_logs", authMiddleware, async (req,res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;

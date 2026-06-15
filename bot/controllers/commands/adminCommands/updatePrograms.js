@@ -7,16 +7,20 @@ import config from "../../../config.js";
 
 
 export async function updateProgramsCommandController(hard = false) {
-    async function getProgramList(facultyId) {
+    async function getProgramList(facultyId, attempts = 1) {
         try {
             const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_program_list_by_facultyId/${facultyId}`)
             if (response.status === 200){
                 return response.data
             }
         } catch (e) {
-            log.error("Ошибка при получении списка программ. Жду 5 минут и пробую снова. facultyId: " + facultyId + "Ошибка: " + e.message, {stack: e.stack})
+            if (attempts >= 3) {
+                log.error(`[Sync Error] Не удалось получить список программ для facultyId ${facultyId} после 3 попыток. Прерываю.`);
+                throw e;
+            }
+            log.error(`Ошибка при получении списка программ (попытка ${attempts}/3). Жду 5 минут и пробую снова. facultyId: ${facultyId}. Ошибка: ` + e.message, {stack: e.stack})
             await sleep(5 * 60 * 1000)
-            return await getProgramList(facultyId)
+            return await getProgramList(facultyId, attempts + 1)
         }
     }
 

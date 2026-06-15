@@ -413,7 +413,9 @@ export default function setupAdminCommandHandler() {
 
       await bot.sendMessage(msg.chat.id, "Ща всё будет")
 
-      await axios.get(`${config.KSU_HELPER_URL}/express/api/browser/restart_browser`)
+      await axios.get(`${config.KSU_HELPER_URL}/express/api/browser/restart_browser`, {
+        headers: { 'x-bot-token': config.TG_TOKEN }
+      })
     } catch (e) {
       log.error({stack: e.stack})
     }

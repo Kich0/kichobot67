@@ -8,6 +8,20 @@ class TeacherScheduleController {
 
     constructor() {
         this.schedule_cache = {}
+        // Очистка устаревших записей кэша каждые 5 минут
+        setInterval(() => {
+            const now = Date.now();
+            let cleaned = 0;
+            for (const key in this.schedule_cache) {
+                if (now - this.schedule_cache[key].timestamp > 60 * 1000) {
+                    delete this.schedule_cache[key];
+                    cleaned++;
+                }
+            }
+            if (cleaned > 0) {
+                log.info(`[Teacher Cache Cleanup] Удалено ${cleaned} устаревших записей расписания преподавателей`);
+            }
+        }, 5 * 60 * 1000);
     }
 
     async get_departments_list(req, res, next) {

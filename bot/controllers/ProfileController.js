@@ -56,7 +56,7 @@ class ProfileController {
             log.error(`User ${call.message.chat.id} got an error when was clicking to the teacher profile`, {
                 stack: e.stack, call
             })
-            await criticalErrorController(msg)
+            await criticalErrorController(call.message)
         }
 
     }

@@ -53,7 +53,7 @@ export async function searchTeacherCommandController(msg) {
                 parse_mode: "HTML"
             })
         } catch (e) {
-            await errorCatch();
+            await errorCatch(e, msg);
         }
     })
 }
