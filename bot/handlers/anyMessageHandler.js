@@ -19,8 +19,9 @@ const COMMAND_REGEXES = [
 
 export function setupAnyMessageHandler() {
     bot.on('message', async (msg) => {
+        if (isMessageBlocked(msg)) return;
         const isBlackListed = await blackListService.isBlackListed(msg.chat.id)
-        if (!isBlackListed && !isMessageBlocked(msg)) {
+        if (!isBlackListed) {
             if (msg.chat.type !== 'private') {
                 log.silly(`User ${msg.chat.id} || ${msg.from.id} написал в чат: ${msg.text}`, {
                     msg,
