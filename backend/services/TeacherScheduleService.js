@@ -113,7 +113,11 @@ class TeacherScheduleService {
                 await sleep(10000)
                 log.info("teacher table not exists handler, attemption = " + attemption)
                 await page.close().catch(()=>{});
-                await BrowserController.auth()
+                try {
+                    await BrowserController.auth()
+                } catch (authErr) {
+                    log.warn("[TeacherScheduleService] auth() упал, продолжаю: " + authErr.message);
+                }
                 return await this.get_teacher_schedule(id, ++attemption)
             }
 
@@ -159,7 +163,7 @@ class TeacherScheduleService {
 
             return schedule
         } catch (e) {
-            if (attemption < 1) {
+            if (attemption < 2) {
                 await page.close().catch(e => console.log(e))
                 await sleep(1000);
                 return await this.get_teacher_schedule(id, ++attemption)

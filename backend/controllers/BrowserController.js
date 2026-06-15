@@ -4,9 +4,6 @@ import ScheduleService from "../services/ScheduleService.js";
 import log from "../logging/logging.js";
 import BrowserService from "../services/BrowserService.js";
 import FreeProxyService from "../services/FreeProxyService.js";
-// import ping from "ping";
-// import ApiError from "../exceptions/apiError.js";
-// import axios from "axios";
 
 
 class BrowserController {
@@ -14,40 +11,79 @@ class BrowserController {
     auth_cookie;
     faculties_data;
     isAuthing;
-    isRecovering; // Флаг для блокировки параллельных попыток восстановления
-    recoveryTimeout; // Таймер для автосброса флага восстановления
-    isLaunching; // Флаг для блокировки параллельных запусков браузера
-    launchTimeout; // Таймер для автосброса флага запуска
+    isRecovering;
+    recoveryTimeout;
+    isLaunching;
+    launchTimeout;
+    authTimeout; // Таймер для автосброса isAuthing
+    _authPromise; // Единый промис авторизации для дедупликации
 
     constructor() {
         this.isRecovering = false;
         this.recoveryTimeout = null;
         this.isLaunching = false;
         this.launchTimeout = null;
+        this.isAuthing = false;
+        this.authTimeout = null;
+        this._authPromise = null;
         if (config.START_BROWSER) {
             this.isAuthing = true;
             this.launchBrowser().then(() => log.info("Браузер запущен"))
         }
     }
 
+    // Ожидание завершения авторизации (максимум waitMs миллисекунд)
+    async _waitForAuth(waitMs = 30000) {
+        const startTime = Date.now();
+        const checkInterval = 500;
+        while (this.isAuthing && (Date.now() - startTime) < waitMs) {
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        }
+        return !this.isAuthing;
+    }
+
     allChecksCall = async (req, res, next) => {
         try {
             // Блокируем входящие запросы если идёт запуск браузера
             if (this.isLaunching) {
-                throw new Error("Идёт запуск браузера, попробуйте через несколько секунд")
+                // Ждём до 30 секунд пока браузер запустится
+                for (let i = 0; i < 60; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (!this.isLaunching) break;
+                }
+                if (this.isLaunching) {
+                    res.set('Retry-After', '15');
+                    return res.status(503).json({ error: "Идёт запуск браузера, попробуйте через 15 секунд" });
+                }
             }
 
             if (!this.browser?.isConnected()) {
                 await this.launchBrowser();
             }
 
-            // Блокируем входящие запросы если идёт авторизация или восстановление
+            // Если идёт авторизация — ЖДЁМ до 30 секунд вместо мгновенного отказа
             if (this.isAuthing) {
-                throw new Error("Идёт авторизация в КСУ, попробуйте через несколько секунд")
+                log.info(`[allChecksCall] Запрос ожидает завершения авторизации (до 30 сек)...`);
+                const authCompleted = await this._waitForAuth(30000);
+                if (!authCompleted) {
+                    log.warn(`[allChecksCall] Авторизация не завершилась за 30 сек, отвечаю 503`);
+                    res.set('Retry-After', '10');
+                    return res.status(503).json({ error: "Идёт авторизация в КСУ, попробуйте через 10 секунд" });
+                }
+                log.info(`[allChecksCall] Авторизация завершилась, пропускаю запрос`);
             }
 
+            // Если идёт восстановление — тоже ждём, но короче (15 сек)
             if (this.isRecovering) {
-                throw new Error("Идёт восстановление соединения с КСУ, попробуйте через несколько секунд")
+                log.info(`[allChecksCall] Запрос ожидает завершения восстановления (до 15 сек)...`);
+                const startTime = Date.now();
+                while (this.isRecovering && (Date.now() - startTime) < 15000) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                if (this.isRecovering) {
+                    res.set('Retry-After', '10');
+                    return res.status(503).json({ error: "Идёт восстановление соединения с КСУ, попробуйте через 10 секунд" });
+                }
             }
 
             // Защита от утечки памяти - проверяем количество открытых страниц
@@ -56,7 +92,7 @@ class BrowserController {
 
             log.info(`[Memory Check] Открыто страниц: ${openPagesCount}`);
 
-            // Если открыто более 20 страниц - закрываем все кроме первой и перезапускаем браузер
+            // Если открыто более 5 страниц - закрываем все кроме первой и перезапускаем браузер
             if (openPagesCount > 5) {
                 log.warn(`[Memory Protection] Обнаружено ${openPagesCount} открытых страниц! Закрываю все и перезапускаю браузер.`);
 
@@ -73,10 +109,11 @@ class BrowserController {
                 await this.browser?.close().catch(e => log.error("Ошибка при закрытии браузера: " + e.message));
                 await this.launchBrowser();
 
-                throw new Error("Браузер был перезапущен из-за утечки памяти. Попробуйте запрос снова.");
+                res.set('Retry-After', '5');
+                return res.status(503).json({ error: "Браузер был перезапущен из-за утечки памяти. Попробуйте запрос снова." });
             }
 
-            // Дополнительная проверка - если открыто 10-20 страниц, закрываем лишние
+            // Дополнительная проверка - если открыто 3-5 страниц, закрываем лишние
             if (openPagesCount > 3) {
                 log.warn(`[Memory Warning] Открыто ${openPagesCount} страниц. Закрываю лишние.`);
                 for (let i = 1; i < pages.length; i++) {
@@ -235,11 +272,37 @@ class BrowserController {
     }
 
     async auth() {
+        // Дедупликация: если auth() уже выполняется — возвращаем тот же промис
+        if (this._authPromise) {
+            log.info("[Auth Dedup] auth() уже выполняется, жду результат...");
+            return this._authPromise;
+        }
+
+        this._authPromise = this._doAuth();
+        try {
+            return await this._authPromise;
+        } finally {
+            this._authPromise = null;
+        }
+    }
+
+    async _doAuth() {
         console.log("Начинаю авторизацию");
         this.isAuthing = true;
         let success = false;
         let attempts = 0;
         const maxAttempts = 15;
+
+        // Аварийный таймаут: если auth зависнет больше 120 сек — принудительно сбросить флаг
+        if (this.authTimeout) {
+            clearTimeout(this.authTimeout);
+        }
+        this.authTimeout = setTimeout(() => {
+            if (this.isAuthing) {
+                log.error("[Auth Timeout] Авторизация зависла больше 120 секунд, принудительно сбрасываю isAuthing!");
+                this.isAuthing = false;
+            }
+        }, 120000);
 
         try {
             while (!success && attempts < maxAttempts) {
@@ -291,6 +354,10 @@ class BrowserController {
         } catch (e) {
             log.error("Не получилось авторизоваться на schedule.buketov.edu.kz | " + e.message);
         } finally {
+            if (this.authTimeout) {
+                clearTimeout(this.authTimeout);
+                this.authTimeout = null;
+            }
             this.isAuthing = false;
         }
     }
@@ -356,19 +423,6 @@ class BrowserController {
         }
 
     }
-
-    // async isKsuAlive() {
-    //     const page = await this.browser.newPage();
-    //     try {
-    //         await page.goto("https://schedule.buketov.edu.kz/view1.php?id=5044&Kurs=3&Otdel=рус&Stud=10&d=1&m=Read", {timeout:3000})
-    //         return true; // Возвращает true, если сайт доступен, иначе false
-    //     } catch (e) {
-    //         log.error("Ошибка при попытке пингануть ксу: " + e.message, e)
-    //         return false;
-    //     }finally {
-    //         await page.close()
-    //     }
-    // }
 
 }
 

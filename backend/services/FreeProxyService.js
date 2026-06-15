@@ -4,9 +4,9 @@ import { HttpProxyAgent } from "http-proxy-agent";
 import log from "../logging/logging.js";
 
 const POOL_SIZE = 5;              // Сколько прокси держать в пуле
-const MAINTAIN_INTERVAL = 3 * 60 * 1000; // Проверка пула каждые 3 минуты
-const PROXY_TEST_TIMEOUT = 5000;  // Жесткий таймаут для теста
-const BATCH_SIZE = 10;            // Параллельная проверка батчами (чтобы не жрать ОЗУ)
+const MAINTAIN_INTERVAL = 1 * 60 * 1000; // Проверка пула каждую 1 минуту (было 3)
+const PROXY_TEST_TIMEOUT = 3000;  // Жёсткий таймаут для теста (было 5000)
+const BATCH_SIZE = 20;            // Параллельная проверка батчами (было 10)
 
 class FreeProxyService {
     constructor() {
@@ -86,7 +86,7 @@ class FreeProxyService {
 
         let found = 0;
         let checkedCount = 0;
-        const maxChecks = 200;
+        const maxChecks = 500;
 
         while (found < needed && this.proxyIndex < this.cachedProxies.length && checkedCount < maxChecks) {
             const batch = this.cachedProxies
@@ -146,6 +146,18 @@ class FreeProxyService {
             allProxies.push(...list2);
         } catch (e) {
             log.error("Ошибка ProxyScrape (all): " + e.message);
+        }
+        // Источник 3: GitHub TheSpeedX — огромный агрегатор HTTPS прокси
+        try {
+            const res3 = await axios.get(
+                "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+                { timeout: 10000 }
+            );
+            const list3 = res3.data.split('\n').map(p => p.trim()).filter(p => p.length > 0 && p.includes(':'));
+            log.info(`GitHub TheSpeedX: ${list3.length} прокси`);
+            allProxies.push(...list3);
+        } catch (e) {
+            log.error("Ошибка GitHub TheSpeedX: " + e.message);
         }
         allProxies = [...new Set(allProxies)];
         allProxies.sort(() => Math.random() - 0.5);

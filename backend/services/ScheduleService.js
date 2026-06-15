@@ -133,7 +133,7 @@ class ScheduleService {
     }
 
     get_schedule_by_groupId = async (id, language, attemption = 1) => {
-        if (attemption > 2) {
+        if (attemption > 3) {
             throw new Error("Ошибка при получении расписания. слишком много рекурсий")
         }
 
@@ -173,7 +173,11 @@ class ScheduleService {
                 await sleep(5000)
                 log.info("table not exists handler, attemption = " + attemption)
                 if (!page.isClosed()) await page.close().catch(()=>{});
-                await BrowserController.auth()
+                try {
+                    await BrowserController.auth()
+                } catch (authErr) {
+                    log.warn("[ScheduleService] auth() упал, продолжаю: " + authErr.message);
+                }
                 return await this.get_schedule_by_groupId(id, language, ++attemption)
             }
 
@@ -183,7 +187,7 @@ class ScheduleService {
             }, "table");
 
         } catch (e) {
-            if (attemption < 2) {
+            if (attemption < 3) {
                 if (!page.isClosed()) await page.close().catch(err => console.log(err))
                 await sleep(1000);
                 return await this.get_schedule_by_groupId(id, language, ++attemption)
