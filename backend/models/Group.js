@@ -11,4 +11,4 @@ const GroupSchema = new Schema({
     timestamps: true,
 });
 
-export default model("Group", GroupSchema)
+export default model("WebGroup", GroupSchema)

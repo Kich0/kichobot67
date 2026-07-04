@@ -5,4 +5,4 @@ const facultySchema = new mongoose.Schema({
     id: {type: Number},
 }, {timestamps:true});
 
-export const Faculty = mongoose.model('Faculty', facultySchema);
+export const Faculty = mongoose.model('WebFaculty', facultySchema, 'faculties');

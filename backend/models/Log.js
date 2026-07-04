@@ -9,4 +9,4 @@ const LogSchema = new Schema({
     },
 )
 
-export default model("Log", LogSchema)
+export default model("WebLog", LogSchema, 'logs')

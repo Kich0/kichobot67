@@ -7,4 +7,4 @@ const programSchema = new mongoose.Schema({
     facultyName: {type:String}
 }, {timestamps:true});
 
-export const Program = mongoose.model('Program', programSchema);
+export const Program = mongoose.model('WebProgram', programSchema, 'programs');
