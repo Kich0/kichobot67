@@ -19,9 +19,10 @@ import {
   inactiveSpamAdminCommandController
 } from "../controllers/commands/adminCommands/inactiveSpamAdminCommandController.js";
 import {piarAdminCommandController} from "../controllers/commands/adminCommands/piarAdminCommandController.js";
-import axios from "axios";
 import {getUserCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import config from "../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-контроллера вместо HTTP
+import BrowserController from "../../backend/controllers/BrowserController.js";
 
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -413,9 +414,9 @@ export default function setupAdminCommandHandler() {
 
       await bot.sendMessage(msg.chat.id, "Ща всё будет")
 
-      await axios.get(`${config.KSU_HELPER_URL}/express/api/browser/restart_browser`, {
-        headers: { 'x-bot-token': config.TG_TOKEN }
-      })
+      // Прямой вызов вместо axios.get(KSU_HELPER_URL/browser/restart_browser)
+      await BrowserController.auth();
+      await bot.sendMessage(msg.chat.id, "Браузер перезапущен!")
     } catch (e) {
       log.error({stack: e.stack})
     }

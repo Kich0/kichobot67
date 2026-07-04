@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: kichobot
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: node --max-old-space-size=400 --expose-gc server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        sync: false
+      - key: DB_URI
+        sync: false
+      - key: TG_TOKEN
+        sync: false
+      - key: LOG_CHANEL_ID
+        sync: false
+      - key: LOGGER_TG_TOKEN
+        sync: false
+      - key: BOT_ID
+        sync: false
+      - key: KSU_DOMAIN
+        sync: false
+      - key: KSU_LOGIN
+        sync: false
+      - key: KSU_PASSWORD
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: BOT_MODE
+        value: webhook
+      - key: WEBHOOK_DOMAIN
+        sync: false
+      - key: WEBHOOK_PATH
+        value: /bot/webhook
+      - key: START_BROWSER
+        value: "true"
+      - key: AUTO_KSU_AUTH
+        value: "true"
+      - key: USE_FREE_PROXIES
+        value: "true"
+      - key: DEBUG
+        value: "false"

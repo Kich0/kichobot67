@@ -2,7 +2,6 @@ import log from "../logging/logging.js"
 import facultyService from "../services/facultyService.js"
 import programService from "../services/programService.js"
 import groupService from "../services/groupService.js";
-import axios from "axios";
 import scheduleService from "../services/scheduleService.js";
 import userService from "../services/userService.js";
 import { unexpectedCallbackErrorController } from "../exceptions/bot/unexpectedCallbackErrorController.js";
@@ -11,14 +10,17 @@ import { sleep } from "../handlers/adminCommandHandler.js";
 import i18next from "i18next";
 import {getAndSendUserInfoByUserId} from "./commands/adminCommands/getUser.js";
 import config from "../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
 export let schedule_cache = {}
 
 async function downloadSchedule(groupId, language, attemption = 1) {
     try {
-        return await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_schedule_by_groupId/${groupId}/${language}`, {
-        timeout: 10000
-    })
+        // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+        // Возвращаем объект с .data для совместимости с остальным кодом
+        const data = await BackendScheduleService.get_schedule_by_groupId(groupId, language);
+        return { data, status: 200 };
     } catch (e) {
         if (attemption < 1) {
             await sleep(1000)

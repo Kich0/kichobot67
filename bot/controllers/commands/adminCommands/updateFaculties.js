@@ -2,16 +2,15 @@ import axios from "axios";
 import log from "../../../logging/logging.js";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
 import facultyService from "../../../services/facultyService.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-контроллера вместо HTTP
+import BrowserController from "../../../../backend/controllers/BrowserController.js";
 
 
 export async function updateFacultiesCommandController(hard = false) {
     async function getFacultyList(attempts = 1) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_faculty_list`)
-            if (response.status === 200){
-                return response.data
-            }
+            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+            return BrowserController.faculties_data;
         } catch (e) {
             if (attempts >= 3) {
                 log.error("[Sync Error] Не удалось получить список факультетов после 3 попыток. Прерываю.");

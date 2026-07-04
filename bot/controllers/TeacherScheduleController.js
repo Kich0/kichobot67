@@ -1,7 +1,6 @@
 import departmentService from "../services/departmentService.js";
 import ScheduleController, {schedule_cache} from "./ScheduleController.js";
 import teacherService from "../services/teacherService.js";
-import axios from "axios";
 import log from "../logging/logging.js";
 import {unexpectedCallbackErrorController} from "../exceptions/bot/unexpectedCallbackErrorController.js";
 import userService from "../services/userService.js";
@@ -9,12 +8,15 @@ import teacherScheduleService from "../services/teacherScheduleService.js";
 import {bot} from "../app.js";
 import i18next from 'i18next'
 import config from "../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
 async function downloadSchedule(teacherId, attemption = 1) {
     try {
-        return await axios.get(`${config.KSU_HELPER_URL}/express/api/teacherSchedule/get_teacher_schedule/${teacherId}`, {
-            timeout: 10000
-        })
+        // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+        // Возвращаем объект с .data для совместимости с остальным кодом
+        const data = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
+        return { data, status: 200 };
     } catch (e) {
         if (attemption < 1) {
             log.info(`teacher ${teacherId} попал в рекурсивную функцию по получению расписания!`)

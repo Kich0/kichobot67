@@ -1,16 +1,22 @@
-import axios from "axios";
 import teacherProfileService from "../../../services/profileService.js";
 import log from "../../../logging/logging.js";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-контроллера вместо HTTP
+import TeacherController from "../../../../backend/controllers/TeacherController.js";
 
 export async function updateProfilesCommandController(hard = false){
     async function getProfileList(attempts = 1) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/teacher/get_all_teachers`)
-            if (response.status === 200){
-                return response.data
-            }
+            // Прямой вызов — TeacherController.get_all_teachers использует Puppeteer.
+            // Раньше это шло через HTTP, сейчас вызываем метод напрямую.
+            // Но get_all_teachers принимает (req, res, next) — это Express handler.
+            // Нужно имитировать res.json для получения данных:
+            return await new Promise((resolve, reject) => {
+                const fakeReq = {};
+                const fakeRes = { json: (data) => resolve(data) };
+                const fakeNext = (err) => reject(err);
+                TeacherController.get_all_teachers(fakeReq, fakeRes, fakeNext);
+            });
         } catch (e) {
             if (attempts >= 3) {
                 log.error("[Sync Error] Не удалось получить список профилей после 3 попыток. Прерываю.");

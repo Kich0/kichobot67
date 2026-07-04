@@ -1,16 +1,14 @@
-import axios from "axios";
 import log from "../../../logging/logging.js";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
 import departmentService from "../../../services/departmentService.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendTeacherScheduleService from "../../../../backend/services/TeacherScheduleService.js";
 
 export async function updateDepartmentsCommandController(hard = false){
     async function getDepartmentList(attempts = 1) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/teacherSchedule/get_departments_list`)
-            if (response.status === 200){
-                return response.data
-            }
+            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+            return await BackendTeacherScheduleService.get_departments_list();
         } catch (e) {
             if (attempts >= 3) {
                 log.error("[Sync Error] Не удалось получить список кафедр после 3 попыток. Прерываю.");

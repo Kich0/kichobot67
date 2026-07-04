@@ -1,5 +1,4 @@
 import {Router} from "express";
-import axios from "axios";
 import log from "./logging/logging.js"
 import groupService from "./services/groupService.js";
 import userService from "./services/userService.js";
@@ -10,6 +9,9 @@ import teacherScheduleService from "./services/teacherScheduleService.js";
 import config from "./config.js";
 import botHealthMonitor from "./utils/botHealthMonitor.js";
 import {bot} from "./app.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервисов вместо HTTP
+import BackendScheduleService from "../backend/services/ScheduleService.js";
+import BackendTeacherScheduleService from "../backend/services/TeacherScheduleService.js";
 
 const router = new Router()
 router.get('/health', async (req, res) => {
@@ -95,10 +97,11 @@ router.get('/get_user_schedule', async (req, res) => {
         const groupId = group.id;
         const language = group.language;
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_schedule_by_groupId/${groupId}/${language}`, {timeout:10000})
+            // Прямой вызов бэкенд-сервиса вместо HTTP
+            const scheduleData = await BackendScheduleService.get_schedule_by_groupId(groupId, language);
 
             data.studentSchedule = {
-                schedule:response.data,
+                schedule:scheduleData,
                 updatedAt: Date.now(),
                 group,
                 isNew:true
@@ -124,10 +127,11 @@ router.get('/get_user_schedule', async (req, res) => {
     if (teacher) {
         const teacherId = teacher.id;
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/teacherSchedule/get_teacher_schedule/${teacherId}`)
+            // Прямой вызов бэкенд-сервиса вместо HTTP
+            const teacherScheduleData = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
 
             data.teacherSchedule = {
-                schedule:response.data,
+                schedule:teacherScheduleData,
                 updatedAt: Date.now(),
                 teacher,
                 isNew:true

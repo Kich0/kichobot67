@@ -1,18 +1,19 @@
 import log from "../../../logging/logging.js";
 import programService from "../../../services/programService.js";
 import facultyService from "../../../services/facultyService.js";
-import axios from "axios";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendScheduleService from "../../../../backend/services/ScheduleService.js";
+import BrowserController from "../../../../backend/controllers/BrowserController.js";
 
 
 export async function updateProgramsCommandController(hard = false) {
     async function getProgramList(facultyId, attempts = 1) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_program_list_by_facultyId/${facultyId}`)
-            if (response.status === 200){
-                return response.data
-            }
+            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+            return await BackendScheduleService.get_program_list_by_facultyId(
+                BrowserController.browser, BrowserController.faculties_data, facultyId
+            );
         } catch (e) {
             if (attempts >= 3) {
                 log.error(`[Sync Error] Не удалось получить список программ для facultyId ${facultyId} после 3 попыток. Прерываю.`);

@@ -1,19 +1,17 @@
 import scheduleService from "../../../services/scheduleService.js";
 import groupService from "../../../services/groupService.js";
 import log from "../../../logging/logging.js";
-import axios from "axios";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendScheduleService from "../../../../backend/services/ScheduleService.js";
 
 export async function updateSchedulesCommandController(hard = false) {
     async function getSchedule(groupId, language) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_schedule_by_groupId/${groupId}/${language}`)
-            if (response.status === 200) {
-                return response.data
-            }
+            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+            return await BackendScheduleService.get_schedule_by_groupId(groupId, language);
         } catch (e) {
-            log.error(`Ошибка при получении расписания для группы ${groupId}. Ошибка: ` + e.message)
+            log.error(`Ошибка при получении расписания для группы ${groupId}. Ошибка: ` + e.message)
             await sleep(5000)
             return null
         }
@@ -28,7 +26,7 @@ export async function updateSchedulesCommandController(hard = false) {
         let errorCount = 0
 
         for (let i = 0; i < groups.length; i++) {
-            const group = groups[i]
+            const group = groups[i]
             await sleep(1000)
 
             const scheduleData = await getSchedule(group.id, group.language)

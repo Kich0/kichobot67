@@ -6,7 +6,7 @@ import {updateProfilesCommandController} from "./bot/controllers/commands/adminC
 import {updateDepartmentsCommandController} from "./bot/controllers/commands/adminCommands/updateDepartments.js";
 import {updateTeachersCommandController} from "./bot/controllers/commands/adminCommands/updateTeachers.js";
 import {updateSchedulesCommandController} from "./bot/controllers/commands/adminCommands/updateSchedules.js";
-import db from "./bot/db/connection.js";
+import db from "./backend/db/connection.js";
 import config from "./bot/config.js";
 
 async function runUpdate() {

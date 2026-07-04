@@ -1,17 +1,18 @@
 import groupService from "../../../services/groupService.js";
 import programService from "../../../services/programService.js";
 import log from "../../../logging/logging.js";
-import axios from "axios";
 import {sleep} from "../../../handlers/adminCommandHandler.js";
-import config from "../../../config.js";
+// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
+import BackendScheduleService from "../../../../backend/services/ScheduleService.js";
+import BrowserController from "../../../../backend/controllers/BrowserController.js";
 
 export async function updateGroupsCommandController(hard = false){
     async function getGroupList(programId, attempts = 1) {
         try {
-            const response = await axios.get(`${config.KSU_HELPER_URL}/express/api/schedule/get_group_list_by_programId/${programId}`)
-            if (response.status === 200){
-                return response.data
-            }
+            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
+            return await BackendScheduleService.get_group_list_by_programId(
+                BrowserController.browser, programId
+            );
         } catch (e) {
             if (attempts >= 3) {
                 log.error(`[Sync Error] Не удалось получить список групп для programId ${programId} после 3 попыток. Прерываю.`);
