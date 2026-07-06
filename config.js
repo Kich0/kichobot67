@@ -13,8 +13,8 @@ const config = {
 
     // === KSU (University) ===
     KSU_DOMAIN: process.env.KSU_DOMAIN || 'https://schedule.buketov.edu.kz',
-    KSU_LOGIN: process.env.KSU_LOGIN,
-    KSU_PASSWORD: process.env.KSU_PASSWORD,
+    KSU_LOGIN: process.env.KSU_LOGIN?.trim(),
+    KSU_PASSWORD: process.env.KSU_PASSWORD?.trim(),
 
     // === Telegram Bot ===
     TG_TOKEN: process.env.TG_TOKEN,

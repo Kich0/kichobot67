@@ -101,6 +101,19 @@ class KsuAuthService {
      * @param {string|null} proxy - прокси (null = прямое подключение)
      * @returns {string|null} - кука "PHPSESSID=xxx" или null
      */
+    _checkCloudflare(response, stepName) {
+        if (!response) return;
+        const body = typeof response.data === 'string' ? response.data : '';
+        if (body.includes('Cloudflare') || body.includes('cloudflare-captcha') || body.includes('Just a moment') || response.status === 403) {
+            throw new Error(`Блокировка Cloudflare на ${stepName}`);
+        }
+    }
+
+    /**
+     * Одна попытка авторизации.
+     * @param {string|null} proxy - прокси (null = прямое подключение)
+     * @returns {string|null} - кука "PHPSESSID=xxx" или null
+     */
     async _tryAuth(proxy) {
         const domain = config.KSU_DOMAIN;
         const agentOpts = proxy ? { rejectUnauthorized: false } : undefined;
@@ -120,6 +133,8 @@ class KsuAuthService {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
+
+        this._checkCloudflare(loginPageRes, "Шаг 1 (GET login.php)");
 
         // Извлекаем PHPSESSID из set-cookie заголовка
         let sessionCookie = this._extractSessionCookie(loginPageRes.headers['set-cookie']);
@@ -147,6 +162,8 @@ class KsuAuthService {
             }
         );
 
+        this._checkCloudflare(loginRes, "Шаг 2 (POST login.php)");
+
         // Если прилетел новый Set-Cookie, обновляем
         const newCookie = this._extractSessionCookie(loginRes.headers['set-cookie']);
         if (newCookie) {
@@ -168,6 +185,8 @@ class KsuAuthService {
                 'Cookie': sessionCookie
             }
         });
+
+        this._checkCloudflare(mainRes, "Шаг 3 (GET /)");
 
         // Если нас редиректит на login.php — значит логин не сработал!
         if (mainRes.status === 302 && mainRes.headers.location && mainRes.headers.location.includes('login.php')) {
@@ -193,6 +212,7 @@ class KsuAuthService {
                     'Cookie': sessionCookie
                 }
             });
+            this._checkCloudflare(redirectRes, "Шаг 3 Редирект");
             mainBody = redirectRes.data;
         }
 
@@ -221,10 +241,12 @@ class KsuAuthService {
                 }
             );
 
+            this._checkCloudflare(selectRes, "Выбор факультета (POST /)");
+
             const newerCookie = this._extractSessionCookie(selectRes.headers['set-cookie']);
             if (newerCookie) sessionCookie = newerCookie;
         } else {
-            log.warn("[KsuAuth _tryAuth] Список факультетов не найден на главной странице!");
+            log.warn(`[KsuAuth _tryAuth] Список факультетов не найден на главной странице! Статус ответа: ${mainRes.status}. Длина body: ${bodyText.length}. Начало body: ${bodyText.substring(0, 300).replace(/\s+/g, ' ')}`);
         }
 
         // Шаг 4: Верификация — проверить что кука действительно даёт доступ к расписанию
