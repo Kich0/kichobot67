@@ -107,13 +107,14 @@ class KsuAuthService {
         const httpsAgent = proxy ? new HttpsProxyAgent(`http://${proxy}`, agentOpts) : undefined;
         const httpAgent = proxy ? new HttpProxyAgent(`http://${proxy}`) : undefined;
 
+        log.info(`[KsuAuth _tryAuth] Шаг 1: GET login.php`);
         // Шаг 1: GET login.php — получить начальную сессию
         const loginPageRes = await axios.get(`${domain}/login.php`, {
             httpsAgent,
             httpAgent,
             proxy: false,
             timeout: AUTH_TIMEOUT,
-            maxRedirects: 5,
+            maxRedirects: 0,
             validateStatus: s => s < 400,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -122,7 +123,12 @@ class KsuAuthService {
 
         // Извлекаем PHPSESSID из set-cookie заголовка
         let sessionCookie = this._extractSessionCookie(loginPageRes.headers['set-cookie']);
+        if (!sessionCookie) {
+            throw new Error("Сервер не вернул PHPSESSID на шаге 1");
+        }
+        log.info(`[KsuAuth _tryAuth] Шаг 1 успешен, cookie: ${sessionCookie}`);
 
+        log.info(`[KsuAuth _tryAuth] Шаг 2: POST login.php`);
         // Шаг 2: POST login.php — отправить логин/пароль
         const loginRes = await axios.post(`${domain}/login.php`, 
             `login=${encodeURIComponent(config.KSU_LOGIN)}&password=${encodeURIComponent(config.KSU_PASSWORD)}`,
@@ -131,31 +137,31 @@ class KsuAuthService {
                 httpAgent,
                 proxy: false,
                 timeout: AUTH_TIMEOUT,
-                maxRedirects: 5,
+                maxRedirects: 0,
                 validateStatus: s => s < 400 || s === 302,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'Cookie': sessionCookie || ''
+                    'Cookie': sessionCookie
                 }
             }
         );
 
-        // Обновляем куку если сервер выдал новую
+        // Если прилетел новый Set-Cookie, обновляем
         const newCookie = this._extractSessionCookie(loginRes.headers['set-cookie']);
-        if (newCookie) sessionCookie = newCookie;
-
-        if (!sessionCookie) {
-            throw new Error("Сервер КарГУ не вернул PHPSESSID");
+        if (newCookie) {
+            sessionCookie = newCookie;
+            log.info(`[KsuAuth _tryAuth] Шаг 2 выдал новый cookie: ${sessionCookie}`);
         }
 
-        // Шаг 3: GET главная страница и выбрать факультет (как при Puppeteer-авторизации)
+        log.info(`[KsuAuth _tryAuth] Шаг 3: GET главная страница /`);
+        // Шаг 3: GET главная страница — проверить что мы зашли
         const mainRes = await axios.get(`${domain}/`, {
             httpsAgent,
             httpAgent,
             proxy: false,
             timeout: AUTH_TIMEOUT,
-            maxRedirects: 5,
+            maxRedirects: 0,
             validateStatus: s => s < 400 || s === 302,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -163,12 +169,40 @@ class KsuAuthService {
             }
         });
 
+        // Если нас редиректит на login.php — значит логин не сработал!
+        if (mainRes.status === 302 && mainRes.headers.location && mainRes.headers.location.includes('login.php')) {
+            throw new Error("Неверный логин или пароль (редирект на login.php на шаге 3)");
+        }
+
+        // Если редиректит куда-то еще (например, на index.php), делаем туда запрос
+        let mainBody = mainRes.data;
+        if (mainRes.status === 302 && mainRes.headers.location) {
+            const redirectUrl = mainRes.headers.location.startsWith('http') 
+                ? mainRes.headers.location 
+                : `${domain}/${mainRes.headers.location.replace(/^\//, '')}`;
+            log.info(`[KsuAuth _tryAuth] Перехожу по редиректу: ${redirectUrl}`);
+            const redirectRes = await axios.get(redirectUrl, {
+                httpsAgent,
+                httpAgent,
+                proxy: false,
+                timeout: AUTH_TIMEOUT,
+                maxRedirects: 0,
+                validateStatus: s => s < 400,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Cookie': sessionCookie
+                }
+            });
+            mainBody = redirectRes.data;
+        }
+
         // Извлечь список факультетов для POST
-        const mainBody = typeof mainRes.data === 'string' ? mainRes.data : '';
-        const selectMatch = mainBody.match(/<option[^>]*>([^<]+)<\/option>/);
+        const bodyText = typeof mainBody === 'string' ? mainBody : '';
+        const selectMatch = bodyText.match(/<option[^>]*>([^<]+)<\/option>/);
         const firstFaculty = selectMatch ? selectMatch[1] : null;
 
         if (firstFaculty) {
+            log.info(`[KsuAuth _tryAuth] Выбираем факультет: ${firstFaculty}`);
             // POST выбор факультета — завершает авторизацию
             const selectRes = await axios.post(`${domain}/`,
                 `Login=${encodeURIComponent(firstFaculty)}`,
@@ -177,7 +211,7 @@ class KsuAuthService {
                     httpAgent,
                     proxy: false,
                     timeout: AUTH_TIMEOUT,
-                    maxRedirects: 5,
+                    maxRedirects: 0,
                     validateStatus: s => s < 500,
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -189,9 +223,12 @@ class KsuAuthService {
 
             const newerCookie = this._extractSessionCookie(selectRes.headers['set-cookie']);
             if (newerCookie) sessionCookie = newerCookie;
+        } else {
+            log.warn("[KsuAuth _tryAuth] Список факультетов не найден на главной странице!");
         }
 
         // Шаг 4: Верификация — проверить что кука действительно даёт доступ к расписанию
+        log.info(`[KsuAuth _tryAuth] Шаг 4: Верификация сессии`);
         const verified = await this._verifyCookie(sessionCookie, proxy);
         if (!verified) {
             throw new Error("Кука не прошла верификацию — расписание недоступно");
