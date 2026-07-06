@@ -37,6 +37,7 @@ import setupDocumentHandler from "./bot/handlers/documentHandler.js";
 import { setupUserDailyStatisticsLogging } from "./bot/cron/userDailyStatisticsLogging.js";
 import { setupDailyDataUpdate } from "./bot/cron/dailyDataUpdate.js";
 import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/loggingPathUpdate.js";
+import { setupScheduleCacheWarmup } from "./bot/cron/scheduleCacheWarmup.js";
 import setupNewChatMemberHandler from "./bot/handlers/newChatMemberHandler.js";
 import { setupAnyMessageHandler } from "./bot/handlers/anyMessageHandler.js";
 import { i18nextInit } from "./bot/locales/init.js";
@@ -175,6 +176,7 @@ const appStart = async () => {
         await setupUserDailyStatisticsLogging();
         await setupDailyDataUpdate();
         await setupBotLoggingPathUpdate();
+        setupScheduleCacheWarmup();
 
         backendLog.info(`✅ Все модули инициализированы успешно`);
         backendLog.info(`USE_FREE_PROXIES: ${config.USE_FREE_PROXIES}`);

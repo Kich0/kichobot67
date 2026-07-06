@@ -1,182 +1,200 @@
-import BrowserController from "../controllers/BrowserController.js";
-import ApiError from "../exceptions/apiError.js";
+import KsuAuthService from "./KsuAuthService.js";
+import FreeProxyService from "./FreeProxyService.js";
 import HtmlService from "./HtmlService.js";
 import log from "../logging/logging.js";
 import {sleep} from "./ScheduleService.js";
-import BrowserService from "./BrowserService.js";
 import config from "../config.js";
+import axios from "axios";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { HttpProxyAgent } from "http-proxy-agent";
+import * as cheerio from "cheerio";
 
-function getQueryParam(url, paramName) {
-    const urlParts = url.split('?');
-    const queryString = urlParts[1] || '';
-    const queryParams = {};
-
-    queryString.split('&').forEach((param) => {
-        const [key, value] = param.split('=');
-        queryParams[key] = decodeURIComponent(value);
-    });
-
-    return queryParams[paramName] || null;
-}
+const FETCH_TIMEOUT = 12000; // 12 сек
 
 class TeacherScheduleService {
-    async get_departments_list() {
-        const page = await BrowserController.createOptimizedPage()
+    /**
+     * Общий метод для скачивания HTML-страницы с КарГУ через axios.
+     * Стратегия: сначала напрямую, потом через прокси.
+     */
+    async _fetchPage(url, maxAttempts = 5) {
+        const cookie = await KsuAuthService.getCookie();
+
+        // Попытка 1: напрямую
         try {
-            await page.goto(`${config.KSU_DOMAIN}/kafedra.php`)
+            const res = await axios.get(url, {
+                timeout: FETCH_TIMEOUT,
+                maxRedirects: 0,
+                validateStatus: () => true,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Cookie': cookie
+                }
+            });
 
-            const linksSelector = 'table a';
-
-            await page.waitForSelector(linksSelector)
-
-            const links = await page.$$(linksSelector)
-            const linkObjects = [];
-
-            for (const link of links) {
-                const name = await (await link.getProperty('textContent')).jsonValue();
-                const href = await (await link.getProperty('href')).jsonValue();
-                const id = await getQueryParam(href, "IdKaf")
-
-                linkObjects.push({name, href, id})
+            if (res.status === 200 && typeof res.data === 'string' && !res.data.includes('Cloudflare')) {
+                return res.data;
             }
 
-            return linkObjects
+            if (res.status === 302 || res.status === 301) {
+                KsuAuthService.invalidate();
+            }
         } catch (e) {
-            throw e
-        } finally {
-            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_departments_list: " + err.message))
+            log.warn(`[TeacherSchedule] Прямой запрос не удался: ${e.message}`);
         }
+
+        // Попытки через прокси
+        let currentCookie = cookie;
+        for (let i = 1; i <= maxAttempts; i++) {
+            const proxy = FreeProxyService.getNextProxy();
+            if (!proxy) {
+                await sleep(2000);
+                continue;
+            }
+
+            try {
+                const httpsAgent = new HttpsProxyAgent(`http://${proxy}`, { rejectUnauthorized: false });
+                const httpAgent = new HttpProxyAgent(`http://${proxy}`);
+
+                const res = await axios.get(url, {
+                    httpsAgent,
+                    httpAgent,
+                    proxy: false,
+                    timeout: FETCH_TIMEOUT,
+                    maxRedirects: 0,
+                    validateStatus: () => true,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Cookie': currentCookie
+                    }
+                });
+
+                if (res.status === 302 || res.status === 301) {
+                    KsuAuthService.invalidate();
+                    currentCookie = await KsuAuthService.getCookie();
+                    continue;
+                }
+
+                if ([400, 403, 502, 503, 504].includes(res.status)) {
+                    FreeProxyService.markProxyDead(proxy);
+                    continue;
+                }
+
+                if (res.status === 200 && typeof res.data === 'string') {
+                    if (res.data.includes('Cloudflare') || res.data.includes('Just a moment')) {
+                        FreeProxyService.markProxyDead(proxy);
+                        continue;
+                    }
+                    if (res.data.includes('Forbidden')) {
+                        FreeProxyService.markProxyDead(proxy);
+                        continue;
+                    }
+                    return res.data;
+                }
+            } catch (e) {
+                const msg = e.message || '';
+                if (msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') || msg.includes('ECONNREFUSED') || msg.includes('ERR_TUNNEL')) {
+                    FreeProxyService.markProxyDead(proxy);
+                }
+                log.warn(`[TeacherSchedule] Прокси ${proxy}: ошибка — ${msg}`);
+            }
+        }
+
+        throw new Error(`Не удалось скачать страницу ${url} после ${maxAttempts} попыток`);
+    }
+
+    async get_departments_list() {
+        const url = `${config.KSU_DOMAIN}/kafedra.php`;
+        const html = await this._fetchPage(url);
+
+        const $ = cheerio.load(html);
+        const linkObjects = [];
+
+        $('table a').each((_, el) => {
+            const name = $(el).text().trim();
+            const href = $(el).attr('href') || '';
+            const idMatch = href.match(/IdKaf=(\d+)/);
+            const id = idMatch ? idMatch[1] : null;
+            if (id) {
+                linkObjects.push({ name, href, id });
+            }
+        });
+
+        return linkObjects;
     }
 
     async get_teachers_list(departmentId) {
-        const page = await BrowserController.createOptimizedPage()
-        try {
-            await page.goto(`${config.KSU_DOMAIN}/report_prep.php?d=1&IdKaf=${departmentId}`)
+        const url = `${config.KSU_DOMAIN}/report_prep.php?d=1&IdKaf=${departmentId}`;
+        const html = await this._fetchPage(url);
 
-            const tableSelector = 'table'
+        const $ = cheerio.load(html);
+        const tables = $('table');
+        const secondTable = tables.eq(1);
 
-            await page.waitForSelector(tableSelector)
-            const tables = await page.$$(tableSelector);
-
-            const secondTable = tables[1];
-
-            if (!secondTable) {
-                throw ApiError.ServiceUnavailable("Не получилось получить вторую табличку на странице кафдеры. в ней хранится список преподов")
-            }
-
-            const links = await secondTable.$$('a');
-
-            const linkObjects = [];
-
-            for (const link of links) {
-                const name = await (await link.getProperty('textContent')).jsonValue();
-                const href = await (await link.getProperty('href')).jsonValue();
-                const id = await getQueryParam(href, 'IdPrep')
-                if (name === '- ') {
-                    continue
-                }
-                linkObjects.push({name, href, id, departmentId})
-            }
-
-            return linkObjects
-        } catch (e) {
-            throw e
-        } finally {
-            await page.close().catch(err => log.error("Ошибка при закрытии страницы в get_teachers_list: " + err.message))
+        if (secondTable.length === 0) {
+            throw new Error("Не получилось получить вторую табличку на странице кафедры");
         }
+
+        const linkObjects = [];
+        secondTable.find('a').each((_, el) => {
+            const name = $(el).text().trim();
+            const href = $(el).attr('href') || '';
+            const idMatch = href.match(/IdPrep=(\d+)/);
+            const id = idMatch ? idMatch[1] : null;
+
+            if (name === '- ' || !id) return;
+
+            linkObjects.push({ name, href, id, departmentId });
+        });
+
+        return linkObjects;
     }
 
-    async get_teacher_schedule(id, attemption = 1) {
-        const page = await BrowserController.createOptimizedPage()
-        try {
-            await page.goto(`${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`, {timeout:7000})
+    async get_teacher_schedule(id) {
+        const url = `${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`;
+        const html = await this._fetchPage(url);
 
-            await page.waitForSelector("body", {timeout: 2000})
+        const $ = cheerio.load(html);
+        const table = $('table').first();
 
-            const isForbidden = await page.evaluate(() => {
-                const h1 = document.querySelector(`h1`);
-                return h1 ? h1.textContent.includes("Forbidden") : false
-            });
-
-            if (isForbidden){
-                log.warn("(варн временный) Нас забанило, перезапускаю браузер!")
-                await page.close().catch(()=>{});
-                await BrowserService.restartBrowser()
-                return await this.get_teacher_schedule(id, ++attemption)
-            }
-
-            const isTableNotExists = await page.evaluate(() => {
-                return !document.querySelector('table');
-            });
-
-            if (isTableNotExists){
-                await sleep(10000)
-                log.info("teacher table not exists handler, attemption = " + attemption)
-                await page.close().catch(()=>{});
-                try {
-                    await BrowserController.auth()
-                } catch (authErr) {
-                    log.warn("[TeacherScheduleService] auth() упал, продолжаю: " + authErr.message);
-                }
-                return await this.get_teacher_schedule(id, ++attemption)
-            }
-
-
-            const tableHTML = await page.evaluate((selector) => {
-                const table = document.querySelector(selector);
-                return table ? table.outerHTML : null;
-            }, "table");
-
-            const tableData = HtmlService.htmlTableToJson(tableHTML)
-
-            const schedule = []
-            for (let i = 1; i < tableData.length; i++) {
-                const dailySchedule = {}
-                dailySchedule['day'] = tableData[i][0]
-                const groups = []
-                for (let j = 1; j < tableData[i].length; j++) {
-                    const time = tableData[0][j]
-                    let group = tableData[i][j]
-                    if (group === '-') {
-                        group = ""
-                    }
-                    groups.push({
-                        time, group
-                    })
-                }
-
-                const firstGroupIndex = groups.findIndex(item => item.group !== '');
-                let trimmedGroups = []
-                if (firstGroupIndex !== -1){
-                    const lastGroupIndex = groups.reverse().findIndex(item => item.group !== '');
-
-                    groups.reverse();
-
-                    trimmedGroups = groups.slice(firstGroupIndex, groups.length - lastGroupIndex);
-                }else{
-                    trimmedGroups = []
-                }
-
-                dailySchedule['groups'] = trimmedGroups
-                schedule.push(dailySchedule)
-            }
-
-            return schedule
-        } catch (e) {
-            if (attemption < 2) {
-                await page.close().catch(e => console.log(e))
-                await sleep(1000);
-                return await this.get_teacher_schedule(id, ++attemption)
-            } else {
-                await page.close().catch(e => console.log(e))
-                throw new Error("Ошибка при получении преподского расписания. Ошибку заскринил." + e.message)
-            }
-        } finally {
-            if (!page.isClosed()) {
-                await page.close().catch(e => console.log(e))
-            }
+        if (table.length === 0) {
+            throw new Error("Таблица расписания преподавателя не найдена");
         }
+
+        const tableHTML = $.html(table);
+        const tableData = HtmlService.htmlTableToJson(tableHTML);
+
+        const schedule = [];
+        for (let i = 1; i < tableData.length; i++) {
+            const dailySchedule = {};
+            dailySchedule['day'] = tableData[i][0];
+            const groups = [];
+            for (let j = 1; j < tableData[i].length; j++) {
+                const time = tableData[0][j];
+                let group = tableData[i][j];
+                if (group === '-') {
+                    group = "";
+                }
+                groups.push({
+                    time, group
+                });
+            }
+
+            const firstGroupIndex = groups.findIndex(item => item.group !== '');
+            let trimmedGroups = [];
+            if (firstGroupIndex !== -1) {
+                const lastGroupIndex = groups.reverse().findIndex(item => item.group !== '');
+                groups.reverse();
+                trimmedGroups = groups.slice(firstGroupIndex, groups.length - lastGroupIndex);
+            } else {
+                trimmedGroups = [];
+            }
+
+            dailySchedule['groups'] = trimmedGroups;
+            schedule.push(dailySchedule);
+        }
+
+        return schedule;
     }
 }
 
-export default new TeacherScheduleService()
+export default new TeacherScheduleService();

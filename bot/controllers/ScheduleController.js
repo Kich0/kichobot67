@@ -306,9 +306,30 @@ class ScheduleController {
             const data_array = call.data.split('|');
             let [, language, groupId] = data_array
             const groupIdent = `${groupId}|${language}`
-            if (groupIdent in schedule_cache && Date.now() - schedule_cache[groupIdent].timestamp <= 30 * 60 * 1000) {
-                await this.sendSchedule(call, schedule_cache[groupIdent])
+            const cached = schedule_cache[groupIdent];
+            const now = Date.now();
+            const FRESH_TTL = 30 * 60 * 1000;    // 30 мин — кэш считается свежим
+            const STALE_TTL = 2 * 60 * 60 * 1000; // 2 часа — кэш можно показать, но обновить в фоне
+
+            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
+                // Кэш свежий — показываем мгновенно
+                await this.sendSchedule(call, cached)
+            } else if (cached && (now - cached.timestamp <= STALE_TTL)) {
+                // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
+                await this.sendSchedule(call, cached)
+                // Фоновое обновление (не ждём результат)
+                downloadSchedule(groupId, language)
+                    .then(async (response) => {
+                        const group = await groupService.getById(groupId)
+                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group }
+                        await scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, {
+                            stack: e.stack
+                        }))
+                        log.info(`[Stale-Revalidate] Расписание для группы ${groupId} обновлено в фоне`)
+                    })
+                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание в фоне: ${e.message}`))
             } else {
+                // Нет кэша или он слишком старый — скачиваем заново
                 await downloadSchedule(groupId, language)
                     .then(async (response) => {
                         const group = await groupService.getById(groupId)

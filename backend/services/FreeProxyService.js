@@ -3,18 +3,19 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import log from "../logging/logging.js";
 
-const POOL_SIZE = 5;              // Сколько прокси держать в пуле
-const MAINTAIN_INTERVAL = 1 * 60 * 1000; // Проверка пула каждую 1 минуту (было 3)
-const PROXY_TEST_TIMEOUT = 3000;  // Жёсткий таймаут для теста (было 5000)
-const BATCH_SIZE = 20;            // Параллельная проверка батчами (было 10)
+const POOL_SIZE = 8;              // Сколько прокси держать в пуле
+const MAINTAIN_INTERVAL = 30 * 1000; // Проверка пула каждые 30 сек
+const PROXY_TEST_TIMEOUT = 2500;  // Жёсткий таймаут для теста — только быстрые прокси
+const BATCH_SIZE = 30;            // Параллельная проверка батчами
 
 class FreeProxyService {
     constructor() {
         this.cachedProxies = [];
         this.proxyIndex = 0;
         this.proxyPool = [];          // Пул рабочих прокси
+        this.roundRobinIndex = 0;     // Индекс для round-robin раздачи
         this.isInitialized = false;
-        this.isMaintaining = false;   // Флаг чтобы не запускать параллельное обслуживание
+        this.isMaintaining = false;
     }
 
     async initPool() {
@@ -28,13 +29,14 @@ class FreeProxyService {
             this._startMaintenance();
         } catch (e) {
             log.error(`[ProxyPool] Ошибка инициализации пула: ${e.message}`);
+            this.isInitialized = true; // Помечаем как инициализированный, чтобы запустить maintenance
+            this._startMaintenance();
         }
     }
 
     _startMaintenance() {
         setInterval(async () => {
             if (this.isMaintaining) {
-                log.info("[ProxyPool Maintain] Уже идёт обслуживание, пропускаю.");
                 return;
             }
             this.isMaintaining = true;
@@ -55,6 +57,11 @@ class FreeProxyService {
                 }
 
                 this.proxyPool = aliveProxies;
+                // Корректируем round-robin индекс
+                if (this.roundRobinIndex >= this.proxyPool.length) {
+                    this.roundRobinIndex = 0;
+                }
+
                 if (this.proxyPool.length < POOL_SIZE) {
                     await this._fillPool();
                 }
@@ -86,7 +93,7 @@ class FreeProxyService {
 
         let found = 0;
         let checkedCount = 0;
-        const maxChecks = 500;
+        const maxChecks = 600;
 
         while (found < needed && this.proxyIndex < this.cachedProxies.length && checkedCount < maxChecks) {
             const batch = this.cachedProxies
@@ -94,8 +101,6 @@ class FreeProxyService {
                 .filter(p => !poolSet.has(p));
 
             if (batch.length > 0) {
-                log.info(`[ProxyPool Fill] Тестирую батч ${this.proxyIndex + 1}-${this.proxyIndex + batch.length}...`);
-
                 const results = await Promise.all(
                     batch.map(async (proxy) => {
                         const isWorking = await this.testProxy(proxy);
@@ -125,6 +130,8 @@ class FreeProxyService {
     async getProxies() {
         log.info("Скачиваю списки бесплатных прокси из нескольких источников...");
         let allProxies = [];
+
+        // Источник 1: ProxyScrape (ssl=yes)
         try {
             const res1 = await axios.get(
                 "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=all",
@@ -136,6 +143,8 @@ class FreeProxyService {
         } catch (e) {
             log.error("Ошибка ProxyScrape: " + e.message);
         }
+
+        // Источник 2: ProxyScrape (ssl=all)
         try {
             const res2 = await axios.get(
                 "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all",
@@ -147,7 +156,8 @@ class FreeProxyService {
         } catch (e) {
             log.error("Ошибка ProxyScrape (all): " + e.message);
         }
-        // Источник 3: GitHub TheSpeedX — огромный агрегатор HTTPS прокси
+
+        // Источник 3: GitHub TheSpeedX
         try {
             const res3 = await axios.get(
                 "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
@@ -159,6 +169,20 @@ class FreeProxyService {
         } catch (e) {
             log.error("Ошибка GitHub TheSpeedX: " + e.message);
         }
+
+        // Источник 4: GitHub monosans
+        try {
+            const res4 = await axios.get(
+                "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+                { timeout: 10000 }
+            );
+            const list4 = res4.data.split('\n').map(p => p.trim()).filter(p => p.length > 0 && p.includes(':'));
+            log.info(`GitHub monosans: ${list4.length} прокси`);
+            allProxies.push(...list4);
+        } catch (e) {
+            log.error("Ошибка GitHub monosans: " + e.message);
+        }
+
         allProxies = [...new Set(allProxies)];
         allProxies.sort(() => Math.random() - 0.5);
 
@@ -186,6 +210,8 @@ class FreeProxyService {
             });
             clearTimeout(timeoutId);
 
+            if (res.status !== 200) return false;
+
             if (res.data && typeof res.data === 'string') {
                 const body = res.data;
                 const isKSU = body.includes('buketov') || 
@@ -193,12 +219,13 @@ class FreeProxyService {
                               body.includes('login') ||
                               body.includes('авторизация') ||
                               body.includes('Авторизация') ||
-                              body.includes('пайдаланушы');
+                              body.includes('пайдаланушы') ||
+                              body.includes('URL=login.php');
                 const isCloudflare = body.includes('Cloudflare') || body.includes('Just a moment');
-                // Мы не боимся Cloudflare, так как Puppeteer его пройдет. Нам главное чтобы IP не отваливался по таймауту.
-                if (isKSU) {
-                    return true;
-                }
+                
+                // Жёсткий отброс Cloudflare — axios его не пройдёт
+                if (isCloudflare) return false;
+                if (isKSU) return true;
             }
             return false;
         } catch (e) {
@@ -206,21 +233,59 @@ class FreeProxyService {
         }
     }
 
-    async getWorkingProxy() {
-        // Если в пуле есть прокси, сразу выдаем
-        if (this.proxyPool.length > 0) {
-            const proxy = this.proxyPool.shift();
-            log.info(`[ProxyPool] Выдан прокси из пула: ${proxy} (осталось: ${this.proxyPool.length})`);
-            
-            // Если пул опустел, запускаем асинхронное пополнение (не дожидаясь)
+    /**
+     * Round-robin: выдаёт следующий прокси из пула, НЕ удаляя его.
+     * Возвращает null если пул пуст.
+     */
+    getNextProxy() {
+        if (this.proxyPool.length === 0) {
+            log.warn("[ProxyPool] Пул пуст!");
+            return null;
+        }
+        if (this.roundRobinIndex >= this.proxyPool.length) {
+            this.roundRobinIndex = 0;
+        }
+        const proxy = this.proxyPool[this.roundRobinIndex];
+        this.roundRobinIndex++;
+        return proxy;
+    }
+
+    /**
+     * Пометить прокси как мёртвый — удалить из пула.
+     */
+    markProxyDead(proxy) {
+        const idx = this.proxyPool.indexOf(proxy);
+        if (idx !== -1) {
+            this.proxyPool.splice(idx, 1);
+            log.info(`[ProxyPool] Удалён мёртвый прокси: ${proxy} (осталось: ${this.proxyPool.length})`);
+            // Корректируем round-robin индекс
+            if (this.roundRobinIndex > idx) {
+                this.roundRobinIndex--;
+            }
+            if (this.roundRobinIndex >= this.proxyPool.length) {
+                this.roundRobinIndex = 0;
+            }
+            // Запускаем пополнение в фоне
             if (this.proxyPool.length < POOL_SIZE) {
                 this._fillPool().catch(e => log.error("[ProxyPool] Ошибка автопополнения: " + e.message));
             }
-            
+        }
+    }
+
+    /**
+     * Старый метод для обратной совместимости (shift из пула).
+     * Используется в BrowserController.auth() для Puppeteer.
+     */
+    async getWorkingProxy() {
+        if (this.proxyPool.length > 0) {
+            const proxy = this.proxyPool.shift();
+            log.info(`[ProxyPool] Выдан прокси из пула (shift): ${proxy} (осталось: ${this.proxyPool.length})`);
+            if (this.proxyPool.length < POOL_SIZE) {
+                this._fillPool().catch(e => log.error("[ProxyPool] Ошибка автопополнения: " + e.message));
+            }
             return proxy;
         }
 
-        // Если пул пуст (например, при старте), ищем в реальном времени
         log.warn("[ProxyPool] Пул пуст! Ищу прокси вручную...");
         if (this.cachedProxies.length === 0 || this.proxyIndex >= this.cachedProxies.length) {
             this.cachedProxies = await this.getProxies();
@@ -232,14 +297,11 @@ class FreeProxyService {
             return null;
         }
 
-        log.info(`В кэше ${this.cachedProxies.length - this.proxyIndex} непроверенных прокси. Начинаю проверку...`);
-
         let checkedCount = 0;
         const maxAttempts = 300;
 
         while (this.proxyIndex < this.cachedProxies.length && checkedCount < maxAttempts) {
             const batch = this.cachedProxies.slice(this.proxyIndex, this.proxyIndex + BATCH_SIZE);
-            log.info(`Тестирую батч прокси ${this.proxyIndex + 1} - ${this.proxyIndex + batch.length} из ${this.cachedProxies.length}...`);
 
             const results = await Promise.all(
                 batch.map(async (proxy) => {

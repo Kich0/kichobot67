@@ -17,7 +17,7 @@ class ScheduleController {
             const now = Date.now();
             let cleaned = 0;
             for (const key in this.schedule_cache) {
-                if (now - this.schedule_cache[key].timestamp > 60 * 1000) {
+                if (now - this.schedule_cache[key].timestamp > 5 * 60 * 1000) {
                     delete this.schedule_cache[key];
                     cleaned++;
                 }
@@ -78,7 +78,8 @@ class ScheduleController {
             }
             const cacheName = id + language
 
-            if (cacheName in this.schedule_cache && Date.now() - this.schedule_cache[cacheName].timestamp <= 15 * 1000) {
+            // Кэш 5 минут (вместо 15 сек) — расписание не меняется каждую секунду
+            if (cacheName in this.schedule_cache && Date.now() - this.schedule_cache[cacheName].timestamp <= 5 * 60 * 1000) {
                 return res.json(this.schedule_cache[cacheName].schedule)
             }
 
@@ -88,13 +89,8 @@ class ScheduleController {
 
             return res.json(schedule)
         } catch (e) {
-            log.error("Ошибка при получении student расписания: " + e.message + "\n\n На всякий случай запустил функцию authIfNot!", {stack: e.stack})
-            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("net::ERR")? ApiError.ServiceUnavailable("Ксу не отвечает", [e.stack]) : e)
-            try {
-                await BrowserController.authIfNot()
-            } catch (authErr) {
-                log.warn("[ScheduleController] authIfNot() упал: " + authErr.message);
-            }
+            log.error("Ошибка при получении student расписания: " + e.message, {stack: e.stack})
+            next(e)
         }
     }
 

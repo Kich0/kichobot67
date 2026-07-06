@@ -1,7 +1,6 @@
 import TeacherScheduleService from "../services/TeacherScheduleService.js";
 import log from "../logging/logging.js";
 import ApiError from "../exceptions/apiError.js";
-import BrowserController from "./BrowserController.js";
 
 class TeacherScheduleController {
     schedule_cache;
@@ -13,7 +12,7 @@ class TeacherScheduleController {
             const now = Date.now();
             let cleaned = 0;
             for (const key in this.schedule_cache) {
-                if (now - this.schedule_cache[key].timestamp > 60 * 1000) {
+                if (now - this.schedule_cache[key].timestamp > 5 * 60 * 1000) {
                     delete this.schedule_cache[key];
                     cleaned++;
                 }
@@ -24,7 +23,7 @@ class TeacherScheduleController {
         }, 5 * 60 * 1000);
     }
 
-    async get_departments_list(req, res, next) {
+    get_departments_list = async (req, res, next) => {
         try {
             const departments = await TeacherScheduleService.get_departments_list()
             return res.json(departments)
@@ -34,7 +33,7 @@ class TeacherScheduleController {
         }
     }
 
-    async get_teachers_list(req, res, next) {
+    get_teachers_list = async (req, res, next) => {
         try {
             const id = req.params.id
             if (isNaN(id)) {
@@ -56,7 +55,8 @@ class TeacherScheduleController {
                 return next(ApiError.BadRequest("Указан некорректный параметр id преподавателя"))
             }
 
-            if (id in this.schedule_cache && Date.now() - this.schedule_cache[id].timestamp <= 15 * 1000) {
+            // Кэш 5 минут
+            if (id in this.schedule_cache && Date.now() - this.schedule_cache[id].timestamp <= 5 * 60 * 1000) {
                 return res.json(this.schedule_cache[id].schedule)
             }
 
@@ -66,9 +66,8 @@ class TeacherScheduleController {
 
             return res.json(schedule)
         } catch (e) {
-            log.error("Ошибка при получении teacher расписания: " + e.message + "\n\n На всякий случай запустил функцию authIfNot!", {stack: e.stack})
-            next(e.message.includes("Navigation timeout of 3000 ms exceeded") || e.message.includes("ERR_ADDRESS_UNREACHABLE") ? ApiError.ServiceUnavailable("Ксу не отвечает", [e.stack]) : e)
-            await BrowserController.authIfNot()
+            log.error("Ошибка при получении teacher расписания: " + e.message, {stack: e.stack})
+            next(e)
         }
     }
 
