@@ -21,9 +21,9 @@ const config = {
     LOG_CHANEL_ID: process.env.LOG_CHANEL_ID,
     LOGGER_TG_TOKEN: process.env.LOGGER_TG_TOKEN,
     BOT_ID: process.env.BOT_ID,
-    BOT_MODE: process.env.BOT_MODE || 'polling',
-    WEBHOOK_DOMAIN: process.env.WEBHOOK_DOMAIN,
-    WEBHOOK_PATH: process.env.WEBHOOK_PATH || '/bot/webhook',
+    BOT_MODE: process.env.BOT_MODE?.trim() || 'polling',
+    WEBHOOK_DOMAIN: process.env.WEBHOOK_DOMAIN?.trim(),
+    WEBHOOK_PATH: process.env.WEBHOOK_PATH?.trim() || '/bot/webhook',
 
     // === Debug ===
     DEBUG: process.env.DEBUG === "true",
