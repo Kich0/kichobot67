@@ -3,6 +3,9 @@
 **/npm-debug.log*
 **/package-lock.json
 
+# Scratch/test scripts (may load .env secrets)
+scratch/
+
 # Environment variables
 **/.env
 **/.env.*

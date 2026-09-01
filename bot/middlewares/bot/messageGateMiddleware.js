@@ -1,7 +1,7 @@
 import log from "../../logging/logging.js";
 
 const MAX_TEXT_LENGTH = 50;
-const RATE_LIMIT_MS = 1500;
+const RATE_LIMIT_MS = 500;
 const SPAM_WINDOW_MS = 10000;
 const SPAM_MAX_MESSAGES = 8;
 const BAN_DURATION_MS = 60000;
