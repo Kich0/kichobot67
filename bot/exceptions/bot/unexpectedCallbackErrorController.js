@@ -21,8 +21,10 @@ export async function unexpectedCallbackErrorController(e, message, callback_dat
                         inline_keyboard: [[{text: button_text, callback_data}]]
                     }
                 })
-            } catch (e) {
-                log.error(`ВАЖНО! user: ${message.chat.id}! Не получилось сообщить ему о том что произошла ошибка. unexpectedErrorController!` + e.message, {stack: e.stack})
+            } catch (innerError) {
+                if (!innerError.message?.includes('message is not modified')) {
+                    log.error(`ВАЖНО! user: ${message.chat.id}! Не получилось сообщить ему о том что произошла ошибка. unexpectedErrorController! ` + innerError.message, {stack: innerError.stack})
+                }
             }
         }
     } catch (e) {

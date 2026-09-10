@@ -221,15 +221,23 @@ class ScheduleController {
 
             const timestamp = schedule_cache.timestamp
             const data = schedule_cache.data
-            const group = schedule_cache.group
+            let group = schedule_cache.group
 
             const data_array = call.data.split('|');
-            let [, , , dayNumber] = data_array
+            let [, , groupId, dayNumber] = data_array
             if (+dayNumber > 5) {
                 dayNumber = 0
             }
             if (+dayNumber < 0) {
                 dayNumber = 5
+            }
+
+            // Если group не было в объекте кэша — пробуем подгрузить из базы
+            if (!group && groupId) {
+                group = await groupService.getById(Number(groupId)).catch(() => null);
+                if (group) {
+                    schedule_cache.group = group;
+                }
             }
 
             const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language)
@@ -241,7 +249,11 @@ class ScheduleController {
             const schedule = preSchedule.filter(obj => obj.subject !== '')
 
             let schedule_text = ``
-            const headerText = `${i18next.t('group_and_year', { lng: user_language, groupName: group.name, groupYear: group.age })}\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
+            const groupName = group?.name || `Группа ${groupId || ''}`
+            const groupYear = group?.age || ''
+            const headerText = group
+                ? `${i18next.t('group_and_year', { lng: user_language, groupName, groupYear })}\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
+                : `👥 <b>${groupName}</b>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
 
             if (!schedule.length) {
                 schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n`
@@ -256,7 +268,14 @@ class ScheduleController {
             let msg_text = preMessage + headerText + schedule_text + end_text
 
             const preCallback = data_array.slice(0, -1).join("|")
-            const facultyId = await facultyService.getIdByGroup(group) || 0
+            let facultyId = 0
+            if (group) {
+                try {
+                    facultyId = await facultyService.getIdByGroup(group) || 0
+                } catch (ignore) {}
+            }
+
+            const backCallback = group?.program ? `group|${facultyId}|${group.program}|0` : 'start'
 
             let markup = {
                 inline_keyboard: [
@@ -266,7 +285,7 @@ class ScheduleController {
                     }, {
                         text: `${i18next.t('go_forward', { lng: user_language })} ▶️`, callback_data: preCallback + `|${+dayNumber + 1}`
                     }],
-                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `group|${facultyId}|${group.program}|0` }]
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: backCallback }]
                 ]
             }
             await bot.editMessageText(msg_text,
@@ -293,7 +312,7 @@ class ScheduleController {
             const updatedAt = new Date(response.updatedAt);
             const timestamp = updatedAt.getTime();
 
-            const group = await groupService.getById(groupId)
+            const group = await groupService.getById(Number(groupId)).catch(() => null)
             schedule_cache[groupId] = { data: response.data, timestamp, group }
             await this.sendSchedule(call, schedule_cache[groupId], `<b>${error_text} \n` +
                 `${i18next.t('reserved_schedule_header', {lng:user_language})}\n\n</b>`)
@@ -318,15 +337,21 @@ class ScheduleController {
             const STALE_TTL = 2 * 60 * 60 * 1000; // 2 часа — кэш можно показать, но обновить в фоне
 
             if (cached && (now - cached.timestamp <= FRESH_TTL)) {
+                if (!cached.group) {
+                    cached.group = await groupService.getById(Number(groupId)).catch(() => null);
+                }
                 // Кэш свежий — показываем мгновенно
                 await this.sendSchedule(call, cached)
             } else if (cached && (now - cached.timestamp <= STALE_TTL)) {
+                if (!cached.group) {
+                    cached.group = await groupService.getById(Number(groupId)).catch(() => null);
+                }
                 // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
                 await this.sendSchedule(call, cached)
                 // Фоновое обновление (не ждём результат)
                 downloadSchedule(groupId, language)
                     .then(async (response) => {
-                        const group = await groupService.getById(groupId)
+                        const group = await groupService.getById(Number(groupId)).catch(() => null)
                         schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group }
                         await scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, {
                             stack: e.stack
@@ -338,7 +363,7 @@ class ScheduleController {
                 // Нет кэша или он слишком старый — скачиваем заново
                 await downloadSchedule(groupId, language)
                     .then(async (response) => {
-                        const group = await groupService.getById(groupId)
+                        const group = await groupService.getById(Number(groupId)).catch(() => null)
                         schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group }
                         await this.sendSchedule(call, schedule_cache[groupIdent])
 
