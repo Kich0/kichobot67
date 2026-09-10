@@ -19,7 +19,16 @@ export async function helpCommandController(msg) {
             const user_language = await userService.getUserLanguage(msg.chat.id)
 
             const msg_text = i18next.t('help_command_content', {lng:user_language})
-            await bot.sendMessage(msg.chat.id, msg_text)
+            const markup = {
+                inline_keyboard: [
+                    [{ text: `✍️ ${i18next.t('write_to_dev', {lng:user_language})}`, url: "https://t.me/Kicho_0" }]
+                ]
+            }
+            await bot.sendMessage(msg.chat.id, msg_text, {
+                reply_markup: markup,
+                parse_mode: "HTML",
+                disable_web_page_preview: true
+            })
         } catch (e) {
             await errorCatch(e, msg)
         }

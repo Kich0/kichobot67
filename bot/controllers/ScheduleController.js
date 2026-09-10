@@ -285,7 +285,8 @@ class ScheduleController {
                     }, {
                         text: `${i18next.t('go_forward', { lng: user_language })} ▶️`, callback_data: preCallback + `|${+dayNumber + 1}`
                     }],
-                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: backCallback }]
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: backCallback }],
+                    [{ text: `⚠️ ${i18next.t('report_problem', { lng: user_language })}`, url: 'https://t.me/Kicho_0' }]
                 ]
             }
             await bot.editMessageText(msg_text,
