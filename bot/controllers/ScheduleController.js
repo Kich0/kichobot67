@@ -6,7 +6,7 @@ import scheduleService from "../services/scheduleService.js";
 import userService from "../services/userService.js";
 import { unexpectedCallbackErrorController } from "../exceptions/bot/unexpectedCallbackErrorController.js";
 import { bot } from "../app.js";
-import { sleep } from "../handlers/adminCommandHandler.js";
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 import i18next from "i18next";
 import {getAndSendUserInfoByUserId} from "./commands/adminCommands/getUser.js";
 import config from "../config.js";
@@ -189,17 +189,23 @@ class ScheduleController {
         try {
             const user_language = await userService.getUserLanguage(msgToEdit.chat.id)
 
-            const groups = await groupService.getByProgramId(programId)
+            let groups = await groupService.getByProgramId(programId)
+            // On-demand: если групп в базе нет, опрашиваем КарГУ в реальном времени
+            if (!groups || groups.length === 0) {
+                groups = await groupService.syncProgramGroups(programId);
+            }
+
             const program = await programService.getById(programId)
 
-            const { data, page, page_count, currentPageText } = this.configureMenuData(groups, prePage, user_language)
+            const { data, page, page_count, currentPageText } = this.configureMenuData(groups || [], prePage, user_language)
 
             let markup = this.getGroupsRowMarkup(data)
 
             markup = this.addPaginationBtnsToMarkup(markup, page_count, page, `group|${facultyId}|${programId}`, user_language)
             markup = this.addGoBackBtnToMarkup(markup, `program|${facultyId}|0`, user_language)
 
-            const msgText = `${i18next.t('group_pick', { lng: user_language })}\n${i18next.t('program', { lng: user_language, program: program.name })}\n${currentPageText}`
+            const programName = program ? program.name : '';
+            const msgText = `${i18next.t('group_pick', { lng: user_language })}\n${i18next.t('program', { lng: user_language, program: programName })}\n${currentPageText}`
 
             await bot.editMessageText(msgText, {
                 chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup

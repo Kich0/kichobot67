@@ -21,8 +21,7 @@ import {
 import {piarAdminCommandController} from "../controllers/commands/adminCommands/piarAdminCommandController.js";
 import {getUserCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import config from "../config.js";
-// ПРЯМОЙ ИМПОРТ бэкенд-контроллера вместо HTTP
-import BrowserController from "../../backend/controllers/BrowserController.js";
+
 
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -414,7 +413,7 @@ export default function setupAdminCommandHandler() {
 
       await bot.sendMessage(msg.chat.id, "Ща всё будет")
 
-      // Прямой вызов вместо axios.get(KSU_HELPER_URL/browser/restart_browser)
+      const { default: BrowserController } = await import("../../backend/controllers/BrowserController.js");
       await BrowserController.auth();
       await bot.sendMessage(msg.chat.id, "Браузер перезапущен!")
     } catch (e) {

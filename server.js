@@ -178,6 +178,21 @@ const appStart = async () => {
         await setupBotLoggingPathUpdate();
         setupScheduleCacheWarmup();
 
+        // Проверка свежести групп при запуске (в фоне через 5 сек)
+        setTimeout(async () => {
+            try {
+                const { Group } = await import("./bot/models/group.js");
+                const count26 = await Group.countDocuments({ name: /26/ });
+                if (count26 === 0) {
+                    backendLog.info("[StartupSync] Обнаружено отсутствие групп нового учебного года. Запускаю фоновую синхронизацию...");
+                    const { runDailyDataUpdate } = await import("./bot/cron/dailyDataUpdate.js");
+                    await runDailyDataUpdate(true);
+                }
+            } catch (e) {
+                backendLog.error("[StartupSync] Ошибка фоновой синхронизации групп: " + e.message);
+            }
+        }, 5000);
+
         backendLog.info(`✅ Все модули инициализированы успешно`);
         backendLog.info(`USE_FREE_PROXIES: ${config.USE_FREE_PROXIES}`);
 

@@ -30,9 +30,17 @@ class FacultyService {
 
     updateAll = async (faculties) => {
         try {
-            await Faculty.deleteMany({})
-
-            await Faculty.insertMany(faculties)
+            if (!faculties || faculties.length === 0) {
+                return;
+            }
+            const ops = faculties.map(f => ({
+                updateOne: {
+                    filter: { id: f.id },
+                    update: { $set: f },
+                    upsert: true
+                }
+            }));
+            await Faculty.bulkWrite(ops);
         } catch (e) {
             throw new Error("Ошибка при обновлении всех факультетов: " + e.stack)
         }

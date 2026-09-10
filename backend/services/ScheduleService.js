@@ -8,9 +8,6 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import * as cheerio from "cheerio";
 
-// Puppeteer-зависимости ТОЛЬКО для get_faculty_list, get_program_list, get_group_list
-// (они нужны для SyncService и начального парсинга через browser)
-import BrowserController from "../controllers/BrowserController.js";
 
 export function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -21,10 +18,13 @@ const SCHEDULE_TIMEOUT = 15000; // 15 сек на скачивание расп�
 class ScheduleService {
 
     /**
-     * Скачать HTML расписания через axios (БЕЗ Puppeteer).
+     * Скачать HTML страницы через axios (БЕЗ Puppeteer).
      * Стратегия: сначала напрямую, потом через прокси.
+     * @param {string} url - URL страницы
+     * @param {string} cookie - Кука авторизации
+     * @param {boolean} mustIncludeTable - Требовать ли наличие <table в ответе (для расписания)
      */
-    async _fetchScheduleHtml(url, cookie, attempt = 1, maxAttempts = 5) {
+    async _fetchHtml(url, cookie, mustIncludeTable = false, attempt = 1, maxAttempts = 5) {
         // Попытка 1: напрямую (без прокси)
         if (attempt === 1) {
             try {
@@ -42,15 +42,13 @@ class ScheduleService {
                     log.warn("[Schedule] Редирект — сессия устарела, обновляю куку...");
                     KsuAuthService.invalidate();
                     const newCookie = await KsuAuthService.getCookie();
-                    return this._fetchScheduleHtml(url, newCookie, attempt + 1, maxAttempts);
+                    return this._fetchHtml(url, newCookie, mustIncludeTable, attempt + 1, maxAttempts);
                 }
 
-                if (res.status === 200 && typeof res.data === 'string' && res.data.includes('<table')) {
-                    return res.data;
-                }
-
-                // Страница не содержит таблицу — возможно нужна авторизация
-                if (res.status === 200 && typeof res.data === 'string' && !res.data.includes('<table')) {
+                if (res.status === 200 && typeof res.data === 'string') {
+                    if (!mustIncludeTable || res.data.includes('<table')) {
+                        return res.data;
+                    }
                     log.warn("[Schedule] Прямой запрос вернул страницу без таблицы, пробую через прокси...");
                 }
             } catch (e) {
@@ -108,8 +106,7 @@ class ScheduleService {
                         FreeProxyService.markProxyDead(proxy);
                         continue;
                     }
-                    if (res.data.includes('<table')) {
-                        log.info(`[Schedule] ✅ Получено расписание через прокси ${proxy}`);
+                    if (!mustIncludeTable || res.data.includes('<table')) {
                         return res.data;
                     }
                     // Страница без таблицы — возможно нужна переавторизация
@@ -127,7 +124,11 @@ class ScheduleService {
             }
         }
 
-        throw new Error(`Не удалось скачать расписание после ${maxAttempts} попыток`);
+        throw new Error(`Не удалось скачать ${url} после ${maxAttempts} попыток`);
+    }
+
+    async _fetchScheduleHtml(url, cookie) {
+        return this._fetchHtml(url, cookie, true);
     }
 
     /**
@@ -246,121 +247,225 @@ class ScheduleService {
     }
 
     // ===========================
-    // СТАРЫЕ МЕТОДЫ (через Puppeteer) — используются в SyncService
+    // МЕТОДЫ СИНХРОНИЗАЦИИ (Axios + Cheerio БЕЗ Puppeteer)
     // ===========================
 
-    get_faculty_list = async (browser) => {
-        const pages = await browser.pages();
-        const page = pages.length > 0 ? pages[0] : await browser.newPage();
-        const domain = `${config.KSU_DOMAIN}`;
-        try {
-            await page.goto(`${domain}/login.php`, {waitUntil: 'domcontentloaded'});
-            await page.waitForSelector('input', {timeout: 10 * 1000});
-            await page.type('input[name="login"]', config.KSU_LOGIN);
-            await page.type('input[name="password"]', config.KSU_PASSWORD);
-            await page.click('input[type="submit"]');
-
-            await page.waitForTimeout(1000);
-
-            await page.goto(`${domain}`, {waitUntil: "domcontentloaded"});
-
-            await page.waitForSelector("select");
-            const webFacultyList = await page.evaluate((selector) => {
-                const select = document.querySelector(selector);
-                return Array.from(select.options).map((option) => option.text);
-            }, 'select[name="Login"]');
-            const faculties_data = webFacultyList.map((faculty, index) => {
-                return {name: faculty, id: index};
-            });
-
-            await page.select('select[name="Login"]', webFacultyList[0]);
-            await page.click('input[type="submit"]');
-
-            await page.waitForSelector("center center p");
-            const cookies = await page.cookies();
-            const auth_cookie = await cookies.find(cookie => cookie.name === "PHPSESSID");
-
-            return {faculties_data, auth_cookie};
-        } catch (e) {
-            const path = `logs/error_auth_${Date.now()}.png`;
-            await page.screenshot({
-                path,
-            }).catch(e => console.log("Не получилось заскринить ошибочку" + e.message));
-            await page.close();
-            throw new Error("Ошибка при авторизации. Ошибку заскринил" + e.message);
+    /**
+     * Получить список всех факультетов из КарГУ
+     */
+    get_faculty_list = async () => {
+        const cookie = await KsuAuthService.getCookie();
+        const url = `${config.KSU_DOMAIN}/`;
+        const html = await this._fetchHtml(url, cookie, false);
+        const $ = cheerio.load(html);
+        const faculties = [];
+        $('select[name="Login"] option').each((i, el) => {
+            const text = $(el).text().trim();
+            if (text) {
+                faculties.push({ name: text, id: i });
+            }
+        });
+        if (faculties.length === 0) {
+            throw new Error("Список факультетов не найден на главной странице КарГУ");
         }
+        return faculties;
     }
 
-    get_program_list_by_facultyId = async (browser, faculties_data, id) => {
-        const page = await browser.newPage();
-        try {
-            await page.goto(`${config.KSU_DOMAIN}/`);
+    /**
+     * Получить программы по названию факультета
+     */
+    get_programs_by_faculty_name = async (facultyName, facultyId) => {
+        let cookie = await KsuAuthService.getCookie();
+        // POST выбор факультета для сохранения в PHP-сессии
+        const postRes = await axios.post(`${config.KSU_DOMAIN}/index.php?x`,
+            `Login=${encodeURIComponent(facultyName)}&pw=`,
+            {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Cookie': cookie,
+                    'Origin': config.KSU_DOMAIN,
+                    'Referer': `${config.KSU_DOMAIN}/`
+                },
+                timeout: SCHEDULE_TIMEOUT,
+                maxRedirects: 0,
+                validateStatus: () => true
+            }
+        );
 
-            await page.select('select[name="Login"]', faculties_data[id].name);
-            await page.click('input[type="submit"]');
-
-            await page.waitForSelector('a.genric-btn');
-
-            const programs = await page.evaluate((facultyId) => {
-                const links = document.querySelectorAll('a.genric-btn');
-                const facultyName = document.querySelector("div.wrap p").textContent.replace("Факультет: ", "");
-                return Array.from(links)
-                    .filter((link) => link.getAttribute("href").includes("grupps"))
-                    .map((link) => {
-                        return {
-                            name: String(link.textContent.trim()),
-                            href: String(link.getAttribute('href')),
-                            id: Number(link.getAttribute('href').split("=")[1]),
-                            facultyId,
-                            facultyName
-                        };
-                    });
-            }, id);
-            await page.close();
-            return programs;
-        } catch (e) {
-            const path = `logs/error_${Date.now()}.png`;
-            await page.screenshot({path});
-            await page.close();
-            throw new Error("Ошибка при получении программ. Ошибку заскринил." + e.message);
+        if (postRes.headers && postRes.headers['set-cookie']) {
+            const match = postRes.headers['set-cookie'][0].match(/PHPSESSID=([^;]+)/);
+            if (match) cookie = `PHPSESSID=${match[1]}`;
         }
-    }
 
-    get_group_list_by_programId = async (browser, id) => {
-        const page = await browser.newPage();
-        try {
-            await page.goto(`${config.KSU_DOMAIN}/grupps1.php?id=${id}`);
-
-            await page.waitForSelector("table");
-
-            let groups = await page.$$eval('tbody tr:not(:first-child)', (rows, programId) => {
-                return rows.map((row) => {
-                    const name = row.querySelector('td a').textContent.trim();
-                    const id = Number(row.querySelector('td a').getAttribute('href').match(/id=(\d+)/)[1]);
-                    const href = row.querySelector('td a').getAttribute('href');
-                    const language = href.match(/Otdel=([^&]+)/)[1];
-                    const age = Number(href.match(/Kurs=(\d+)/)[1]);
-                    const studentCount = href.match(/Stud=(\d+)/)[1];
-
-                    return {
-                        name,
-                        id,
+        // GET /stud.php со списком программ
+        const html = await this._fetchHtml(`${config.KSU_DOMAIN}/stud.php`, cookie, false);
+        const $ = cheerio.load(html);
+        const programs = [];
+        $('a').each((_, el) => {
+            const href = $(el).attr('href') || '';
+            if (href.includes('grupps')) {
+                const idMatch = href.match(/id=(\d+)/);
+                if (idMatch) {
+                    programs.push({
+                        name: $(el).text().trim(),
                         href,
-                        language,
-                        age,
-                        studentCount,
-                        programId
-                    };
-                });
-            }, id);
-            await page.close();
-            return groups;
-        } catch (e) {
-            const path = `logs/error_${Date.now()}.png`;
-            await page.screenshot({path});
-            await page.close();
-            throw new Error("Ошибка при получении групп. Ошибку заскринил." + e.message);
+                        id: Number(idMatch[1]),
+                        facultyId,
+                        facultyName
+                    });
+                }
+            }
+        });
+        return programs;
+    }
+
+    /**
+     * Получить список программ по facultyId (совместимость с сигнатурами)
+     */
+    get_program_list_by_facultyId = async (...args) => {
+        // Поддержка старых вызовов: (browser, faculties_data, id) или (faculties_data, id) или (facultyId, facultyName)
+        let facultyId = args[0];
+        let faculties_data = args[1];
+        if (args.length === 3) {
+            faculties_data = args[1];
+            facultyId = args[2];
         }
+
+        let facultyName = null;
+        if (Array.isArray(faculties_data)) {
+            const found = faculties_data.find(f => f.id === facultyId) || faculties_data[facultyId];
+            if (found) facultyName = found.name;
+        } else if (typeof faculties_data === 'string') {
+            facultyName = faculties_data;
+        }
+
+        if (!facultyName) {
+            const faculties = await this.get_faculty_list();
+            const found = faculties.find(f => f.id === facultyId) || faculties[facultyId];
+            facultyName = found?.name;
+        }
+
+        if (!facultyName) {
+            throw new Error(`Не удалось определить название факультета для id ${facultyId}`);
+        }
+
+        return await this.get_programs_by_faculty_name(facultyName, facultyId);
+    }
+
+    /**
+     * Получить список групп одной программы по programId
+     */
+    get_group_list_by_programId = async (...args) => {
+        // Поддержка вызовов: (id) или (browser, id)
+        const id = args.length > 1 ? args[1] : args[0];
+        const cookie = await KsuAuthService.getCookie();
+        const url = `${config.KSU_DOMAIN}/grupps1.php?id=${id}`;
+        const html = await this._fetchHtml(url, cookie, false);
+        const $ = cheerio.load(html);
+        const groups = [];
+
+        $('table tr').each((_, tr) => {
+            const firstTd = $(tr).find('td').first();
+            const link = firstTd.find('a');
+            if (link.length > 0) {
+                const href = link.attr('href') || '';
+                const idMatch = href.match(/id=(\d+)/);
+                const langMatch = href.match(/Otdel=([^&]+)/);
+                const kursMatch = href.match(/Kurs=(\d+)/);
+                const studMatch = href.match(/Stud=(\d+)/);
+                const name = link.text().trim();
+                if (idMatch && name) {
+                    groups.push({
+                        name,
+                        id: Number(idMatch[1]),
+                        href,
+                        language: langMatch ? langMatch[1] : '',
+                        age: kursMatch ? Number(kursMatch[1]) : 1,
+                        studentCount: studMatch ? Number(studMatch[1]) : 0,
+                        programId: Number(id),
+                        program: Number(id)
+                    });
+                }
+            }
+        });
+        return groups;
+    }
+
+    /**
+     * Быстрый параллельный сбор всех групп по списку программ (10-15 сек на все 240 программ)
+     */
+    get_all_groups_fast = async (programs, onProgress) => {
+        const cookie = await KsuAuthService.getCookie();
+        const allGroups = [];
+        const BATCH_SIZE = 6;
+
+        for (let i = 0; i < programs.length; i += BATCH_SIZE) {
+            const batch = programs.slice(i, i + BATCH_SIZE);
+            const results = await Promise.all(batch.map(async (prog) => {
+                let attempts = 0;
+                while (attempts < 2) {
+                    attempts++;
+                    try {
+                        const res = await axios.get(`${config.KSU_DOMAIN}/grupps1.php?id=${prog.id}`, {
+                            headers: { 
+                                'Cookie': cookie, 
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+                            },
+                            timeout: 10000,
+                            validateStatus: () => true
+                        });
+                        if (res.status === 200 && typeof res.data === 'string') {
+                            const $ = cheerio.load(res.data);
+                            const progGroups = [];
+                            $('table tr').each((_, tr) => {
+                                const firstTd = $(tr).find('td').first();
+                                const link = firstTd.find('a');
+                                if (link.length > 0) {
+                                    const href = link.attr('href') || '';
+                                    const idMatch = href.match(/id=(\d+)/);
+                                    const langMatch = href.match(/Otdel=([^&]+)/);
+                                    const kursMatch = href.match(/Kurs=(\d+)/);
+                                    const studMatch = href.match(/Stud=(\d+)/);
+                                    const name = link.text().trim();
+                                    if (idMatch && name) {
+                                        progGroups.push({
+                                            name,
+                                            id: Number(idMatch[1]),
+                                            href,
+                                            language: langMatch ? langMatch[1] : '',
+                                            age: kursMatch ? Number(kursMatch[1]) : 1,
+                                            studentCount: studMatch ? Number(studMatch[1]) : 0,
+                                            program: prog.id,
+                                            programId: prog.id
+                                        });
+                                    }
+                                }
+                            });
+                            return progGroups;
+                        }
+                    } catch (e) {
+                        if (attempts >= 2) {
+                            log.warn(`[FastGroups] Ошибка программы ${prog.id} (${prog.name}): ${e.message}`);
+                        }
+                    }
+                }
+                return [];
+            }));
+
+            for (const progGroups of results) {
+                allGroups.push(...progGroups);
+            }
+
+            if (onProgress) {
+                const stage = Math.floor(Math.min(i + BATCH_SIZE, programs.length) / programs.length * 100);
+                onProgress(stage, allGroups.length);
+            }
+
+            await sleep(150);
+        }
+
+        return allGroups;
     }
 }
 

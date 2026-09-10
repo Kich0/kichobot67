@@ -1,78 +1,54 @@
 import groupService from "../../../services/groupService.js";
 import programService from "../../../services/programService.js";
 import log from "../../../logging/logging.js";
-import {sleep} from "../../../handlers/adminCommandHandler.js";
-// ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendScheduleService from "../../../../backend/services/ScheduleService.js";
-import BrowserController from "../../../../backend/controllers/BrowserController.js";
+import { searchGroupMenuCache } from "../searchGroupCommandController.js";
 
-export async function updateGroupsCommandController(hard = false){
-    async function getGroupList(programId, attempts = 1) {
-        try {
-            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
-            return await BackendScheduleService.get_group_list_by_programId(
-                BrowserController.browser, programId
-            );
-        } catch (e) {
-            if (attempts >= 3) {
-                log.error(`[Sync Error] Не удалось получить список групп для programId ${programId} после 3 попыток. Прерываю.`);
-                throw e;
-            }
-            log.error(`Ошибка при получении списка групп (попытка ${attempts}/3). Жду 5 минут и пробую снова. programId: ${programId}. Ошибка: ` + e.message, {stack: e.stack})
-            await sleep(5 * 60 * 1000)
-            return await getGroupList(programId, attempts + 1)
-        }
-    }
-
-
+export async function updateGroupsCommandController(hard = false) {
     try {
-        log.info("Начинаю обновление списка групп. hard = " + hard)
+        log.info("Начинаю быстрое обновление списка групп (Axios+Cheerio). hard = " + hard);
 
-        const startTime = Date.now()
+        const startTime = Date.now();
+        const old_groups = await groupService.getAll();
+        const programs = await programService.getAll();
 
-        const old_groups = await groupService.getAll()
-        let groups = []
-
-        const programs = await programService.getAll()
-
-        for (const program of programs) {
-            await sleep(3000)
-
-            const group_list = await getGroupList(program.id)
-
-            for (const group of group_list) {
-                groups.push({
-                    name: group['name'],
-                    id: group['id'],
-                    language: group['language'],
-                    href: group['href'],
-                    age: group['age'],
-                    studentCount: group['studentCount'],
-                    program: group['programId'],
-                })
-            }
-
-            const stage = Math.floor(programs.indexOf(program) / programs.length * 100)
-            log.info(`Получены группы программы: ${program.name}. ` +
-                `Стадия обновления: ${stage}%`)
+        if (!programs || programs.length === 0) {
+            log.error("[UpdateGroups] В базе данных нет программ! Сначала обновите программы.");
+            return;
         }
 
-        const endTime = Date.now()
+        log.info(`[UpdateGroups] Запуск параллельного сбора групп для ${programs.length} программ...`);
+        const groups = await BackendScheduleService.get_all_groups_fast(programs, (stage, currentCount) => {
+            if (stage % 25 === 0 || stage === 100) {
+                log.info(`[UpdateGroups] Стадия: ${stage}%, получено групп: ${currentCount}`);
+            }
+        });
 
+        const endTime = Date.now();
         const availableRange = old_groups.length * 0.3;
 
-        if (groups.length + availableRange >= old_groups.length || hard){
-            await groupService.updateAll(groups)
-            log.info(`Обновление групп прошло успешно. Время выполнения:` +
+        if (groups && (groups.length + availableRange >= old_groups.length || hard || old_groups.length === 0)) {
+            await groupService.updateAll(groups);
+
+            // Очищаем кэш меню поиска, чтобы новые группы мгновенно находились
+            try {
+                if (searchGroupMenuCache) {
+                    for (const key of Object.keys(searchGroupMenuCache)) {
+                        delete searchGroupMenuCache[key];
+                    }
+                }
+            } catch (ignore) {}
+
+            log.info(`Обновление групп прошло успешно. Время выполнения: ` +
                 `${Math.floor((endTime - startTime) / 1000)} сек.\n` +
-                `Было: ${old_groups.length} || Стало: ${groups.length} || Разница: ${groups.length - old_groups.length}`)
-        }else{
+                `Было: ${old_groups.length} || Стало: ${groups.length} || Разница: ${groups.length - old_groups.length}`);
+            return groups;
+        } else {
             log.error("Полученных групп оказалось меньше чем было или равно. Я не стал их обновлять. " +
-                "Время выполнения" + Math.floor((endTime - startTime) / 1000) + "сек." +
-                `Было: ${old_groups.length}. Я получил: ${groups.length}`)
+                "Время выполнения: " + Math.floor((endTime - startTime) / 1000) + " сек. " +
+                `Было: ${old_groups.length}. Я получил: ${groups?.length}`);
         }
-        await sleep(1000)
-    }catch (e) {
-        log.error(`Произошла непредвиденная ошибка в updateGroupsCommandController() :` + e.message, {stack: e.stack})
+    } catch (e) {
+        log.error(`Произошла непредвиденная ошибка в updateGroupsCommandController(): ` + e.message, {stack: e.stack});
     }
 }

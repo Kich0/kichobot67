@@ -1,52 +1,44 @@
-import axios from "axios";
 import log from "../../../logging/logging.js";
-import {sleep} from "../../../handlers/adminCommandHandler.js";
 import facultyService from "../../../services/facultyService.js";
-// ПРЯМОЙ ИМПОРТ бэкенд-контроллера вместо HTTP
-import BrowserController from "../../../../backend/controllers/BrowserController.js";
-
+import BackendScheduleService from "../../../../backend/services/ScheduleService.js";
 
 export async function updateFacultiesCommandController(hard = false) {
     async function getFacultyList(attempts = 1) {
         try {
-            // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
-            return BrowserController.faculties_data;
+            return await BackendScheduleService.get_faculty_list();
         } catch (e) {
             if (attempts >= 3) {
                 log.error("[Sync Error] Не удалось получить список факультетов после 3 попыток. Прерываю.");
                 throw e;
             }
-            log.error(`Ошибка при получении списка факультетов (попытка ${attempts}/3). Жду 5 минут и пробую снова. Ошибка: ` + e.message, {stack: e.stack})
-            await sleep(5 * 60 * 1000)
-            return await getFacultyList(attempts + 1)
+            log.error(`Ошибка при получении списка факультетов (попытка ${attempts}/3): ` + e.message, {stack: e.stack});
+            await new Promise(r => setTimeout(r, 3000));
+            return await getFacultyList(attempts + 1);
         }
     }
 
     try {
-        log.info("Начинаю обновление списка факультетов. hard = " + hard)
+        log.info("Начинаю обновление списка факультетов. hard = " + hard);
 
-        const startTime = Date.now()
-
-        const old_faculties = await facultyService.getAll()
-        const faculties = await getFacultyList()
-
-        const endTime = Date.now()
+        const startTime = Date.now();
+        const old_faculties = await facultyService.getAll();
+        const faculties = await getFacultyList();
+        const endTime = Date.now();
 
         const availableRange = old_faculties.length * 0.3;
 
-        if (faculties.length + availableRange >= old_faculties.length || hard){
-            await facultyService.updateAll(faculties)
-            log.info(`Обновление факультетов прошло успешно. Время выполнения:` +
+        if (faculties && (faculties.length + availableRange >= old_faculties.length || hard)) {
+            await facultyService.updateAll(faculties);
+            log.info(`Обновление факультетов прошло успешно. Время выполнения: ` +
                 `${Math.floor((endTime - startTime) / 1000)} сек.\n` +
-                `Было: ${old_faculties.length} || Стало: ${faculties.length} || Разница: ${faculties.length - old_faculties.length}`)
-        }else{
+                `Было: ${old_faculties.length} || Стало: ${faculties.length} || Разница: ${faculties.length - old_faculties.length}`);
+            return faculties;
+        } else {
             log.error("Полученных факультетов оказалось меньше чем было или равно. Я не стал их обновлять. " +
-                "Время выполнения" + Math.floor((endTime - startTime) / 1000) + "сек." +
-                `Было: ${old_faculties.length}. Я получил: ${faculties.length}`)
+                "Время выполнения " + Math.floor((endTime - startTime) / 1000) + "сек. " +
+                `Было: ${old_faculties.length}. Я получил: ${faculties?.length}`);
         }
-        await sleep(1000)
-
     } catch (e) {
-        log.error(`Произошла непредвиденная ошибка в updateFacultiesCommandController() :` + e.message, {stack: e.stack})
+        log.error(`Произошла непредвиденная ошибка в updateFacultiesCommandController() :` + e.message, {stack: e.stack});
     }
 }

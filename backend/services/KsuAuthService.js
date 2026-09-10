@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import log from "../logging/logging.js";
@@ -51,19 +51,23 @@ class KsuAuthService {
      * ╨б╤В╤А╨░╤В╨╡╨│╨╕╤П: ╤Б╨╜╨░╤З╨░╨╗╨░ ╨╜╨░╨┐╤А╤П╨╝╤Г╤О, ╨┐╨╛╤В╨╛╨╝ ╤З╨╡╤А╨╡╨╖ ╨┐╤А╨╛╨║╤Б╨╕.
      */
     async _authorize() {
-        log.info("[KsuAuth] ╨Э╨░╤З╨╕╨╜╨░╤О ╨░╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╤О...");
-
-        // ╨Я╨╛╨┐╤Л╤В╨║╨░ 1: ╨╜╨░╨┐╤А╤П╨╝╤Г╤О (╨▒╨╡╨╖ ╨┐╤А╨╛╨║╤Б╨╕) тАФ ╨╡╤Б╨╗╨╕ DNS ╨╜╨░ Render ╤А╨░╨▒╨╛╤В╨░╨╡╤В, ╤Н╤В╨╛ ╤Б╨░╨╝╤Л╨╣ ╨▒╤Л╤Б╤В╤А╤Л╨╣ ╨┐╤Г╤В╤М
-        try {
-            const cookie = await this._tryAuth(null);
-            if (cookie) {
-                log.info("[KsuAuth] тЬЕ ╨Р╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╤П ╨▒╨╡╨╖ ╨┐╤А╨╛╨║╤Б╨╕ ╤Г╤Б╨┐╨╡╤И╨╜╨░!");
-                this._cookie = cookie;
-                this._cookieExpiry = Date.now() + COOKIE_TTL;
-                return cookie;
+        // Попытки 1-3: Прямое подключение с паузой 2 секунды
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                log.info(`[KsuAuth] Попытка прямой авторизации ${attempt}/3...`);
+                const cookie = await this._tryAuth(null);
+                if (cookie) {
+                    log.info("[KsuAuth] Авторизация без прокси успешна!");
+                    this._cookie = cookie;
+                    this._cookieExpiry = Date.now() + COOKIE_TTL;
+                    return cookie;
+                }
+            } catch (e) {
+                log.warn(`[KsuAuth] Попытка ${attempt}/3 не удалась: ${e.message}`);
+                if (attempt < 3) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
             }
-        } catch (e) {
-            log.warn(`[KsuAuth] ╨Я╤А╤П╨╝╨░╤П ╨░╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╤П ╨╜╨╡ ╤Г╨┤╨░╨╗╨░╤Б╤М: ${e.message}`);
         }
 
         // ╨Я╨╛╨┐╤Л╤В╨║╨╕ 2-6: ╤З╨╡╤А╨╡╨╖ ╨┐╤А╨╛╨║╤Б╨╕ ╨╕╨╖ ╨┐╤Г╨╗╨░
@@ -157,12 +161,14 @@ class KsuAuthService {
         if (!sessionCookie) {
             throw new Error("╨б╨╡╤А╨▓╨╡╤А ╨╜╨╡ ╨▓╨╡╤А╨╜╤Г╨╗ PHPSESSID ╨╜╨░ ╤И╨░╨│╨╡ 1");
         }
-        log.info(`[KsuAuth _tryAuth] ╨и╨░╨│ 1 ╤Г╤Б╨┐╨╡╤И╨╡╨╜, cookie: ${sessionCookie}`);
+        log.info(`[KsuAuth _tryAuth] Шаг 1 успешен, cookie: ${sessionCookie}`);
 
-        log.info(`[KsuAuth _tryAuth] ╨и╨░╨│ 2: POST login.php`);
-        // ╨и╨░╨│ 2: POST login.php тАФ ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨╗╨╛╨│╨╕╨╜/╨┐╨░╤А╨╛╨╗╤М
+        await new Promise(r => setTimeout(r, 800));
+
+        log.info(`[KsuAuth _tryAuth] Шаг 2: POST login.php`);
+        // Шаг 2: POST login.php — отправить логин/пароль
         const loginRes = await axios.post(`${domain}/login.php`, 
-            `login=${encodeURIComponent(config.KSU_LOGIN)}&password=${encodeURIComponent(config.KSU_PASSWORD)}`,
+            `login=${encodeURIComponent(config.KSU_LOGIN)}&password=${encodeURIComponent(config.KSU_PASSWORD)}&submit=${encodeURIComponent('Вход')}`,
             {
                 httpsAgent,
                 httpAgent,
@@ -180,17 +186,19 @@ class KsuAuthService {
             }
         );
 
-        this._checkCloudflare(loginRes, "╨и╨░╨│ 2 (POST login.php)");
+        this._checkCloudflare(loginRes, "Шаг 2 (POST login.php)");
 
-        // ╨Х╤Б╨╗╨╕ ╨┐╤А╨╕╨╗╨╡╤В╨╡╨╗ ╨╜╨╛╨▓╤Л╨╣ Set-Cookie, ╨╛╨▒╨╜╨╛╨▓╨╗╤П╨╡╨╝
+        // Если прилетел новый Set-Cookie, обновляем
         const newCookie = this._extractSessionCookie(loginRes.headers['set-cookie']);
         if (newCookie) {
             sessionCookie = newCookie;
-            log.info(`[KsuAuth _tryAuth] ╨и╨░╨│ 2 ╨▓╤Л╨┤╨░╨╗ ╨╜╨╛╨▓╤Л╨╣ cookie: ${sessionCookie}`);
+            log.info(`[KsuAuth _tryAuth] Шаг 2 выдал новый cookie: ${sessionCookie}`);
         }
 
-        log.info(`[KsuAuth _tryAuth] ╨и╨░╨│ 3: GET ╨│╨╗╨░╨▓╨╜╨░╤П ╤Б╤В╤А╨░╨╜╨╕╤Ж╨░ /`);
-        // ╨и╨░╨│ 3: GET ╨│╨╗╨░╨▓╨╜╨░╤П ╤Б╤В╤А╨░╨╜╨╕╤Ж╨░ тАФ ╨┐╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╤З╤В╨╛ ╨╝╤Л ╨╖╨░╤И╨╗╨╕
+        await new Promise(r => setTimeout(r, 800));
+
+        log.info(`[KsuAuth _tryAuth] Шаг 3: GET главная страница /`);
+        // Шаг 3: GET главная страница — проверить что мы зашли
         const mainRes = await axios.get(`${domain}/`, {
             httpsAgent,
             httpAgent,
@@ -205,20 +213,21 @@ class KsuAuthService {
             }
         });
 
-        this._checkCloudflare(mainRes, "╨и╨░╨│ 3 (GET /)");
+        this._checkCloudflare(mainRes, "Шаг 3 (GET /)");
 
-        // ╨Х╤Б╨╗╨╕ ╨╜╨░╤Б ╤А╨╡╨┤╨╕╤А╨╡╨║╤В╨╕╤В ╨╜╨░ login.php тАФ ╨╖╨╜╨░╤З╨╕╤В ╨╗╨╛╨│╨╕╨╜ ╨╜╨╡ ╤Б╤А╨░╨▒╨╛╤В╨░╨╗!
+        // Если нас редиректит на login.php — значит логин не сработал!
         if (mainRes.status === 302 && mainRes.headers.location && mainRes.headers.location.includes('login.php')) {
-            throw new Error("╨Э╨╡╨▓╨╡╤А╨╜╤Л╨╣ ╨╗╨╛╨│╨╕╨╜ ╨╕╨╗╨╕ ╨┐╨░╤А╨╛╨╗╤М (╤А╨╡╨┤╨╕╤А╨╡╨║╤В ╨╜╨░ login.php ╨╜╨░ ╤И╨░╨│╨╡ 3)");
+            throw new Error("Неверный логин или пароль (редирект на login.php на шаге 3)");
         }
 
-        // ╨Х╤Б╨╗╨╕ ╤А╨╡╨┤╨╕╤А╨╡╨║╤В╨╕╤В ╨║╤Г╨┤╨░-╤В╨╛ ╨╡╤Й╨╡ (╨╜╨░╨┐╤А╨╕╨╝╨╡╤А, ╨╜╨░ index.php), ╨┤╨╡╨╗╨░╨╡╨╝ ╤В╤Г╨┤╨░ ╨╖╨░╨┐╤А╨╛╤Б
+        // Если редиректит куда-то еще (например, на index.php), делаем туда запрос
         let mainBody = mainRes.data;
         if (mainRes.status === 302 && mainRes.headers.location) {
             const redirectUrl = mainRes.headers.location.startsWith('http') 
                 ? mainRes.headers.location 
                 : `${domain}/${mainRes.headers.location.replace(/^\//, '')}`;
-            log.info(`[KsuAuth _tryAuth] ╨Я╨╡╤А╨╡╤Е╨╛╨╢╤Г ╨┐╨╛ ╤А╨╡╨┤╨╕╤А╨╡╨║╤В╤Г: ${redirectUrl}`);
+            log.info(`[KsuAuth _tryAuth] Перехожу по редиректу: ${redirectUrl}`);
+            await new Promise(r => setTimeout(r, 800));
             const redirectRes = await axios.get(redirectUrl, {
                 httpsAgent,
                 httpAgent,
@@ -232,18 +241,19 @@ class KsuAuthService {
                     'Referer': `${domain}/`
                 }
             });
-            this._checkCloudflare(redirectRes, "╨и╨░╨│ 3 ╨а╨╡╨┤╨╕╤А╨╡╨║╤В");
+            this._checkCloudflare(redirectRes, "Шаг 3 Редирект");
             mainBody = redirectRes.data;
         }
 
-        // ╨Ш╨╖╨▓╨╗╨╡╤З╤М ╤Б╨┐╨╕╤Б╨╛╨║ ╤Д╨░╨║╤Г╨╗╤М╤В╨╡╤В╨╛╨▓ ╨┤╨╗╤П POST
+        // Извлечь список факультетов для POST
         const bodyText = typeof mainBody === 'string' ? mainBody : '';
         const selectMatch = bodyText.match(/<option[^>]*>([^<]+)<\/option>/i);
         const firstFaculty = selectMatch ? selectMatch[1] : null;
 
         if (firstFaculty) {
-            log.info(`[KsuAuth _tryAuth] ╨Т╤Л╨▒╨╕╤А╨░╨╡╨╝ ╤Д╨░╨║╤Г╨╗╤М╤В╨╡╤В: ${firstFaculty}`);
-            // POST ╨▓╤Л╨▒╨╛╤А ╤Д╨░╨║╤Г╨╗╤М╤В╨╡╤В╨░ тАФ ╨╖╨░╨▓╨╡╤А╤И╨░╨╡╤В ╨░╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╤О
+            log.info(`[KsuAuth _tryAuth] Выбираем факультет: ${firstFaculty}`);
+            await new Promise(r => setTimeout(r, 800));
+            // POST выбор факультета — завершает авторизацию
             const selectRes = await axios.post(`${domain}/index.php?x`,
                 `Login=${encodeURIComponent(firstFaculty)}&pw=`,
                 {
@@ -263,13 +273,14 @@ class KsuAuthService {
                 }
             );
 
-            this._checkCloudflare(selectRes, "╨Т╤Л╨▒╨╛╤А ╤Д╨░╨║╤Г╨╗╤М╤В╨╡╤В╨░ (POST /)");
+            this._checkCloudflare(selectRes, "Выбор факультета (POST /)");
 
             const newerCookie = this._extractSessionCookie(selectRes.headers['set-cookie']);
             if (newerCookie) sessionCookie = newerCookie;
 
-            // ╨Ф╨╡╨╗╨░╨╡╨╝ GET ╨╖╨░╨┐╤А╨╛╤Б ╨╜╨░ stud.php, ╤З╤В╨╛╨▒╤Л ╨╖╨░╨▓╨╡╤А╤И╨╕╤В╤М ╤Б╨╡╤Б╤Б╨╕╤О ╨▓╤Е╨╛╨┤╨░ (╨╕╨╝╨╕╤В╨╕╤А╤Г╨╡╨╝ ╤А╨╡╨┤╨╕╤А╨╡╨║╤В ╨▒╤А╨░╤Г╨╖╨╡╤А╨░)
-            log.info(`[KsuAuth _tryAuth] ╨Я╨╡╤А╨╡╤Е╨╛╨┤ ╨╜╨░ stud.php ╨┤╨╗╤П ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨╕╤П ╤Б╨╡╤Б╤Б╨╕╨╕`);
+            // Делаем GET запрос на stud.php, чтобы завершить сессию входа (имитируем редирект браузера)
+            log.info(`[KsuAuth _tryAuth] Переход на stud.php для завершения сессии`);
+            await new Promise(r => setTimeout(r, 800));
             const studRes = await axios.get(`${domain}/stud.php`, {
                 httpsAgent,
                 httpAgent,
@@ -283,19 +294,32 @@ class KsuAuthService {
                     'Referer': `${domain}/index.php?x`
                 }
             });
-            this._checkCloudflare(studRes, "╨и╨░╨│ 3.5 (GET stud.php)");
+            this._checkCloudflare(studRes, "Шаг 3.5 (GET stud.php)");
             
             const newestCookie = this._extractSessionCookie(studRes.headers['set-cookie']);
             if (newestCookie) sessionCookie = newestCookie;
+
+            const studBody = (typeof studRes.data === 'string' ? studRes.data : '').toLowerCase();
+            if (studRes.status === 200 && (
+                studBody.includes('мамандық') ||
+                studBody.includes('специальн') ||
+                studBody.includes('grupps') ||
+                studBody.includes('<select') ||
+                studBody.includes('<table')
+            )) {
+                log.info("[KsuAuth _tryAuth] Сессия успешно подтверждена на шаге 3.5");
+                return sessionCookie;
+            }
         } else {
-            log.warn(`[KsuAuth _tryAuth] ╨б╨┐╨╕╤Б╨╛╨║ ╤Д╨░╨║╤Г╨╗╤М╤В╨╡╤В╨╛╨▓ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜ ╨╜╨░ ╨│╨╗╨░╨▓╨╜╨╛╨╣ ╤Б╤В╤А╨░╨╜╨╕╤Ж╨╡! ╨б╤В╨░╤В╤Г╤Б ╨╛╤В╨▓╨╡╤В╨░: ${mainRes.status}. ╨Ф╨╗╨╕╨╜╨░ body: ${bodyText.length}. ╨Э╨░╤З╨░╨╗╨╛ body: ${bodyText.substring(0, 300).replace(/\s+/g, ' ')}`);
+            log.warn(`[KsuAuth _tryAuth] Список факультетов не найден на главной странице! Статус ответа: ${mainRes.status}.`);
         }
 
-        // ╨и╨░╨│ 4: ╨Т╨╡╤А╨╕╤Д╨╕╨║╨░╤Ж╨╕╤П тАФ ╨┐╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╤З╤В╨╛ ╨║╤Г╨║╨░ ╨┤╨╡╨╣╤Б╤В╨▓╨╕╤В╨╡╨╗╤М╨╜╨╛ ╨┤╨░╤С╤В ╨┤╨╛╤Б╤В╤Г╨┐ ╨║ ╤А╨░╤Б╨┐╨╕╤Б╨░╨╜╨╕╤О
-        log.info(`[KsuAuth _tryAuth] ╨и╨░╨│ 4: ╨Т╨╡╤А╨╕╤Д╨╕╨║╨░╤Ж╨╕╤П ╤Б╨╡╤Б╤Б╨╕╨╕`);
+        // Шаг 4: Верификация сессии
+        log.info(`[KsuAuth _tryAuth] Шаг 4: Верификация сессии`);
+        await new Promise(r => setTimeout(r, 800));
         const verified = await this._verifyCookie(sessionCookie, proxy);
         if (!verified) {
-            throw new Error("╨Ъ╤Г╨║╨░ ╨╜╨╡ ╨┐╤А╨╛╤И╨╗╨░ ╨▓╨╡╤А╨╕╤Д╨╕╨║╨░╤Ж╨╕╤О тАФ ╤А╨░╤Б╨┐╨╕╤Б╨░╨╜╨╕╨╡ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╨╛");
+            throw new Error("Кука не прошла верификацию — расписание недоступно");
         }
 
         return sessionCookie;
@@ -310,7 +334,7 @@ class KsuAuthService {
             const httpsAgent = proxy ? new HttpsProxyAgent(`http://${proxy}`, { rejectUnauthorized: false }) : undefined;
             const httpAgent = proxy ? new HttpProxyAgent(`http://${proxy}`) : undefined;
 
-            const url = encodeURI(`${domain}/view1.php?id=5044&Otdel=╤А╤Г╤Б`);
+            const url = `${domain}/stud.php`;
             const res = await axios.get(url, {
                 httpsAgent,
                 httpAgent,
@@ -324,13 +348,12 @@ class KsuAuthService {
                     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                     'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
                     'Cookie': cookie,
-                    'Referer': `${domain}/stud.php`
+                    'Referer': `${domain}/`
                 }
             });
 
-            // ╨Х╤Б╨╗╨╕ ╤А╨╡╨┤╨╕╤А╨╡╨║╤В тАФ ╤Б╨╡╤Б╤Б╨╕╤П ╨╜╨╡ ╨▓╨░╨╗╨╕╨┤╨╜╨░
-            if (res.status === 302 || res.status === 301) {
-                log.warn("[KsuAuth Verify] ╨Я╨╛╨╗╤Г╤З╨╡╨╜ ╤А╨╡╨┤╨╕╤А╨╡╨║╤В тАФ ╤Б╨╡╤Б╤Б╨╕╤П ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨░");
+            if (res.status === 302 || res.status === 301 || res.status === 403) {
+                log.warn(`[KsuAuth Verify] Cookie invalid. Status: ${res.status}, Location: ${res.headers.location}`);
                 return false;
             }
 
@@ -339,15 +362,21 @@ class KsuAuthService {
             const body = typeof res.data === 'string' ? res.data : '';
             const lowerBody = body.toLowerCase();
             
-            // ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝ ╤З╤В╨╛ ╨╡╤Б╤В╤М ╤В╨░╨▒╨╗╨╕╤Ж╨░ ╤Б ╤А╨░╤Б╨┐╨╕╤Б╨░╨╜╨╕╨╡╨╝
-            if (lowerBody.includes('<table')) {
+            if (res.status === 200 && (
+                lowerBody.includes('мамандық') ||
+                lowerBody.includes('специальн') ||
+                lowerBody.includes('grupps') ||
+                lowerBody.includes('<select') ||
+                lowerBody.includes('<table') ||
+                lowerBody.includes('name="fak"')
+            )) {
                 return true;
             }
 
-            log.warn(`[KsuAuth Verify] ╨б╤В╤А╨░╨╜╨╕╤Ж╨░ ╨╜╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В ╤В╨░╨▒╨╗╨╕╤Ж╤Г ╤А╨░╤Б╨┐╨╕╤Б╨░╨╜╨╕╤П. ╨б╤В╨░╤В╤Г╤Б: ${res.status}. ╨Ф╨╗╨╕╨╜╨░: ${body.length}. ╨в╨╡╨╗╨╛: ${body.substring(0, 1500).replace(/\s+/g, ' ')}`);
+            log.warn(`[KsuAuth Verify] Page does not contain schedule or faculty form. Status: ${res.status}. Length: ${body.length}.`);
             return false;
         } catch (e) {
-            log.warn(`[KsuAuth Verify] ╨Ю╤И╨╕╨▒╨║╨░ ╨▓╨╡╤А╨╕╤Д╨╕╨║╨░╤Ж╨╕╨╕: ${e.message}`);
+            log.warn(`[KsuAuth Verify] Verification error: ${e.message}`);
             return false;
         }
     }

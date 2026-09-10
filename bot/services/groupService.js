@@ -1,4 +1,5 @@
-import {Group} from "../models/group.js"
+import {Group} from "../models/group.js";
+import log from "../logging/logging.js";
 
 class groupService {
     getByProgramId = async (programId) => {
@@ -27,11 +28,51 @@ class groupService {
 
     updateAll = async (groups) => {
         try {
-            await Group.deleteMany({})
-
-            await Group.insertMany(groups)
+            if (!groups || groups.length === 0) return null;
+            // Атомарный upsert без удаления всей таблицы (zero-downtime)
+            const operations = groups.map(group => ({
+                updateOne: {
+                    filter: { href: group.href },
+                    update: { $set: group },
+                    upsert: true
+                }
+            }));
+            const res = await Group.bulkWrite(operations, { ordered: false });
+            return res;
         } catch (e) {
             throw new Error("Ошибка при обновлении всех групп: " + e.stack)
+        }
+    }
+
+    syncProgramGroups = async (programId) => {
+        try {
+            const { default: ScheduleService } = await import("../../backend/services/ScheduleService.js");
+            const rawGroups = await ScheduleService.get_group_list_by_programId(programId);
+            if (!rawGroups || rawGroups.length === 0) {
+                return await this.getByProgramId(programId);
+            }
+
+            const operations = rawGroups.map(group => ({
+                updateOne: {
+                    filter: { href: group.href },
+                    update: { $set: {
+                        name: group.name,
+                        id: group.id,
+                        language: group.language,
+                        href: group.href,
+                        age: group.age,
+                        studentCount: group.studentCount,
+                        program: Number(programId)
+                    } },
+                    upsert: true
+                }
+            }));
+            await Group.bulkWrite(operations, { ordered: false });
+            log.info(`[GroupService] On-demand синхронизировано ${rawGroups.length} групп для programId ${programId}`);
+            return await this.getByProgramId(programId);
+        } catch (e) {
+            log.error(`[GroupService] Ошибка syncProgramGroups(${programId}): ` + e.message);
+            return await this.getByProgramId(programId);
         }
     }
 

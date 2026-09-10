@@ -17,12 +17,21 @@ class programService{
         }
     }
 
-    updateAll = async (programs) =>{
-        try{
-            await Program.deleteMany({})
-            
-            await Program.insertMany(programs)
-        }catch (e) {
+    updateAll = async (programs) => {
+        try {
+            if (!programs || programs.length === 0) {
+                log.warn("[ProgramService] updateAll called with empty array, skipping.");
+                return;
+            }
+            const ops = programs.map(p => ({
+                updateOne: {
+                    filter: { id: p.id },
+                    update: { $set: p },
+                    upsert: true
+                }
+            }));
+            await Program.bulkWrite(ops);
+        } catch (e) {
             throw new Error("Ошибка при обновлении всех программ: " + e.stack)
         }
     }
