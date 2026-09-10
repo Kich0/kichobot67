@@ -1,6 +1,16 @@
+import crypto from 'crypto';
 import log from '../logging/logging.js';
 import config from '../config.js';
 
+export function getWebhookSecretToken() {
+    if (process.env.WEBHOOK_SECRET_TOKEN) {
+        return process.env.WEBHOOK_SECRET_TOKEN.trim();
+    }
+    if (config.TG_TOKEN) {
+        return crypto.createHash('sha256').update(config.TG_TOKEN + '_webhook_secret').digest('hex').substring(0, 32);
+    }
+    return null;
+}
 
 class WebhookRetryManager {
     constructor(bot) {
@@ -24,8 +34,10 @@ class WebhookRetryManager {
     
     async _attemptWebhookSetup() {
         try {
-            await this.bot.setWebHook(this.webhookUrl);
-            log.info(`Webhook set successfully: ${this.webhookUrl}`);
+            const secretToken = getWebhookSecretToken();
+            const options = secretToken ? { secret_token: secretToken } : {};
+            await this.bot.setWebHook(this.webhookUrl, options);
+            log.info(`Webhook set successfully: ${this.webhookUrl} (with secret_token: ${Boolean(secretToken)})`);
             const webhookInfo = await this.bot.getWebHookInfo();
             if (webhookInfo.url === this.webhookUrl) {
                 log.info('Webhook verification passed', {

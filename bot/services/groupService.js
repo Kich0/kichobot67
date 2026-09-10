@@ -4,7 +4,14 @@ import log from "../logging/logging.js";
 class groupService {
     getByProgramId = async (programId) => {
         try {
-            return await Group.find({program: programId}).sort('-id')
+            const docs = await Group.find({program: programId}).sort('-id');
+            // Дедупликация по id на случай любых повторений
+            const seen = new Set();
+            return docs.filter(g => {
+                if (seen.has(g.id)) return false;
+                seen.add(g.id);
+                return true;
+            });
         } catch (e) {
             throw new Error("Ошибка при получении группы по програмАйди: " + e.stack)
         }
@@ -26,18 +33,27 @@ class groupService {
         }
     }
 
-    updateAll = async (groups) => {
+    updateAll = async (groups, removeStale = false) => {
         try {
             if (!groups || groups.length === 0) return null;
-            // Атомарный upsert без удаления всей таблицы (zero-downtime)
+            // Атомарный upsert по уникальному ID группы (zero-downtime)
             const operations = groups.map(group => ({
                 updateOne: {
-                    filter: { href: group.href },
+                    filter: { id: group.id },
                     update: { $set: group },
                     upsert: true
                 }
             }));
             const res = await Group.bulkWrite(operations, { ordered: false });
+
+            // Удаляем старые группы ТОЛЬКО при полном синке всего университета (>= 500 групп)
+            if (removeStale || groups.length >= 500) {
+                const activeIds = groups.map(g => g.id).filter(Boolean);
+                if (activeIds.length > 0) {
+                    await Group.deleteMany({ id: { $nin: activeIds } });
+                }
+            }
+
             return res;
         } catch (e) {
             throw new Error("Ошибка при обновлении всех групп: " + e.stack)
@@ -52,9 +68,10 @@ class groupService {
                 return await this.getByProgramId(programId);
             }
 
+            // Атомарный upsert по уникальному ID группы
             const operations = rawGroups.map(group => ({
                 updateOne: {
-                    filter: { href: group.href },
+                    filter: { id: group.id },
                     update: { $set: {
                         name: group.name,
                         id: group.id,
@@ -79,7 +96,14 @@ class groupService {
     findByName = async (name) => {
         try {
             const regExp = new RegExp(name, "i")
-            return await Group.find({name:{$regex:regExp}}).sort('name')
+            const docs = await Group.find({name:{$regex:regExp}}).sort('name')
+            // Дедупликация по id для поисковой выдачи
+            const seen = new Set();
+            return docs.filter(g => {
+                if (seen.has(g.id)) return false;
+                seen.add(g.id);
+                return true;
+            });
         }catch (e) {
             throw new Error("Ошибка при поиске группы по названию." + e.stack)
         }

@@ -5,7 +5,7 @@ import LogService from "../services/LogService.js";
 
 export const logsRouter = new Router()
 
-logsRouter.post('/add_log', async (req, res, next) => {
+logsRouter.post('/add_log', authMiddleware, async (req, res, next) => {
     try {
         log.info("Добавлен лог из апи!")
         return res.status(200).json("Добавлен лог в бд!!!")
@@ -14,7 +14,7 @@ logsRouter.post('/add_log', async (req, res, next) => {
     }
 })
 
-logsRouter.post('/add_log2', async (req, res, next) => {
+logsRouter.post('/add_log2', authMiddleware, async (req, res, next) => {
     try {
         log.info("That is new log from database. A very very long log, almost like my .... Khe. How are u? Not too long?")
         return res.status(200).json("Добавлен long лог в бд!!!")
@@ -23,7 +23,7 @@ logsRouter.post('/add_log2', async (req, res, next) => {
     }
 })
 
-logsRouter.post('/add_warn_log', async (req, res, next) => {
+logsRouter.post('/add_warn_log', authMiddleware, async (req, res, next) => {
     try {
         log.warn("test warn log")
         return res.status(200).json("Добавлен warn лог в бд!!!")
@@ -32,7 +32,7 @@ logsRouter.post('/add_warn_log', async (req, res, next) => {
     }
 })
 
-logsRouter.post('/add_error_log', async (req, res, next) => {
+logsRouter.post('/add_error_log', authMiddleware, async (req, res, next) => {
     try {
         log.error("test error log")
         return res.status(200).json("Добавлен error лог в бд!!!")

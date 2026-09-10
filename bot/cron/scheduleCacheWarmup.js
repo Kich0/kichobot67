@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import log from "../logging/logging.js";
 import { User } from "../models/user.js";
-import { UniversityGroup } from "../../backend/models/UniversityGroup.js";
+import { Group } from "../models/group.js";
 import BackendScheduleService from "../../backend/services/ScheduleService.js";
 import { schedule_cache } from "../controllers/ScheduleController.js";
 import groupService from "../services/groupService.js";

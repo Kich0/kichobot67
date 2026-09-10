@@ -398,13 +398,13 @@ class ScheduleService {
     get_all_groups_fast = async (programs, onProgress) => {
         const cookie = await KsuAuthService.getCookie();
         const allGroups = [];
-        const BATCH_SIZE = 6;
+        const BATCH_SIZE = 4;
 
         for (let i = 0; i < programs.length; i += BATCH_SIZE) {
             const batch = programs.slice(i, i + BATCH_SIZE);
             const results = await Promise.all(batch.map(async (prog) => {
                 let attempts = 0;
-                while (attempts < 2) {
+                while (attempts < 3) {
                     attempts++;
                     try {
                         const res = await axios.get(`${config.KSU_DOMAIN}/grupps1.php?id=${prog.id}`, {
@@ -443,11 +443,14 @@ class ScheduleService {
                                 }
                             });
                             return progGroups;
+                        } else if (res.status === 403 || res.status === 429) {
+                            await sleep(1000);
                         }
                     } catch (e) {
-                        if (attempts >= 2) {
+                        if (attempts >= 3) {
                             log.warn(`[FastGroups] Ошибка программы ${prog.id} (${prog.name}): ${e.message}`);
                         }
+                        await sleep(500);
                     }
                 }
                 return [];
@@ -462,7 +465,7 @@ class ScheduleService {
                 onProgress(stage, allGroups.length);
             }
 
-            await sleep(150);
+            await sleep(250);
         }
 
         return allGroups;
