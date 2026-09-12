@@ -165,11 +165,11 @@ const appStart = async () => {
         ]);
 
         await bot.setMyDescription({
-            description: 'Kicho - расписание КарГУ Букетов 📚'
+            description: 'Kicho — КарУ (Букетов) кестесі 📚'
         }).catch(e => backendLog.error('Failed to set bot description', { stack: e.stack }));
 
         await bot.setMyShortDescription({
-            short_description: 'Kicho - расписание КарГУ Букетов 📚'
+            short_description: 'Kicho — КарУ (Букетов) кестесі 📚'
         }).catch(e => backendLog.error('Failed to set bot short description', { stack: e.stack }));
 
         // === Bot cron ===

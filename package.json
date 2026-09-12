@@ -2,7 +2,7 @@
   "name": "kichobot",
   "version": "2.0.0",
   "type": "module",
-  "description": "Kichobot - Telegram бот расписания КарГУ Букетова (unified server)",
+  "description": "Kichobot - Telegram бот расписания КарУ Букетова (unified server)",
   "main": "server.js",
   "engines": {
     "node": "20.x"

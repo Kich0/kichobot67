@@ -4,7 +4,6 @@ import {bot} from "../app.js";
 import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddleware.js";
 import userService from "../services/userService.js";
 import i18next from "i18next";
-import {getRandomMemeResponse} from "../controllers/commands/memeResponseController.js";
 import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
 
 const COMMAND_REGEXES = [
@@ -47,8 +46,8 @@ export function setupAnyMessageHandler() {
                                 one_time_keyboard: false,
                                 resize_keyboard: true
                             };
-                            const memeText = getRandomMemeResponse();
-                            await bot.sendMessage(msg.chat.id, memeText, {reply_markup: keyboard});
+                            const msgText = i18next.t('welcome_page', {lng: user_language});
+                            await bot.sendMessage(msg.chat.id, msgText, {reply_markup: keyboard, parse_mode: "HTML"});
                         } catch (e) {
                             log.error(`User ${msg.chat.id} error in text fallback: ${e.message}`, {stack: e.stack});
                         }
