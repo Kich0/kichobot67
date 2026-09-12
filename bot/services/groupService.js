@@ -36,8 +36,19 @@ class groupService {
     updateAll = async (groups, removeStale = false) => {
         try {
             if (!groups || groups.length === 0) return null;
+
+            // Дедупликация в памяти перед записью
+            const seen = new Set();
+            const uniqueGroups = [];
+            for (const g of groups) {
+                if (g && g.id && !seen.has(g.id)) {
+                    seen.add(g.id);
+                    uniqueGroups.push(g);
+                }
+            }
+
             // Атомарный upsert по уникальному ID группы (zero-downtime)
-            const operations = groups.map(group => ({
+            const operations = uniqueGroups.map(group => ({
                 updateOne: {
                     filter: { id: group.id },
                     update: { $set: group },
@@ -47,8 +58,8 @@ class groupService {
             const res = await Group.bulkWrite(operations, { ordered: false });
 
             // Удаляем старые группы ТОЛЬКО при полном синке всего университета (>= 500 групп)
-            if (removeStale || groups.length >= 500) {
-                const activeIds = groups.map(g => g.id).filter(Boolean);
+            if (removeStale || uniqueGroups.length >= 500) {
+                const activeIds = uniqueGroups.map(g => g.id).filter(Boolean);
                 if (activeIds.length > 0) {
                     await Group.deleteMany({ id: { $nin: activeIds } });
                 }
@@ -104,8 +115,29 @@ class groupService {
                 seen.add(g.id);
                 return true;
             });
-        }catch (e) {
-            throw new Error("Ошибка при поиске группы по названию." + e.stack)
+        } catch (e) {
+            throw new Error("Ошибка при поиске группы по названию: " + e.stack);
+        }
+    }
+
+    deduplicateGroups = async () => {
+        try {
+            const dups = await Group.aggregate([
+                { $group: { _id: '$id', count: { $sum: 1 }, ids: { $push: '$_id' } } },
+                { $match: { count: { $gt: 1 } } }
+            ]);
+
+            let deletedCount = 0;
+            for (const dup of dups) {
+                const [keep, ...removeIds] = dup.ids;
+                if (removeIds.length > 0) {
+                    const res = await Group.deleteMany({ _id: { $in: removeIds } });
+                    deletedCount += res.deletedCount || 0;
+                }
+            }
+            return deletedCount;
+        } catch (e) {
+            throw new Error("Ошибка при дедупликации групп: " + e.stack);
         }
     }
 }

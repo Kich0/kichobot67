@@ -20,6 +20,7 @@ import {
 } from "../controllers/commands/adminCommands/inactiveSpamAdminCommandController.js";
 import {piarAdminCommandController} from "../controllers/commands/adminCommands/piarAdminCommandController.js";
 import {getUserCommandController} from "../controllers/commands/adminCommands/getUser.js";
+import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
 
 
@@ -29,6 +30,12 @@ export function sleep(ms) {
 
 
 export default function setupAdminCommandHandler() {
+  bot.onText(/^\/(sync|pull_new)/i, async (msg) => {
+    await isAdminMiddleware(msg, async () => {
+      await syncNewDataController(msg);
+    });
+  });
+
   bot.onText(/^\/updateFaculties/, async (msg) => {
     await isAdminMiddleware(msg, async () => {
       let hard = false
@@ -439,31 +446,37 @@ export default function setupAdminCommandHandler() {
   })
 
   bot.onText(/^\/ahelp/i, async (msg) => {
-    const msg_text = '/updateFaculties [isHard] \n' +
-      '/updatePrograms [isHard] \n' +
-      '/updateGroups [isHard] \n' +
-      '/updateProfiles [isHard] \n' +
-      '/updateDepartments [isHard] \n' +
-      '/updateTeachers [isHard] \n' +
-      '/info \n' +
-      '/stat \n' +
-      '/users \n' +
-      '/group_stat \n' +
-      '/get_schedule [groupId] \n' +
-      '/get_reserved_schedule [groupId]\n' +
-      '/get_user [userId] \n' +
-      '/get_logs \n' +
-      '/ignoreLogs [userId] \n' +
-      '/get_users_by_group [groupId] \n' +
-      '/get_logs (Осторожно. скидывает фулл лог за всю историю) \n' +
-      '/sms [userId] [text] \n' +
-      '/inactiveSpam [text]\n' +
-      '/piar [text]\n' +
-      '/spam [text] \n' +
-      '/stop (стоп спамить) \n' +
-      '/get_group \n' +
-      '/restart (browser restart) \n' +
-      '/get_callback [callbackName] \n'
-    await bot.sendMessage(msg.chat.id, msg_text)
+    const msg_text = '⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n' +
+      '🔄 <b>Синхронизация данных:</b>\n' +
+      '/sync (или /pull_new) — <i>Умный сбор новых данных: проверяет сайт КарУ и добавляет ТОЛЬКО новые группы, преподавателей, кафедры и программы БЕЗ дубликатов!</i>\n' +
+      '/updateFaculties [hard] — обновить факультеты\n' +
+      '/updatePrograms [hard] — обновить программы\n' +
+      '/updateGroups [hard] — обновить группы (быстрый)\n' +
+      '/updateDepartments [hard] — обновить кафедры\n' +
+      '/updateTeachers [hard] — обновить преподавателей\n' +
+      '/updateProfiles [hard] — обновить профили\n\n' +
+      '📊 <b>Статистика и аналитика:</b>\n' +
+      '/stat — статистика онлайна и регистраций\n' +
+      '/users — общее количество пользователей бота\n' +
+      '/group_stat — покрытие по группам (+ выгрузка JSON)\n' +
+      '/get_group [groupId] — инфо о группе\n' +
+      '/get_user [userId] — инфо о пользователе\n' +
+      '/get_users_by_group [groupId] — пользователи группы\n' +
+      '/get_schedule [groupId] — расписание группы\n' +
+      '/get_reserved_schedule [groupId] — резервное расписание\n\n' +
+      '📢 <b>Рассылки:</b>\n' +
+      '/sms [userId] [text] — отправить ЛС пользователю\n' +
+      '/spam [text] — рассылка всем пользователям\n' +
+      '/stop — принудительно остановить рассылку\n' +
+      '/piar [text] — таргет-рассылка по группам\n' +
+      '/inactiveSpam [text] — рассылка неактивным\n\n' +
+      '🛠 <b>Сервисные команды:</b>\n' +
+      '/get_logs — скачать лог-файл бота\n' +
+      '/ignoreLogs [userId] — добавить в игнор логов\n' +
+      '/restart — перезапуск сессии браузера\n' +
+      '/info — отладочная информация\n' +
+      '/test — тест подключения к КарУ\n' +
+      '/get_callback [callbackName] — тест кнопки'
+    await bot.sendMessage(msg.chat.id, msg_text, { parse_mode: "HTML" })
   });
 }

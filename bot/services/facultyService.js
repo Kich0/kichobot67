@@ -33,7 +33,15 @@ class FacultyService {
             if (!faculties || faculties.length === 0) {
                 return;
             }
-            const ops = faculties.map(f => ({
+            const seen = new Set();
+            const uniqueFaculties = [];
+            for (const f of faculties) {
+                if (f && f.id && !seen.has(f.id)) {
+                    seen.add(f.id);
+                    uniqueFaculties.push(f);
+                }
+            }
+            const ops = uniqueFaculties.map(f => ({
                 updateOne: {
                     filter: { id: f.id },
                     update: { $set: f },

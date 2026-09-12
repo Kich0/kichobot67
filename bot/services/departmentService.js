@@ -11,7 +11,13 @@ class departmentService {
     }
     getAll = async () => {
         try {
-            return await Department.find({}).sort('name')
+            const docs = await Department.find({}).sort('name');
+            const seen = new Set();
+            return docs.filter(d => {
+                if (seen.has(d.id)) return false;
+                seen.add(d.id);
+                return true;
+            });
         } catch (e) {
             throw new Error("Ошибка при получении всех Department: " + e.stack)
         }
@@ -19,9 +25,28 @@ class departmentService {
 
     updateAll = async (departments) => {
         try {
-            await Department.deleteMany({})
+            if (!departments || departments.length === 0) return null;
 
-            await Department.insertMany(departments)
+            // Дедупликация в памяти
+            const seen = new Set();
+            const uniqueDepartments = [];
+            for (const d of departments) {
+                if (d && d.id && !seen.has(d.id)) {
+                    seen.add(d.id);
+                    uniqueDepartments.push(d);
+                }
+            }
+
+            // Атомарный upsert без deleteMany (zero-downtime, без дубликатов)
+            const operations = uniqueDepartments.map(department => ({
+                updateOne: {
+                    filter: { id: department.id },
+                    update: { $set: department },
+                    upsert: true
+                }
+            }));
+
+            return await Department.bulkWrite(operations, { ordered: false });
         } catch (e) {
             throw new Error("Ошибка при обновлении всех Department: " + e.stack)
         }

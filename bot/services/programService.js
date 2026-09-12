@@ -20,10 +20,17 @@ class programService{
     updateAll = async (programs) => {
         try {
             if (!programs || programs.length === 0) {
-                log.warn("[ProgramService] updateAll called with empty array, skipping.");
                 return;
             }
-            const ops = programs.map(p => ({
+            const seen = new Set();
+            const uniquePrograms = [];
+            for (const p of programs) {
+                if (p && p.id && !seen.has(p.id)) {
+                    seen.add(p.id);
+                    uniquePrograms.push(p);
+                }
+            }
+            const ops = uniquePrograms.map(p => ({
                 updateOne: {
                     filter: { id: p.id },
                     update: { $set: p },
