@@ -10,6 +10,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 import i18next from "i18next";
 import {getAndSendUserInfoByUserId} from "./commands/adminCommands/getUser.js";
 import config from "../config.js";
+import userActionService from "../services/userActionService.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
@@ -417,6 +418,18 @@ class ScheduleController {
                     log.error(`Не удалось отправить уведомление о новом пользователе: ${notificationError.message}. Убедитесь, что LOG_CHANEL_ID в .env верный и бот добавлен в этот канал.`);
                 }
             }
+
+            // Понятное логирование действия на русском языке
+            groupService.getById(groupId).then(grp => {
+                const groupName = grp?.name ? `"${grp.name}"` : `ID ${groupId}`;
+                userActionService.logAction(
+                    call.message.chat.id,
+                    call.message.chat.username,
+                    'view_group',
+                    `Открыл расписание группы ${groupName}`,
+                    { entityId: Number(groupId), entityName: grp?.name }
+                );
+            }).catch(() => {});
         } catch (e) {
             return await unexpectedCallbackErrorController(e, call.message, call.data)
         }

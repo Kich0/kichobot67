@@ -8,6 +8,7 @@ import teacherScheduleService from "../services/teacherScheduleService.js";
 import {bot} from "../app.js";
 import i18next from 'i18next'
 import config from "../config.js";
+import userActionService from "../services/userActionService.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
@@ -233,6 +234,18 @@ class TeacherScheduleController {
             }).catch((e) => log.error("Ошибка при обновлении данных о пользователе при получении Teacher расписания. ", {
                 stack: e.stack, call, userId: call.message.chat.id
             }))
+
+            // Понятное логирование действия на русском языке
+            teacherService.getById(teacherId).then(tch => {
+                const teacherName = tch?.name ? `"${tch.name}"` : `ID ${teacherId}`;
+                userActionService.logAction(
+                    call.message.chat.id,
+                    call.message.chat.username,
+                    'view_teacher',
+                    `Открыл расписание преподавателя ${teacherName}`,
+                    { entityId: Number(teacherId), entityName: tch?.name }
+                );
+            }).catch(() => {});
 
         } catch (e) {
             return await unexpectedCallbackErrorController(e, call.message, call.data)

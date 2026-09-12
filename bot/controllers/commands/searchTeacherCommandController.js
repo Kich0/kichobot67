@@ -7,6 +7,7 @@ import SearchTeacherController from "../SearchTeacherController.js";
 import userService from "../../services/userService.js";
 import i18next from "i18next";
 import {criticalErrorController} from "../../exceptions/bot/criticalErrorController.js";
+import userActionService from "../../services/userActionService.js";
 
 const errorCatch = async (e, msg) => {
     log.error(`ВАЖНО!User ${msg.chat.id}! ОШИБКА В searchTeacherCommandController. Юзеру сказано что бот прибоел.` + e.message, {
@@ -35,6 +36,13 @@ export async function searchTeacherCommandController(msg) {
             teacherName = splittedText.slice(1).join(" ").replaceAll(" ", "-")
 
             const teachers = await TeacherService.findByName(teacherName)
+
+            userActionService.logAction(
+                msg.chat.id,
+                msg.from?.username,
+                'search_teacher',
+                `Искал преподавателя через чат: "${teacherName}" (результатов: ${teachers.length})`
+            );
 
             if (!teachers.length) {
                 const msg_text = i18next.t('search_bad_result', { lng: user_language, searchQuery: teacherName })

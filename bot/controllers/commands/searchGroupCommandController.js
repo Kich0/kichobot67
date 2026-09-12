@@ -8,6 +8,8 @@ import userService from "../../services/userService.js";
 import i18next from "i18next";
 import {criticalErrorController} from "../../exceptions/bot/criticalErrorController.js";
 
+import userActionService from "../../services/userActionService.js";
+
 const errorCatch = async (e, msg) =>{
     log.error(`ВАЖНО!User ${msg.chat.id}! ОШИБКА В searchGroupCommandController. Юзеру сказано что бот прибоел.` + e.message, {stack: e.stack, userId: msg.chat.id})
     await criticalErrorController(msg)
@@ -32,6 +34,13 @@ export async function searchGroupCommandController(msg){
             groupName = splittedText.slice(1).join(" ").replaceAll(" ", "-")
 
             const groups = await GroupService.findByName(groupName)
+
+            userActionService.logAction(
+                msg.chat.id,
+                msg.from?.username,
+                'search_group',
+                `Искал группу через чат: "${groupName}" (результатов: ${groups.length})`
+            );
 
             if (!groups.length){
                 const msg_text = i18next.t('search_bad_result', {lng:user_language, searchQuery:groupName})

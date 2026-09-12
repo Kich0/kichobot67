@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema(
         userTitle: {type: String},
         firstName: {type: String},
         lastName: {type: String},
-        username: {type: String},
+        username: {type: String, index: true},
         group: {type: Number, ref: 'Group', field:"id"},
         teacher: {type: Number, ref: 'Teacher', field:"id"},
         scheduleType:{type:String},

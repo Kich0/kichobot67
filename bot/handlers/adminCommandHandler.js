@@ -19,7 +19,7 @@ import {
   inactiveSpamAdminCommandController
 } from "../controllers/commands/adminCommands/inactiveSpamAdminCommandController.js";
 import {piarAdminCommandController} from "../controllers/commands/adminCommands/piarAdminCommandController.js";
-import {getUserCommandController} from "../controllers/commands/adminCommands/getUser.js";
+import {getUserCommandController, getUserLogsCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
 
@@ -268,7 +268,8 @@ export default function setupAdminCommandHandler() {
 
   });
 
-  bot.onText(/^\/get_user/i, getUserCommandController);
+  bot.onText(/^\/(get_user|find_user|user)/i, getUserCommandController);
+  bot.onText(/^\/user_logs/i, getUserLogsCommandController);
 
   bot.onText(/^\/ignoreLogs/i, async (msg) => {
     try {
@@ -330,24 +331,40 @@ export default function setupAdminCommandHandler() {
   bot.onText(/^\/sms/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
-        return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
+        return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой прекрасной команде!");
       }
-      const split_data = msg.text.split(" ")
+      const split_data = msg.text.trim().split(/\s+/);
       if (split_data.length < 3) {
-        return await bot.sendMessage(msg.chat.id, "После команды должен быть 2 параметра!")
+        return await bot.sendMessage(
+          msg.chat.id,
+          "ℹ️ <b>Формат команды:</b>\n<code>/sms [userId или @username] [текст сообщения]</code>\n\nПримеры:\n• <code>/sms @username Привет, обнови расписание!</code>\n• <code>/sms 123456789 Привет!</code>",
+          { parse_mode: "HTML" }
+        );
       }
-      const userId = split_data[1]
-      if (isNaN(parseFloat(userId))) {
-        return await bot.sendMessage(msg.chat.id, "Параметр userId is NaN")
+      const target = split_data[1];
+      const targetUser = await userService.findUser(target);
+      if (!targetUser) {
+        return await bot.sendMessage(msg.chat.id, `❌ Пользователь <b>"${target}"</b> не найден в базе данных бота.`, { parse_mode: "HTML" });
       }
-      const msg_text = msg.text.replace(userId, '').replace('/sms ', '')
 
-      await bot.sendMessage(userId, msg_text)
-      await bot.sendMessage(msg.chat.id, "Отправлено: \n" + msg_text)
+      // Текст сообщения — всё после target
+      const targetIndex = msg.text.indexOf(target);
+      const msg_text = msg.text.slice(targetIndex + target.length).trim();
+
+      await bot.sendMessage(targetUser.userId, msg_text);
+
+      const usernameStr = targetUser.username ? `@${targetUser.username}` : (targetUser.firstName || 'Без имени');
+      await bot.sendMessage(
+        msg.chat.id,
+        `✅ <b>Сообщение успешно доставлено:</b>\n` +
+        `• <b>Получатель:</b> ${usernameStr} (ID: <code>${targetUser.userId}</code>)\n` +
+        `• <b>Текст:</b>\n${msg_text}`,
+        { parse_mode: "HTML" }
+      );
     } catch (e) {
-      log.error("Ошибочка при /sms", {stack: e.stack})
+      log.error("Ошибочка при /sms: " + e.message, { stack: e.stack });
+      await bot.sendMessage(msg.chat.id, `❌ Не удалось отправить сообщение: ${e.message}`);
     }
-
   });
 
   bot.onText(/^\/inactiveSpam/i, inactiveSpamAdminCommandController);
@@ -455,17 +472,19 @@ export default function setupAdminCommandHandler() {
       '/updateDepartments [hard] — обновить кафедры\n' +
       '/updateTeachers [hard] — обновить преподавателей\n' +
       '/updateProfiles [hard] — обновить профили\n\n' +
-      '📊 <b>Статистика и аналитика:</b>\n' +
+      '📊 <b>Статистика и пользователи:</b>\n' +
+      '/get_user [ID/@ник] — <i>карточка пользователя с историей логов на русском!</i>\n' +
+      '/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n' +
+      '/find_user [@ник] — <i>быстрый поиск юзера по Telegram-нику</i>\n' +
       '/stat — статистика онлайна и регистраций\n' +
       '/users — общее количество пользователей бота\n' +
       '/group_stat — покрытие по группам (+ выгрузка JSON)\n' +
       '/get_group [groupId] — инфо о группе\n' +
-      '/get_user [userId] — инфо о пользователе\n' +
       '/get_users_by_group [groupId] — пользователи группы\n' +
       '/get_schedule [groupId] — расписание группы\n' +
       '/get_reserved_schedule [groupId] — резервное расписание\n\n' +
-      '📢 <b>Рассылки:</b>\n' +
-      '/sms [userId] [text] — отправить ЛС пользователю\n' +
+      '📢 <b>Рассылки и связь:</b>\n' +
+      '/sms [ID/@ник] [текст] — <i>отправить ЛС пользователю по его @нику или ID!</i>\n' +
       '/spam [text] — рассылка всем пользователям\n' +
       '/stop — принудительно остановить рассылку\n' +
       '/piar [text] — таргет-рассылка по группам\n' +

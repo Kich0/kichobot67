@@ -57,6 +57,33 @@ class UserService {
         }
     }
 
+    async getUserByUsername(username) {
+        try {
+            if (!username) return null;
+            const clean = String(username).replace(/^@/, '').trim();
+            const regExp = new RegExp(`^${clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+            return await User.findOne({ username: { $regex: regExp } });
+        } catch (error) {
+            throw new Error('Ошибка при поиске пользователя по нику: ' + error.stack);
+        }
+    }
+
+    async findUser(identifier) {
+        try {
+            if (!identifier) return null;
+            const str = String(identifier).trim();
+            // Если чисто число — ищем по Telegram ID
+            if (/^\d+$/.test(str)) {
+                const user = await this.getUserById(Number(str));
+                if (user) return user;
+            }
+            // Иначе ищем по username
+            return await this.getUserByUsername(str);
+        } catch (error) {
+            throw new Error('Ошибка в findUser: ' + error.stack);
+        }
+    }
+
     async countDocuments() {
         try {
             return await User.countDocuments({})
