@@ -158,7 +158,7 @@ export default function setupAdminCommandHandler() {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
       const userCount = await userService.countDocuments()
-      await bot.sendMessage(msg.chat.id, `В базе данных Толяна ${userCount} пользователей.`)
+      await bot.sendMessage(msg.chat.id, `В базе данных Кичо ${userCount} пользователей.`)
     } catch (e) {
       log.error({stack: e.stack})
     }
