@@ -26,7 +26,7 @@ async function warmupTopGroups() {
         const topGroupIds = topGroupsAggregation.map(g => g._id);
         
         // 2. Получаем данные о группах для извлечения языка (Otdel)
-        const groups = await UniversityGroup.find({ id: { $in: topGroupIds } });
+        const groups = await Group.find({ id: { $in: topGroupIds } });
         
         let successCount = 0;
         for (const group of groups) {

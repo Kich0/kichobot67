@@ -12,7 +12,6 @@ import {gptAssistantRouter} from "./routers/gptAssistantRouter.js";
 
 const router = new Router()
 
-router.use('/gpt-input-pictures', express.static('gpt-input-pictures'))
 router.use('/static', express.static('static'))
 router.use("/auth", authRouter)
 router.use("/logs", logsRouter)

@@ -13,7 +13,7 @@ const COMMAND_REGEXES = [
     /^(?:[💡❓⚠️\u26A0\uFE0F\s])*(Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)/iu,
     /^\/remove/i, /^Г (.+)/i, /^Т (.+)/i, /^Г$/i, /^Т$/i,
     /^Группа/i, /^Тобы/i, /^П (.+)/i, /^О (.+)/i, /^П$/i, /^О$/i, /^Преподаватель/i, /^Оқытушы/i,
-    /^\/search/i, /^Поиск/i, /^\/news/i, /^\/donate/i,
+    /^\/search/i, /^Поиск/i,
     /^(сикс|север|севен|six|seven|67|шестьдесят семь)/i
 ];
 
@@ -45,7 +45,7 @@ export function setupAnyMessageHandler() {
                                 ],
                                 one_time_keyboard: false,
                                 resize_keyboard: true
-                            };
+                            };
                             const msgText = i18next.t('welcome_page', {lng: user_language});
                             await bot.sendMessage(msg.chat.id, msgText, {reply_markup: keyboard, parse_mode: "HTML"});
                         } catch (e) {
@@ -57,4 +57,3 @@ export function setupAnyMessageHandler() {
         }
     });
 }
-

@@ -5,11 +5,15 @@ if (process.env.OPENAI_API_KEY) {
     openai = new OpenAI();
 }
 
-class GptAssistantService{
-    async getAnswerByScreenshot(newFileName) {
+class GptAssistantService {
+    async getAnswerByScreenshot(imageData) {
         if (!openai) {
             throw new Error("OpenAI API Key is missing. GPT features are disabled.");
         }
+        const imageUrl = imageData.startsWith('data:')
+            ? imageData
+            : `data:image/png;base64,${imageData}`;
+
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
@@ -23,16 +27,15 @@ class GptAssistantService{
                         {
                             type: "image_url",
                             image_url: {
-                                "url": `https://api.kicho.me/express/api/gpt-input-pictures/${newFileName}`,
+                                "url": imageUrl,
                             },
                         },
                     ],
                 },
             ],
-            max_tokens:30,
+            max_tokens: 30,
         });
-        return response
-
+        return response;
     }
 }
 

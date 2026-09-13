@@ -3,7 +3,6 @@ import {startCommandController} from "../controllers/commands/startCommandContro
 import {scheduleCommandController} from "../controllers/commands/scheduleCommandController.js";
 import {profileCommandController} from "../controllers/commands/profileCommandController.js";
 import {helpCommandController} from "../controllers/commands/helpCommandController.js";
-import {newsCommandController} from "../controllers/commands/newsCommandController.js";
 import {teacherScheduleCommandController} from "../controllers/commands/teacherScheduleCommandController.js";
 import {groupScheduleCommandController} from "../controllers/commands/groupScheduleCommandController.js";
 import {newScheduleCommandController} from "../controllers/commands/newScheduleCommandController.js";
@@ -53,6 +52,6 @@ export function setupCommandHandlers() {
     bot.onText(/^Оқытушы/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
 
     bot.onText(/^\/search/i, safeHandler(searchHelpCommandController, 'searchHelp'))
-    bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
+    bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
     bot.onText(/^(сикс|север|севен|six|seven|67|шестьдесят семь)/i, safeHandler(sixtySevenEasterEggController, 'easterEgg67'))
 }

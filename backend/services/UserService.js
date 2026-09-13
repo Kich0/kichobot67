@@ -32,7 +32,7 @@ class UserService {
             throw ApiError.Not_Found("Пользователя с таким именем не найдено.", )
         }
 
-        const correctPassword = await bcrypt.compareSync(password, user.password)
+        const correctPassword = bcrypt.compareSync(password, user.password)
         if (!correctPassword){
             throw ApiError.UnauthorizedError("Вы ввели неверный пароль.", )
         }
@@ -57,7 +57,7 @@ class UserService {
         }
 
         const tokenData = TokenService.validateRefreshToken(refreshToken)
-        const tokenFromDb = TokenService.findToken(refreshToken)
+        const tokenFromDb = await TokenService.findToken(refreshToken)
 
         if (!tokenData || !tokenFromDb){
             throw ApiError.UnauthorizedError()
