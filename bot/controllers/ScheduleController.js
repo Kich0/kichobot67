@@ -264,7 +264,8 @@ class ScheduleController {
                 schedule_text += '📚 ' + item.subject + '\n'
             }
             let end_text = `🕒 <i><b>${scheduleLifeTime} || ${scheduleDateTime}</b></i>\n` +
-                `${i18next.t('for_help', {lng:user_language})}\n`
+                `${i18next.t('for_help', {lng:user_language})}\n` +
+                `${i18next.t('official_site_compare', {lng:user_language})}\n`
 
             let msg_text = preMessage + headerText + schedule_text + end_text
 
