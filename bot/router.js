@@ -133,7 +133,7 @@ router.post("/log", logRateLimiter, async (req,res) => {
 router.get('/get_user_schedule', scheduleRateLimiter, async (req, res) => {
     const rawUserId = req.query.userId;
     if (!rawUserId || isNaN(rawUserId)) {
-        return res.status(400).json("Айдишник забыл, брат. Или он некорректный");
+        return res.status(400).json("Не указан или некорректен ID пользователя");
     }
     const userId = Number(rawUserId);
     if (!Number.isSafeInteger(userId) || userId <= 0) {

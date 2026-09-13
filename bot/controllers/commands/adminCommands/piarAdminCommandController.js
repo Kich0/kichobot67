@@ -11,11 +11,11 @@ export async function piarAdminCommandController(msg) {
         try {
             const msg_text = msg.text.replace("/piar", "")
             if (!msg_text){
-                return await bot.sendMessage(msg.chat.id, "Забыл пиар-текст написать, брат!")
+                return await bot.sendMessage(msg.chat.id, "Вы не указали текст для рассылки!")
             }
 
             const startTime = Date.now()
-            await bot.sendMessage(msg.chat.id, "Начинаю пиарить жоска!\n" + msg_text)
+            await bot.sendMessage(msg.chat.id, "Начинаю рассылку сообщений:\n" + msg_text)
 
             let group_stat = []
 

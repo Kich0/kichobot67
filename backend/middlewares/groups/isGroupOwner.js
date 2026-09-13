@@ -13,10 +13,10 @@ const isGroupOwner = async (req, res, next) => {
         console.log(groupId)
         const group = await GroupService.get_one(groupId)
         if (!group) {
-            return next(ApiError.BadRequest("Такой группы нет, брат."))
+            return next(ApiError.BadRequest("Такой группы не существует."))
         }
         if (group.owner !== userId) {
-            return next(ApiError.Forbidden("Данную опцию может сделать только владелец группы. "))
+            return next(ApiError.Forbidden("Данную опцию может выполнить только владелец группы."))
         }
         req.group = group
         console.log(group)

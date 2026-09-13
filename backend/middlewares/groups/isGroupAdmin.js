@@ -12,10 +12,10 @@ const isGroupAdmin = async (req, res, next) => {
 
         const group = await GroupService.get_one(groupId)
         if (!group) {
-            return next(ApiError.BadRequest("Такой группы нет, брат."))
+            return next(ApiError.BadRequest("Такой группы не существует."))
         }
         if (!group.admins.includes(userId)) {
-            return next(ApiError.Forbidden("Данную опцию может сделать только администратор группы. "))
+            return next(ApiError.Forbidden("Данную опцию может выполнить только администратор группы."))
         }
         req.group = group
         next()

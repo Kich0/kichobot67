@@ -17,10 +17,10 @@ const isGroupMember = async (req, res, next) => {
 
         const group = await GroupService.get_one(groupId)
         if (!group) {
-            return next(ApiError.BadRequest("Такой группы нет, брат."))
+            return next(ApiError.BadRequest("Такой группы не существует."))
         }
         if (!group.members.includes(userId)) {
-            return next(ApiError.Forbidden("Вы не состоите в данной группе. Пашел нахер, казел!"))
+            return next(ApiError.Forbidden("Вы не состоите в данной группе."))
         }
         req.group = group
         next()
