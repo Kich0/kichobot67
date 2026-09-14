@@ -36,9 +36,6 @@ const config = {
     PROXY_LOGIN: process.env.PROXY_LOGIN,
     PROXY_PASSWORD: process.env.PROXY_PASSWORD,
     USE_FREE_PROXIES: process.env.USE_FREE_PROXIES?.trim() === "true",
-
-    // === OpenAI (GPT) ===
-    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
 }
 
 // Validate critical variables

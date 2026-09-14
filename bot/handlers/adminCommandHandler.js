@@ -15,10 +15,6 @@ import {updateProfilesCommandController} from "../controllers/commands/adminComm
 import blackListService from "../services/blackListService.js";
 import {updateDepartmentsCommandController} from "../controllers/commands/adminCommands/updateDepartments.js";
 import {updateTeachersCommandController} from "../controllers/commands/adminCommands/updateTeachers.js";
-import {
-  inactiveSpamAdminCommandController
-} from "../controllers/commands/adminCommands/inactiveSpamAdminCommandController.js";
-import {piarAdminCommandController} from "../controllers/commands/adminCommands/piarAdminCommandController.js";
 import {getUserCommandController, getUserLogsCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
@@ -331,25 +327,53 @@ export default function setupAdminCommandHandler() {
   bot.onText(/^\/sms/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
-        return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой прекрасной команде!");
+        return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
       }
       const split_data = msg.text.trim().split(/\s+/);
       if (split_data.length < 3) {
         return await bot.sendMessage(
           msg.chat.id,
-          "ℹ️ <b>Формат команды:</b>\n<code>/sms [userId или @username] [текст сообщения]</code>\n\nПримеры:\n• <code>/sms @username Привет, обнови расписание!</code>\n• <code>/sms 123456789 Привет!</code>",
+          "ℹ️ <b>Формат команды:</b>\n" +
+          "• <code>/sms [userId или @username] [текст]</code> — отправить одно личное сообщение\n" +
+          "• <code>/sms all [текст]</code> — разовое оповещение всем пользователям\n\n" +
+          "Примеры:\n" +
+          "• <code>/sms @username Привет, обнови расписание!</code>\n" +
+          "• <code>/sms 123456789 Привет!</code>\n" +
+          "• <code>/sms all Важное техническое объявление!</code>",
           { parse_mode: "HTML" }
         );
       }
       const target = split_data[1];
+      const targetIndex = msg.text.indexOf(target);
+      const msg_text = msg.text.slice(targetIndex + target.length).trim();
+
+      // Разовое оповещение всем пользователям (без спам-циклов)
+      if (target.toLowerCase() === 'all') {
+        const users = await userService.getAll();
+        await bot.sendMessage(msg.chat.id, `📢 Начинаю разовое оповещение ${users.length} пользователей...`);
+        let sentCount = 0;
+        let failCount = 0;
+        for (const user of users) {
+          try {
+            await bot.sendMessage(user.userId, msg_text, { disable_web_page_preview: true });
+            sentCount++;
+          } catch (e) {
+            failCount++;
+          }
+          await sleep(500); // бережная пауза против лимитов Telegram API
+        }
+        return await bot.sendMessage(
+          msg.chat.id,
+          `✅ <b>Разовое оповещение завершено:</b>\n• Доставлено: ${sentCount}\n• Не доставлено (бот заблокирован): ${failCount}`,
+          { parse_mode: "HTML" }
+        );
+      }
+
+      // Одиночное сообщение конкретному пользователю
       const targetUser = await userService.findUser(target);
       if (!targetUser) {
         return await bot.sendMessage(msg.chat.id, `❌ Пользователь <b>"${target}"</b> не найден в базе данных бота.`, { parse_mode: "HTML" });
       }
-
-      // Текст сообщения — всё после target
-      const targetIndex = msg.text.indexOf(target);
-      const msg_text = msg.text.slice(targetIndex + target.length).trim();
 
       await bot.sendMessage(targetUser.userId, msg_text);
 
@@ -365,54 +389,6 @@ export default function setupAdminCommandHandler() {
       log.error("Ошибочка при /sms: " + e.message, { stack: e.stack });
       await bot.sendMessage(msg.chat.id, `❌ Не удалось отправить сообщение: ${e.message}`);
     }
-  });
-
-  bot.onText(/^\/inactiveSpam/i, inactiveSpamAdminCommandController);
-  bot.onText(/^\/piar/i, piarAdminCommandController);
-
-
-  bot.onText(/^\/spam/i, async (msg) => {
-    let stop = false
-    bot.onText(/\/stop/, async (msg) => {
-      await bot.sendMessage(msg.chat.id, "Остановил спамить")
-      stop = true
-    })
-    try {
-      if (!await userService.isAdmin(msg.from.id)) {
-        return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
-      }
-      const split_data = msg.text.split(" ")
-      if (split_data.length < 2) {
-        return await bot.sendMessage(msg.chat.id, "После команды должен быть текст!")
-      }
-      const msg_text = msg.text.replace("/spam ", "")
-
-      const users = await userService.getAll()
-
-      await bot.sendMessage(msg.chat.id, 'Начал спамить. /stop чтобы принудительно завершить спам\n' + msg_text, {disable_web_page_preview: true})
-      const startTime = Date.now()
-
-      for (const user of users) {
-        if (stop) {
-          break
-        }
-        await sleep(2000)
-        let status = true
-        try {
-          await bot.sendMessage(user.userId, msg_text, {disable_web_page_preview: true})
-          log.info(`User ${user.userId} получил spm message`)
-        } catch (e) {
-          status = false
-          log.info(`User ${user.userId} не получил спам сообщение.`, {stack: e.stack})
-        }
-      }
-
-      await bot.sendMessage(msg.chat.id, `Done. Action time = ${Math.floor((Date.now() - startTime) / 1000)}`)
-
-    } catch (e) {
-      log.error("Ошибочка при /spam", {stack: e.stack})
-    }
-
   });
 
   bot.onText(/^\/get_group (\w+)/i, async (msg, match) => {
@@ -483,12 +459,9 @@ export default function setupAdminCommandHandler() {
       '/get_users_by_group [groupId] — пользователи группы\n' +
       '/get_schedule [groupId] — расписание группы\n' +
       '/get_reserved_schedule [groupId] — резервное расписание\n\n' +
-      '📢 <b>Рассылки и связь:</b>\n' +
-      '/sms [ID/@ник] [текст] — <i>отправить ЛС пользователю по его @нику или ID!</i>\n' +
-      '/spam [text] — рассылка всем пользователям\n' +
-      '/stop — принудительно остановить рассылку\n' +
-      '/piar [text] — таргет-рассылка по группам\n' +
-      '/inactiveSpam [text] — рассылка неактивным\n\n' +
+      '📢 <b>Связь и оповещения:</b>\n' +
+      '/sms [ID/@ник] [текст] — <i>отправить личное сообщение пользователю</i>\n' +
+      '/sms all [текст] — <i>разовое оповещение всем пользователям (1 раз)</i>\n\n' +
       '🛠 <b>Сервисные команды:</b>\n' +
       '/get_logs — скачать лог-файл бота\n' +
       '/ignoreLogs [userId] — добавить в игнор логов\n' +

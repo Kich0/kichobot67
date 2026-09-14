@@ -1,9 +1,6 @@
 import {Router} from "express";
 import ScheduleController from "../controllers/ScheduleController.js"
 import BrowserController from "../controllers/BrowserController.js";
-import SyncService from "../services/SyncService.js";
-import authMiddleware from "../middlewares/authMiddleware.js";
-
 export const scheduleRouter = new Router()
 
 scheduleRouter.get("/get_faculty_list", BrowserController.allChecksCall, ScheduleController.get_faculty_list)
@@ -11,7 +8,3 @@ scheduleRouter.get("/get_program_list_by_facultyId/:id", BrowserController.allCh
 scheduleRouter.get("/get_group_list_by_programId/:id", BrowserController.allChecksCall, ScheduleController.get_group_list_by_programId)
 scheduleRouter.get("/get_schedule_by_groupId/:id/:language", ScheduleController.get_schedule_by_groupId)
 scheduleRouter.get("/get_all_data", BrowserController.allChecksCall, ScheduleController.get_all_data)
-scheduleRouter.get("/sync", authMiddleware, BrowserController.allChecksCall, async (req, res) => {
-    SyncService.syncAll();
-    res.json({ message: "Синхронизация запущена в фоновом режиме. Следите за логами." });
-})

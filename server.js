@@ -21,7 +21,6 @@ import backendDb from "./backend/db/connection.js";
 import backendRouter from "./backend/router.js";
 import backendErrorMiddleware from "./backend/middlewares/errorMiddleware.js";
 import backendLog from "./backend/logging/logging.js";
-import { setupLoggingPathUpdate as setupBackendLoggingPathUpdate } from "./backend/cron/loggingPathUpdate.js";
 import { setupKsuReAuth } from "./backend/cron/ksuReAuth.js";
 import FreeProxyService from "./backend/services/FreeProxyService.js";
 
@@ -33,7 +32,6 @@ import botErrorMiddleware from "./bot/middlewares/errorMiddleware.js";
 import { setupCommandHandlers } from "./bot/handlers/commandHandler.js";
 import setupCallbackHandlers from "./bot/handlers/callbackHandler.js";
 import setupAdminCommandHandler from "./bot/handlers/adminCommandHandler.js";
-import setupDocumentHandler from "./bot/handlers/documentHandler.js";
 import { setupUserDailyStatisticsLogging } from "./bot/cron/userDailyStatisticsLogging.js";
 import { setupDailyDataUpdate } from "./bot/cron/dailyDataUpdate.js";
 import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/loggingPathUpdate.js";
@@ -143,7 +141,6 @@ const appStart = async () => {
         });
 
         // === Backend cron ===
-        await setupBackendLoggingPathUpdate();
         await setupKsuReAuth();
 
         // === Proxy pool ===
@@ -156,7 +153,6 @@ const appStart = async () => {
         await setupCommandHandlers();
         await setupAdminCommandHandler();
         await setupCallbackHandlers();
-        await setupDocumentHandler();
         await setupNewChatMemberHandler();
         await setupAnyMessageHandler();
 
