@@ -2,10 +2,83 @@ import {Group} from "../models/group.js";
 import log from "../logging/logging.js";
 
 class groupService {
+    constructor() {
+        this._cache = null;
+        this._idMap = new Map();
+        this._programMap = new Map();
+        this._lastCacheTime = 0;
+        this._ttl = 60 * 60 * 1000; // 1 час
+        this._loadingPromise = null;
+    }
+
+    _ensureCache = async () => {
+        const now = Date.now();
+        if (this._cache && (now - this._lastCacheTime < this._ttl) && this._cache.length > 0) {
+            return this._cache;
+        }
+
+        if (this._loadingPromise) {
+            return await this._loadingPromise;
+        }
+
+        this._loadingPromise = (async () => {
+            try {
+                const docs = await Group.find({}).sort('-id').lean();
+                const seen = new Set();
+                const uniqueGroups = [];
+                const idMap = new Map();
+                const programMap = new Map();
+
+                for (const g of docs) {
+                    if (!g || !g.id || seen.has(g.id)) continue;
+                    seen.add(g.id);
+                    uniqueGroups.push(g);
+
+                    idMap.set(Number(g.id), g);
+                    idMap.set(String(g.id), g);
+
+                    if (g.program !== undefined && g.program !== null) {
+                        const progKey = Number(g.program);
+                        let list = programMap.get(progKey);
+                        if (!list) {
+                            list = [];
+                            programMap.set(progKey, list);
+                        }
+                        list.push(g);
+                    }
+                }
+
+                this._cache = uniqueGroups;
+                this._idMap = idMap;
+                this._programMap = programMap;
+                this._lastCacheTime = Date.now();
+                return this._cache;
+            } catch (e) {
+                log.error("[GroupService] Ошибка загрузки кэша групп: " + e.message);
+                if (this._cache) return this._cache;
+                throw e;
+            } finally {
+                this._loadingPromise = null;
+            }
+        })();
+
+        return await this._loadingPromise;
+    }
+
+    invalidateCache = () => {
+        this._cache = null;
+        this._idMap.clear();
+        this._programMap.clear();
+        this._lastCacheTime = 0;
+    }
+
     getByProgramId = async (programId) => {
         try {
-            const docs = await Group.find({program: programId}).sort('-id');
-            // Дедупликация по id на случай любых повторений
+            await this._ensureCache();
+            const list = this._programMap.get(Number(programId));
+            if (list) return [...list];
+
+            const docs = await Group.find({program: programId}).sort('-id').lean();
             const seen = new Set();
             return docs.filter(g => {
                 if (seen.has(g.id)) return false;
@@ -19,7 +92,17 @@ class groupService {
 
     getById = async (id) => {
         try {
-            return await Group.findOne({id})
+            if (id === undefined || id === null) return null;
+
+            // Instant in-memory Map O(1)
+            const cached = this._idMap.get(Number(id)) || this._idMap.get(String(id));
+            if (cached) return cached;
+
+            await this._ensureCache();
+            const recheck = this._idMap.get(Number(id)) || this._idMap.get(String(id));
+            if (recheck) return recheck;
+
+            return await Group.findOne({id}).lean();
         } catch (e) {
             throw new Error("Ошибка при получении группы по айди: " + e.stack)
         }
@@ -27,7 +110,11 @@ class groupService {
 
     getAll = async () => {
         try {
-            return await Group.find({})
+            await this._ensureCache();
+            if (this._cache && this._cache.length > 0) {
+                return [...this._cache];
+            }
+            return await Group.find({}).lean();
         } catch (e) {
             throw new Error("Ошибка при получении всех групп: " + e.stack)
         }
@@ -65,6 +152,8 @@ class groupService {
                 }
             }
 
+            this.invalidateCache();
+            await this._ensureCache().catch(() => {});
             return res;
         } catch (e) {
             throw new Error("Ошибка при обновлении всех групп: " + e.stack)
@@ -97,6 +186,9 @@ class groupService {
             }));
             await Group.bulkWrite(operations, { ordered: false });
             log.info(`[GroupService] On-demand синхронизировано ${rawGroups.length} групп для programId ${programId}`);
+            
+            this.invalidateCache();
+            await this._ensureCache().catch(() => {});
             return await this.getByProgramId(programId);
         } catch (e) {
             log.error(`[GroupService] Ошибка syncProgramGroups(${programId}): ` + e.message);
@@ -106,9 +198,28 @@ class groupService {
 
     findByName = async (name) => {
         try {
-            const regExp = new RegExp(name, "i")
-            const docs = await Group.find({name:{$regex:regExp}}).sort('name')
-            // Дедупликация по id для поисковой выдачи
+            await this._ensureCache();
+
+            if (this._cache && this._cache.length > 0) {
+                const cleanQuery = String(name || '').toLowerCase().trim();
+                const tokens = cleanQuery.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
+
+                if (tokens.length === 0) return [...this._cache];
+
+                const results = this._cache.filter(g => {
+                    if (!g || !g.name) return false;
+                    const lowerName = g.name.toLowerCase();
+                    // Проверяем прямое вхождение либо вхождение всех токенов
+                    if (lowerName.includes(cleanQuery)) return true;
+                    const normName = lowerName.replace(/[-_.,]/g, ' ');
+                    return tokens.every(tok => normName.includes(tok));
+                });
+                return results;
+            }
+
+            // Fallback в MongoDB
+            const regExp = new RegExp(name, "i");
+            const docs = await Group.find({name:{$regex:regExp}}).sort('name').lean();
             const seen = new Set();
             return docs.filter(g => {
                 if (seen.has(g.id)) return false;
@@ -134,6 +245,10 @@ class groupService {
                     const res = await Group.deleteMany({ _id: { $in: removeIds } });
                     deletedCount += res.deletedCount || 0;
                 }
+            }
+            if (deletedCount > 0) {
+                this.invalidateCache();
+                await this._ensureCache().catch(() => {});
             }
             return deletedCount;
         } catch (e) {

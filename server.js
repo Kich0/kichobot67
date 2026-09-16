@@ -140,13 +140,10 @@ const appStart = async () => {
             }
         });
 
-        // === Backend cron ===
-        await setupKsuReAuth();
-
-        // === Proxy pool ===
-        if (config.USE_FREE_PROXIES) {
-            FreeProxyService.initPool().catch(e => backendLog.error("[ProxyPool] Ошибка автопополнения: " + e.message));
-        }
+        // === Backend cron & Proxy pool ===
+        // Отключены: бот переведён на официальный JSON REST API КарУ (прокси и куки больше не нужны)
+        // await setupKsuReAuth();
+        // if (config.USE_FREE_PROXIES) { FreeProxyService.initPool().catch(...); }
 
         // === Bot initialization ===
         await i18nextInit();
@@ -173,6 +170,21 @@ const appStart = async () => {
         await setupDailyDataUpdate();
         await setupBotLoggingPathUpdate();
         setupScheduleCacheWarmup();
+
+        // [TurboPack] Прогрев In-Memory индексов преподавателей и групп в RAM (через 1 сек)
+        setTimeout(async () => {
+            try {
+                const { default: teacherService } = await import("./bot/services/teacherService.js");
+                const { default: groupService } = await import("./bot/services/groupService.js");
+                const [teachers, groups] = await Promise.all([
+                    teacherService.getAll(),
+                    groupService.getAll()
+                ]);
+                backendLog.info(`[TurboPack] In-memory индексы прогреты: ${teachers.length} преподавателей, ${groups.length} групп в RAM`);
+            } catch (e) {
+                backendLog.warn("[TurboPack] Ошибка фонового прогрева индексов: " + e.message);
+            }
+        }, 1000);
 
         // Проверка свежести групп при запуске (в фоне через 5 сек)
         setTimeout(async () => {

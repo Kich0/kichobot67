@@ -1,13 +1,34 @@
 import { Group } from "../models/group.js";
 import { Schedule } from "../models/schedule.js";
 import log from "../logging/logging.js";
+import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
 /**
- * Нормализовать строку времени (убрать ведущий ноль, например: "08.30-09.20" -> "8.30-9.20")
+ * Нормализовать строку времени для надёжного сравнения:
+ * убирает пробелы, заменяет двоеточия и разные тире, убирает ведущие нули:
+ * "08.30-09.20", "8:30 - 09:20", "08.30–9.20" -> "8.30-9.20"
  */
 function normalizeTime(timeStr) {
     if (!timeStr) return '';
-    return timeStr.trim().replace(/^0/, '');
+    return timeStr
+        .replace(/\s+/g, '')
+        .replace(/:/g, '.')
+        .replace(/[-–—]/g, '-')
+        .replace(/(^|-)0(\d)/g, '$1$2');
+}
+
+/**
+ * Замена латинских букв-двойников на кириллические (на сайте вуза встречаются опечатки вроде "аcсис" с латинской "c")
+ */
+function normalizeHomoglyphs(str) {
+    return str
+        .replace(/a/gi, 'а')
+        .replace(/c/gi, 'с')
+        .replace(/e/gi, 'е')
+        .replace(/o/gi, 'о')
+        .replace(/p/gi, 'р')
+        .replace(/x/gi, 'х')
+        .replace(/k/gi, 'к');
 }
 
 /**
@@ -15,14 +36,20 @@ function normalizeTime(timeStr) {
  */
 function extractSurnameToken(fullName) {
     if (!fullName) return '';
-    // Слова из букв длиной от 4 символов (с учётом казахских букв)
-    const words = fullName.split(/\s+/).map(w => w.replace(/[^А-Яа-яӘәҒғҚқҢңӨөҰұҮүҺһІіA-Za-z]/g, ''));
     // Игнорируем академические звания и должности
     const ignoreTokens = new Set([
-        'ст', 'пр', 'преп', 'доц', 'проф', 'аcсоц', 'ассис', 'ассоц',
-        'phd', 'магистр', 'бакалавр', 'доцент', 'профессор', 'преподаватель'
+        'ст', 'пр', 'преп', 'доц', 'проф', 'ассоц', 'ассис', 'ассиспроф', 'ассоцпроф',
+        'phd', 'магистр', 'бакалавр', 'доцент', 'профессор', 'преподаватель', 'асс',
+        'зав', 'каф', 'декан', 'зам', 'ио', 'докт', 'канд', 'др', 'мн', 'сн'
     ]);
-    const candidate = words.find(w => w.length >= 4 && !ignoreTokens.has(w.toLowerCase()));
+    // Разбиваем по пробелам и знакам препинания (., / \ ( ) _ -)
+    const words = fullName
+        .split(/[\s.,/\\()_-]+/)
+        .map(w => w.replace(/[^А-Яа-яӘәҒғҚқҢңӨөҰұҮүҺһІіA-Za-z]/g, ''))
+        .filter(Boolean);
+
+    // Ищем первое слово от 2 букв, не являющееся должностью/званием
+    const candidate = words.find(w => w.length >= 2 && !ignoreTokens.has(normalizeHomoglyphs(w.toLowerCase())));
     return candidate || '';
 }
 
@@ -98,6 +125,32 @@ export async function enrichTeacherSchedule(scheduleData, teacher) {
             groupIdToSchedule.set(s.groupId, s);
         }
 
+        // 3.1. Обновление устаревших или отсутствующих расписаний групп (старше 7 дней или отсутствуют в БД)
+        const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+        const staleOrMissingGroups = groups.filter(grp => {
+            const s = groupIdToSchedule.get(grp.id);
+            if (!s || !s.updatedAt) return true;
+            return (Date.now() - new Date(s.updatedAt).getTime()) > ONE_WEEK_MS;
+        });
+
+        if (staleOrMissingGroups.length > 0) {
+            await Promise.all(staleOrMissingGroups.map(async (grp) => {
+                try {
+                    const liveData = await BackendScheduleService.get_schedule_by_groupId(grp.id, grp.language || 'рус');
+                    if (liveData && Array.isArray(liveData) && liveData.length > 0) {
+                        const updatedDoc = await Schedule.findOneAndUpdate(
+                            { groupId: grp.id },
+                            { data: liveData, language: grp.language || 'рус' },
+                            { upsert: true, new: true }
+                        ).lean();
+                        groupIdToSchedule.set(grp.id, updatedDoc || { groupId: grp.id, data: liveData });
+                    }
+                } catch (fetchErr) {
+                    log.warn(`[TeacherScheduleEnricher] Не удалось обновить расписание группы ${grp.name} (${grp.id}): ${fetchErr.message}`);
+                }
+            }));
+        }
+
         // 4. Обогащение пар расписания преподавателя
         for (let dayIdx = 0; dayIdx < scheduleData.length; dayIdx++) {
             const day = scheduleData[dayIdx];
@@ -133,7 +186,8 @@ export async function enrichTeacherSchedule(scheduleData, teacher) {
                     // Найти строку с фамилией преподавателя
                     let targetLine = lines[0];
                     if (surnameToken) {
-                        const matchedLine = lines.find(l => l.toLowerCase().includes(surnameToken.toLowerCase()));
+                        const normalizedSurname = normalizeHomoglyphs(surnameToken.toLowerCase());
+                        const matchedLine = lines.find(l => normalizeHomoglyphs(l.toLowerCase()).includes(normalizedSurname));
                         if (matchedLine) targetLine = matchedLine;
                     }
 

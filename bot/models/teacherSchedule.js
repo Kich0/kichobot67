@@ -13,9 +13,9 @@ const teacherScheduleDaySchema = new mongoose.Schema({
 });
 
 const teacherScheduleSchema = new mongoose.Schema({
-    teacherId:{type:Number, ref:"teacher", field:'id', required: true, unique: false},
+    teacherId: { type: Number, ref: "teacher", field: 'id', required: true, unique: true, index: true },
     data: [teacherScheduleDaySchema]
-}, {timestamps:true});
+}, { timestamps: true });
 
 export const TeacherSchedule = mongoose.model('TeacherSchedule', teacherScheduleSchema);
 

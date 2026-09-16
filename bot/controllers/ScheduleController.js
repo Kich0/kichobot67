@@ -335,8 +335,8 @@ class ScheduleController {
             const groupIdent = `${groupId}|${language}`
             const cached = schedule_cache[groupIdent];
             const now = Date.now();
-            const FRESH_TTL = 30 * 60 * 1000;    // 30 мин — кэш считается свежим
-            const STALE_TTL = 2 * 60 * 60 * 1000; // 2 часа — кэш можно показать, но обновить в фоне
+            const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (Near Real-Time)
+            const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
             if (cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.group) {

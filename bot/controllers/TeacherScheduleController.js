@@ -14,6 +14,8 @@ import TeacherTableImageService from "../services/TeacherTableImageService.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
+const refreshCooldowns = new Map();
+
 async function downloadSchedule(teacherId, attemption = 1) {
     try {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
@@ -211,23 +213,46 @@ class TeacherScheduleController {
         }
     }
 
-    async getScheduleMenu(call) {
+    async getScheduleMenu(call, forceRefresh = false) {
         try {
+            const isRefresh = forceRefresh || call.data.includes("refresh");
+            if (call.data.includes("refresh")) {
+                call.data = call.data.replace('refresh', '');
+            }
             const data_array = call.data.split('|');
             let [, teacherId] = data_array
 
+            if (isRefresh) {
+                const cooldownKey = `${call.message.chat.id}_${teacherId}`;
+                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
+                if (Date.now() - lastRefresh < 10000) {
+                    const remaining = Math.ceil((10000 - (Date.now() - lastRefresh)) / 1000);
+                    return await bot.answerCallbackQuery(call.id, {
+                        text: `⏳ Подождите ${remaining} сек. перед повторным обновлением`,
+                        show_alert: false
+                    });
+                }
+                refreshCooldowns.set(cooldownKey, Date.now());
+                await bot.answerCallbackQuery(call.id, { text: '🔄 Обновляю расписание...' }).catch(() => {});
+                delete schedule_cache[teacherId];
+                TeacherTableImageService.invalidateTeacherImage(teacherId);
+            }
+
             const cached = schedule_cache[teacherId];
             const now = Date.now();
-            const FRESH_TTL = 30 * 60 * 1000;    // 30 мин — кэш считается свежим
-            const STALE_TTL = 2 * 60 * 60 * 1000; // 2 часа — кэш можно показать, но обновить в фоне
+            const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (Near Real-Time)
+            const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
             if (cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.teacher) {
                     cached.teacher = await teacherService.getById(teacherId).catch(() => null);
                 }
-                const hasSubjects = cached.data?.some(d => d.groups?.some(g => g.subject));
-                if (!hasSubjects) {
+                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
+                if (hasMissingSubjects && !cached._enriched) {
                     cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                    cached._enriched = true;
+                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
+                    TeacherTableImageService.invalidateTeacherImage(teacherId);
                 }
                 // Кэш свежий — показываем мгновенно
                 await this.sendSchedule(call, cached)
@@ -235,9 +260,12 @@ class TeacherScheduleController {
                 if (!cached.teacher) {
                     cached.teacher = await teacherService.getById(teacherId).catch(() => null);
                 }
-                const hasSubjects = cached.data?.some(d => d.groups?.some(g => g.subject));
-                if (!hasSubjects) {
+                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
+                if (hasMissingSubjects && !cached._enriched) {
                     cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                    cached._enriched = true;
+                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
+                    TeacherTableImageService.invalidateTeacherImage(teacherId);
                 }
                 // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
                 await this.sendSchedule(call, cached)
@@ -246,7 +274,7 @@ class TeacherScheduleController {
                     .then(async (response) => {
                         const teacher = await teacherService.getById(teacherId).catch(() => null)
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
-                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher }
+                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher, _enriched: true }
                         TeacherTableImageService.invalidateTeacherImage(teacherId);
                         await teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, {
                             stack: e.stack
@@ -260,7 +288,7 @@ class TeacherScheduleController {
                     .then(async (response) => {
                         const teacher = await teacherService.getById(teacherId).catch(() => null)
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
-                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher }
+                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher, _enriched: true }
                         TeacherTableImageService.invalidateTeacherImage(teacherId);
                         await this.sendSchedule(call, schedule_cache[teacherId])
 
@@ -339,13 +367,14 @@ class TeacherScheduleController {
             const timestamp = updatedAt.getTime();
 
             const teacher = await teacherService.getById(teacherId)
-            const hasSubjects = response.data?.some(d => d.groups?.some(g => g.subject));
+            const hasMissingSubjects = response.data?.some(d => d.groups?.some(g => g.group && !g.subject));
             let data = response.data;
-            if (!hasSubjects) {
+            if (hasMissingSubjects) {
                 data = await enrichTeacherSchedule(data, teacher);
                 teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
+                TeacherTableImageService.invalidateTeacherImage(teacherId);
             }
-            schedule_cache[teacherId] = {data, timestamp, teacher}
+            schedule_cache[teacherId] = {data, timestamp, teacher, _enriched: true}
             await this.sendSchedule(call, schedule_cache[teacherId], `<b>${error_text} \n` +
                 `${i18next.t('reserved_schedule_header', {lng:user_language})}\n\n</b>`)
         } else {
@@ -365,6 +394,17 @@ class TeacherScheduleController {
             let [, teacherId, dayNumber = 0] = data_array;
 
             if (forceRefresh) {
+                const cooldownKey = `${call.message.chat.id}_${teacherId}_img`;
+                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
+                if (Date.now() - lastRefresh < 10000) {
+                    const remaining = Math.ceil((10000 - (Date.now() - lastRefresh)) / 1000);
+                    return await bot.answerCallbackQuery(call.id, {
+                        text: `⏳ Подождите ${remaining} сек. перед повторным обновлением таблицы`,
+                        show_alert: false
+                    });
+                }
+                refreshCooldowns.set(cooldownKey, Date.now());
+                await bot.answerCallbackQuery(call.id, { text: '🔄 Обновляю таблицу...' }).catch(() => {});
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
                 delete schedule_cache[teacherId];
             }
@@ -391,10 +431,15 @@ class TeacherScheduleController {
                 }
             }
 
-            const hasSubjects = data?.some(d => d.groups?.some(g => g.subject));
-            if (!hasSubjects) {
+            const hasMissingSubjects = data?.some(d => d.groups?.some(g => g.group && !g.subject));
+            if (hasMissingSubjects && !cached?._enriched) {
                 data = await enrichTeacherSchedule(data, teacher);
-                if (cached) cached.data = data;
+                if (cached) {
+                    cached.data = data;
+                    cached._enriched = true;
+                }
+                teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
+                TeacherTableImageService.invalidateTeacherImage(teacherId);
             }
 
             const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);
@@ -416,6 +461,9 @@ class TeacherScheduleController {
                 caption,
                 parse_mode: 'HTML',
                 reply_markup: markup
+            }, {
+                filename: 'teacher_schedule.png',
+                contentType: 'image/png'
             });
         } catch (e) {
             await unexpectedCallbackErrorController(e, call.message, call.data);
@@ -437,6 +485,13 @@ class TeacherScheduleController {
                 }
             }
             if (cached) {
+                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
+                if (hasMissingSubjects && !cached._enriched) {
+                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                    cached._enriched = true;
+                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
+                    TeacherTableImageService.invalidateTeacherImage(teacherId);
+                }
                 await this.sendSchedule(call, cached);
             } else {
                 await this.getScheduleMenu(call);

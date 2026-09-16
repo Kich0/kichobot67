@@ -36,12 +36,16 @@ const config = {
     PROXY_LOGIN: process.env.PROXY_LOGIN,
     PROXY_PASSWORD: process.env.PROXY_PASSWORD,
     USE_FREE_PROXIES: process.env.USE_FREE_PROXIES?.trim() === "true",
+
+    // === Official Schedule API ===
+    SCHEDULE_API_URL: process.env.SCHEDULE_API_URL || 'https://schedule.karnu-buketov.edu.kz/api/v1/schedule',
+    SCHEDULE_API_KEY: process.env.SCHEDULE_API_KEY || '',
 }
 
 // Validate critical variables
-const criticalVars = ['DB_URI', 'TG_TOKEN', 'KSU_LOGIN', 'KSU_PASSWORD', 'LOG_CHANEL_ID', 'LOGGER_TG_TOKEN', 'BOT_ID'];
+const criticalVars = ['DB_URI', 'TG_TOKEN', 'LOG_CHANEL_ID', 'LOGGER_TG_TOKEN', 'BOT_ID', 'SCHEDULE_API_KEY'];
 criticalVars.forEach(key => {
-    if (config[key] === undefined) {
+    if (!config[key]) {
         console.warn(`[WARNING] Missing critical environment variable: ${key}`);
     }
 });

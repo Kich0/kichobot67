@@ -9,8 +9,7 @@
   },
   "scripts": {
     "start": "node --max-old-space-size=400 --expose-gc server.js",
-    "dev": "node --max-old-space-size=400 server.js",
-    "postinstall": "npx puppeteer browsers install chrome"
+    "dev": "node --max-old-space-size=400 server.js"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

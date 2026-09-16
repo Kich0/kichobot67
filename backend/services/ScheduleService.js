@@ -7,6 +7,9 @@ import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import * as cheerio from "cheerio";
+import BuketovApiService from "../../bot/services/buketovApiService.js";
+import ScheduleApiAdapter from "../../bot/services/scheduleApiAdapter.js";
+import { Group } from "../../bot/models/group.js";
 
 
 export function sleep(ms) {
@@ -132,22 +135,49 @@ class ScheduleService {
     }
 
     /**
-     * Получить расписание студента по groupId через axios+cheerio.
+     * Получить расписание студента по groupId (официальный API + fallback).
      * ОСНОВНОЙ МЕТОД — вызывается из бота.
      */
     get_schedule_by_groupId = async (id, language) => {
-        const cookie = await KsuAuthService.getCookie();
-        const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
-
-        const html = await this._fetchScheduleHtml(url, cookie);
-
-        // Парсим HTML через cheerio
-        const tableHTML = this._extractTableHtml(html);
-        if (!tableHTML) {
-            throw new Error("Таблица расписания не найдена в HTML");
+        // 1. Приоритетный путь: официальный API КарУ
+        try {
+            const group = await Group.findOne({ id }).catch(() => null);
+            if (group && group.name) {
+                const apiData = await BuketovApiService.getGroupSchedule(group.name);
+                if (apiData && Array.isArray(apiData.records) && apiData.records.length > 0) {
+                    return ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
+                }
+            }
+        } catch (apiErr) {
+            log.warn(`[Schedule] Ошибка BuketovApiService для группы id=${id}: ${apiErr.message}`);
         }
 
-        return this._parseScheduleTable(tableHTML, language);
+        // 2. Резервный Fallback: кэш из базы данных MongoDB
+        try {
+            const { Schedule } = await import("../../bot/models/schedule.js");
+            const dbDoc = await Schedule.findOne({ groupId: id }).catch(() => null);
+            if (dbDoc && Array.isArray(dbDoc.schedule) && dbDoc.schedule.length > 0) {
+                log.info(`[Schedule] Использован кэш MongoDB для группы id=${id}`);
+                return dbDoc.schedule;
+            }
+        } catch (dbErr) {
+            log.warn(`[Schedule] Ошибка чтения кэша MongoDB: ${dbErr.message}`);
+        }
+
+        // 3. Дополнительный fallback: старый парсер HTML (если есть сессия)
+        try {
+            const cookie = await KsuAuthService.getCookie();
+            const url = encodeURI(`${config.KSU_DOMAIN}/view1.php?id=${id}&Otdel=${language}`);
+            const html = await this._fetchScheduleHtml(url, cookie);
+            const tableHTML = this._extractTableHtml(html);
+            if (tableHTML) {
+                return this._parseScheduleTable(tableHTML, language);
+            }
+        } catch (fallbackErr) {
+            log.warn(`[Schedule] Fallback парсер HTML не удался: ${fallbackErr.message}`);
+        }
+
+        throw new Error(`Не удалось получить расписание для группы id=${id}`);
     }
 
     /**

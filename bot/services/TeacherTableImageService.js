@@ -11,7 +11,26 @@ function escapeXml(unsafe) {
         .replace(/'/g, '&apos;');
 }
 
-function splitSubjectText(text, maxLine = 16) {
+function parseGroupSlot(rawGroup) {
+    if (!rawGroup) return { groups: [], rooms: [], groupStr: '', roomStr: '' };
+    const regex = /([^\s()]+)\s*(?:\(([^)]+)\))?/g;
+    let m;
+    const groups = [];
+    const rooms = [];
+    while ((m = regex.exec(rawGroup)) !== null) {
+        if (m[1]) groups.push(m[1].trim());
+        if (m[2]) rooms.push(m[2].trim());
+    }
+    const uniqueRooms = Array.from(new Set(rooms));
+    return {
+        groups,
+        rooms: uniqueRooms,
+        groupStr: groups.join(', '),
+        roomStr: uniqueRooms.join(', ')
+    };
+}
+
+function splitSubjectText(text, maxLine = 22) {
     if (!text) return [];
     const words = text.trim().split(/\s+/);
     if (words.length === 1) {
@@ -22,7 +41,8 @@ function splitSubjectText(text, maxLine = 16) {
     }
     const lines = [];
     let curLine = '';
-    for (const w of words) {
+    for (let i = 0; i < words.length; i++) {
+        const w = words[i];
         if (!curLine) {
             curLine = w;
         } else if ((curLine + ' ' + w).length <= maxLine) {
@@ -30,11 +50,25 @@ function splitSubjectText(text, maxLine = 16) {
         } else {
             lines.push(curLine);
             curLine = w;
-            if (lines.length >= 2) break;
+            if (lines.length >= 2) {
+                if (i < words.length - 1) {
+                    lines[1] = lines[1].substring(0, maxLine - 2) + '…';
+                }
+                break;
+            }
         }
     }
     if (curLine && lines.length < 2) lines.push(curLine);
     return lines;
+}
+
+function normalizeTime(t) {
+    if (!t) return '';
+    return t
+        .replace(/[:]/g, '.')
+        .replace(/[–—]/g, '-')
+        .replace(/(^|-)0(\d)/g, '$1$2')
+        .trim();
 }
 
 class TeacherTableImageService {
@@ -63,7 +97,9 @@ class TeacherTableImageService {
             busyBg: '#16a34a',
             busyBorder: '#15803d',
             groupText: '#ffffff',
-            subjectText: '#dcfce7',
+            roomText: '#fef08a',      // золотистый цвет для аудитории
+            subjectText: '#dcfce7',   // мятный цвет для предмета
+            lessonTypeText: '#bbf7d0',// мягкий зеленый для типа занятия
             freeBg: '#dc2626',
             freeBorder: '#b91c1c',
             dashColor: '#ffffff'
@@ -76,7 +112,8 @@ class TeacherTableImageService {
         ];
 
         const activeTimes = standardTimes.filter(t => {
-            return scheduleData.some(d => d.groups?.some(g => g.time === t && g.group && g.group.trim()));
+            const normT = normalizeTime(t);
+            return scheduleData.some(d => d.groups?.some(g => normalizeTime(g.time) === normT && g.group && g.group.trim()));
         });
         const times = activeTimes.length > 0 ? activeTimes : standardTimes.slice(0, 8);
 
@@ -84,9 +121,9 @@ class TeacherTableImageService {
         const padY = 16;
         const titleHeight = 50;
         const colHeaderHeight = 44;
-        const dayColWidth = 135;
-        const colWidth = 126;
-        const rowHeight = 74;
+        const dayColWidth = 105;
+        const colWidth = 154;
+        const rowHeight = 88;
         const cellGap = 4;
 
         const numCols = times.length;
@@ -122,37 +159,94 @@ class TeacherTableImageService {
 
             tableElements.push(`
                 <rect x="${padX}" y="${y}" width="${dayColWidth}" height="${rowHeight}" rx="6" fill="${colors.dayBg}" />
-                <text x="${padX + dayColWidth / 2}" y="${y + rowHeight / 2 + 5}" fill="${colors.dayText}" font-size="13.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
+                <text x="${padX + dayColWidth / 2}" y="${y + rowHeight / 2 + 5}" fill="${colors.dayText}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
             `);
 
             times.forEach((t, cIdx) => {
                 const x = padX + dayColWidth + cellGap + cIdx * (colWidth + cellGap);
-                const slot = day.groups?.find(g => g.time === t);
+                const normT = normalizeTime(t);
+                const slot = day.groups?.find(g => normalizeTime(g.time) === normT);
                 const isBusy = slot && slot.group && slot.group.trim();
 
                 if (isBusy) {
-                    const groupRaw = slot.group.trim();
-                    const subjectLines = slot.subject ? splitSubjectText(slot.subject, 15) : [];
+                    const parsed = parseGroupSlot(slot.group);
+                    const hasSubject = Boolean(slot.subject);
+                    const subjectLines = hasSubject ? splitSubjectText(slot.subject, 22) : [];
+                    const clipId = `clip-${rIdx}-${cIdx}`;
 
-                    let linesHtml = '';
-                    if (subjectLines.length > 0) {
-                        linesHtml += `<text x="${x + colWidth / 2}" y="${y + 22}" fill="${colors.groupText}" font-size="12" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(groupRaw)}</text>`;
-                        linesHtml += `<text x="${x + colWidth / 2}" y="${y + 39}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[0])}</text>`;
-                        if (subjectLines[1]) {
-                            linesHtml += `<text x="${x + colWidth / 2}" y="${y + 54}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[1])}</text>`;
+                    let cellContentHtml = '';
+
+                    let groupFontSize = 11.5;
+                    if (parsed.groups.length >= 2) {
+                        groupFontSize = 10;
+                    } else if (parsed.groupStr.length > 15) {
+                        groupFontSize = 10.5;
+                    }
+
+                    const roomBadge = parsed.roomStr ? `Ауд. ${parsed.roomStr}` : '';
+
+                    if (parsed.groups.length >= 2) {
+                        // Поточные пары (2+ группы)
+                        cellContentHtml += `
+                            <text x="${x + colWidth / 2}" y="${y + 20}" fill="${colors.groupText}" font-size="${groupFontSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(parsed.groups.join(', '))}</text>
+                        `;
+                        if (roomBadge) {
+                            cellContentHtml += `
+                                <text x="${x + colWidth / 2}" y="${y + 35}" fill="${colors.roomText}" font-size="10" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(roomBadge)}</text>
+                            `;
+                        }
+                        if (subjectLines.length > 0) {
+                            cellContentHtml += `
+                                <text x="${x + colWidth / 2}" y="${y + 52}" fill="${colors.subjectText}" font-size="10" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[0])}</text>
+                            `;
+                            if (subjectLines[1]) {
+                                cellContentHtml += `
+                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.subjectText}" font-size="10" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[1])}</text>
+                                `;
+                            } else if (slot.lessonType) {
+                                cellContentHtml += `
+                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.lessonTypeText}" font-size="9.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">(${escapeXml(slot.lessonType)})</text>
+                                `;
+                            }
                         }
                     } else {
-                        linesHtml += `<text x="${x + colWidth / 2}" y="${y + rowHeight / 2 + 5}" fill="${colors.groupText}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(groupRaw)}</text>`;
+                        // Одиночная группа
+                        const line1 = roomBadge ? `${parsed.groupStr} (${parsed.roomStr})` : parsed.groupStr;
+                        const fSize = line1.length > 17 ? 10.5 : 12;
+
+                        cellContentHtml += `
+                            <text x="${x + colWidth / 2}" y="${y + 24}" fill="${colors.groupText}" font-size="${fSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(line1)}</text>
+                        `;
+
+                        if (subjectLines.length > 0) {
+                            cellContentHtml += `
+                                <text x="${x + colWidth / 2}" y="${y + 44}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[0])}</text>
+                            `;
+                            if (subjectLines[1]) {
+                                cellContentHtml += `
+                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[1])}</text>
+                                `;
+                            } else if (slot.lessonType) {
+                                cellContentHtml += `
+                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">(${escapeXml(slot.lessonType)})</text>
+                                `;
+                            }
+                        }
                     }
 
                     tableElements.push(`
+                        <clipPath id="${clipId}">
+                            <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" />
+                        </clipPath>
                         <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" fill="${colors.busyBg}" />
-                        ${linesHtml}
+                        <g clip-path="url(#${clipId})">
+                            ${cellContentHtml}
+                        </g>
                     `);
                 } else {
                     tableElements.push(`
                         <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" fill="${colors.freeBg}" />
-                        <text x="${x + colWidth / 2}" y="${y + rowHeight / 2 + 6}" fill="${colors.dashColor}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
+                        <text x="${x + colWidth / 2}" y="${y + rowHeight / 2 + 7}" fill="${colors.dashColor}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
                     `);
                 }
             });

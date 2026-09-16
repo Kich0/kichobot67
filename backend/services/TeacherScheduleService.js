@@ -8,6 +8,9 @@ import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import * as cheerio from "cheerio";
+import BuketovApiService from "../../bot/services/buketovApiService.js";
+import ScheduleApiAdapter from "../../bot/services/scheduleApiAdapter.js";
+import { Teacher } from "../../bot/models/teacher.js";
 
 const FETCH_TIMEOUT = 12000; // 12 сек
 
@@ -150,50 +153,68 @@ class TeacherScheduleService {
     }
 
     async get_teacher_schedule(id) {
-        const url = `${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`;
-        const html = await this._fetchPage(url);
-
-        const $ = cheerio.load(html);
-        const table = $('table').first();
-
-        if (table.length === 0) {
-            throw new Error("Таблица расписания преподавателя не найдена");
-        }
-
-        const tableHTML = $.html(table);
-        const tableData = HtmlService.htmlTableToJson(tableHTML);
-
-        const schedule = [];
-        for (let i = 1; i < tableData.length; i++) {
-            const dailySchedule = {};
-            dailySchedule['day'] = tableData[i][0];
-            const groups = [];
-            for (let j = 1; j < tableData[i].length; j++) {
-                const time = tableData[0][j];
-                let group = tableData[i][j];
-                if (group === '-') {
-                    group = "";
+        // 1. Приоритетный путь: официальный API КарУ
+        try {
+            const teacher = await Teacher.findOne({ id }).catch(() => null);
+            if (teacher && teacher.name) {
+                const apiData = await BuketovApiService.getTeacherSchedule(teacher.name);
+                if (apiData && Array.isArray(apiData.records) && apiData.records.length > 0) {
+                    return ScheduleApiAdapter.adaptTeacherSchedule(apiData.records);
                 }
-                groups.push({
-                    time, group
-                });
             }
-
-            const firstGroupIndex = groups.findIndex(item => item.group !== '');
-            let trimmedGroups = [];
-            if (firstGroupIndex !== -1) {
-                const lastGroupIndex = groups.reverse().findIndex(item => item.group !== '');
-                groups.reverse();
-                trimmedGroups = groups.slice(firstGroupIndex, groups.length - lastGroupIndex);
-            } else {
-                trimmedGroups = [];
-            }
-
-            dailySchedule['groups'] = trimmedGroups;
-            schedule.push(dailySchedule);
+        } catch (apiErr) {
+            log.warn(`[TeacherSchedule] Ошибка BuketovApiService для преподавателя id=${id}: ${apiErr.message}`);
         }
 
-        return schedule;
+        // 2. Резервный Fallback: кэш из базы данных MongoDB
+        try {
+            const { TeacherSchedule } = await import("../../bot/models/teacherSchedule.js");
+            const dbDoc = await TeacherSchedule.findOne({ teacherId: id }).catch(() => null);
+            if (dbDoc && Array.isArray(dbDoc.schedule) && dbDoc.schedule.length > 0) {
+                log.info(`[TeacherSchedule] Использован кэш MongoDB для преподавателя id=${id}`);
+                return dbDoc.schedule;
+            }
+        } catch (dbErr) {
+            log.warn(`[TeacherSchedule] Ошибка чтения кэша MongoDB: ${dbErr.message}`);
+        }
+
+        // 3. Дополнительный fallback: старый парсер HTML
+        try {
+            const url = `${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`;
+            const html = await this._fetchPage(url);
+            const $ = cheerio.load(html);
+            const table = $('table').first();
+            if (table.length > 0) {
+                const tableHTML = $.html(table);
+                const tableData = HtmlService.htmlTableToJson(tableHTML);
+                const schedule = [];
+                for (let i = 1; i < tableData.length; i++) {
+                    const dailySchedule = {};
+                    dailySchedule['day'] = tableData[i][0];
+                    const groups = [];
+                    for (let j = 1; j < tableData[i].length; j++) {
+                        const time = tableData[0][j];
+                        let group = tableData[i][j];
+                        if (group === '-') group = "";
+                        groups.push({ time, group });
+                    }
+                    const firstGroupIndex = groups.findIndex(item => item.group !== '');
+                    let trimmedGroups = [];
+                    if (firstGroupIndex !== -1) {
+                        const lastGroupIndex = groups.reverse().findIndex(item => item.group !== '');
+                        groups.reverse();
+                        trimmedGroups = groups.slice(firstGroupIndex, groups.length - lastGroupIndex);
+                    }
+                    dailySchedule['groups'] = trimmedGroups;
+                    schedule.push(dailySchedule);
+                }
+                return schedule;
+            }
+        } catch (fallbackErr) {
+            log.warn(`[TeacherSchedule] Fallback парсер HTML не удался: ${fallbackErr.message}`);
+        }
+
+        throw new Error(`Не удалось получить расписание преподавателя id=${id}`);
     }
 }
 
