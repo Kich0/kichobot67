@@ -48,7 +48,7 @@ class BuketovApiService {
 
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 сек таймаут
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 сек таймаут
 
             const response = await fetch(url, {
                 method: 'GET',
@@ -163,8 +163,11 @@ class BuketovApiService {
         let offset = 0;
         const limit = 200;
         let result = null;
+        let pageCount = 0;
+        const maxPages = 5;
 
-        while (true) {
+        while (pageCount < maxPages) {
+            pageCount++;
             result = await this.fetchSchedule({
                 q: surname,
                 limit,

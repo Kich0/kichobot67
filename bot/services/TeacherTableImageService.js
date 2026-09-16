@@ -124,6 +124,14 @@ class TeacherTableImageService {
             "16.50-17.40", "17.50-18.40"
         ];
 
+        const daysRu = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+        const daysKz = ['Дүйсенбі', 'Сейсенбі', 'Сәрсенбі', 'Бейсенбі', 'Жұма', 'Сенбі'];
+        const defaultDays = (lang === 'kz' ? daysKz : daysRu).map(day => ({ day, groups: [] }));
+
+        if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
+            scheduleData = defaultDays;
+        }
+
         const activeTimes = standardTimes.filter(t => {
             const normT = normalizeTime(t);
             return scheduleData.some(d => d.groups?.some(g => normalizeTime(g.time) === normT && g.group && g.group.trim()));

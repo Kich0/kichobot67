@@ -3,8 +3,9 @@ import {TeacherSchedule} from "../models/teacherSchedule.js"
 class teacherScheduleService {
     updateByTeacherId = async (teacherId, data) => {
         try {
-            return await await TeacherSchedule.findOneAndUpdate(
-                {teacherId}, {teacherId, data}, {upsert: true, returnDocument: "after"}
+            const id = Number(teacherId) || teacherId;
+            return await TeacherSchedule.findOneAndUpdate(
+                { teacherId: id }, { teacherId: id, data }, { upsert: true, returnDocument: "after" }
             );
 
         } catch (e) {
@@ -14,7 +15,8 @@ class teacherScheduleService {
 
     getByTeacherId = async (teacherId) => {
         try {
-            return await TeacherSchedule.findOne({teacherId})
+            const id = Number(teacherId) || teacherId;
+            return await TeacherSchedule.findOne({ teacherId: id }).lean();
         } catch (e) {
             throw new Error("Ошибка при получении расписания по teacherId: " + e.stack)
         }

@@ -11,6 +11,7 @@ import * as cheerio from "cheerio";
 import BuketovApiService from "../../bot/services/buketovApiService.js";
 import ScheduleApiAdapter from "../../bot/services/scheduleApiAdapter.js";
 import { Teacher } from "../../bot/models/teacher.js";
+import teacherService from "../../bot/services/teacherService.js";
 
 const FETCH_TIMEOUT = 12000; // 12 сек
 
@@ -153,12 +154,15 @@ class TeacherScheduleService {
     }
 
     async get_teacher_schedule(id) {
+        const numId = Number(id) || id;
+
         // 1. Приоритетный путь: официальный API КарУ
         try {
-            const teacher = await Teacher.findOne({ id }).catch(() => null);
+            const teacher = await teacherService.getById(numId).catch(() => null) || await Teacher.findOne({ id: numId }).catch(() => null);
             if (teacher && teacher.name) {
                 const apiData = await BuketovApiService.getTeacherSchedule(teacher.name);
-                if (apiData && Array.isArray(apiData.records) && apiData.records.length > 0) {
+                if (apiData && Array.isArray(apiData.records)) {
+                    // Возвращаем расписание даже если records пуст (0 пар = 6 дней каникул/свободно)
                     return ScheduleApiAdapter.adaptTeacherSchedule(apiData.records);
                 }
             }
@@ -169,10 +173,10 @@ class TeacherScheduleService {
         // 2. Резервный Fallback: кэш из базы данных MongoDB
         try {
             const { TeacherSchedule } = await import("../../bot/models/teacherSchedule.js");
-            const dbDoc = await TeacherSchedule.findOne({ teacherId: id }).catch(() => null);
-            if (dbDoc && Array.isArray(dbDoc.schedule) && dbDoc.schedule.length > 0) {
+            const dbDoc = await TeacherSchedule.findOne({ teacherId: numId }).lean().catch(() => null);
+            if (dbDoc && Array.isArray(dbDoc.data) && dbDoc.data.length > 0) {
                 log.info(`[TeacherSchedule] Использован кэш MongoDB для преподавателя id=${id}`);
-                return dbDoc.schedule;
+                return dbDoc.data;
             }
         } catch (dbErr) {
             log.warn(`[TeacherSchedule] Ошибка чтения кэша MongoDB: ${dbErr.message}`);
@@ -180,7 +184,7 @@ class TeacherScheduleService {
 
         // 3. Дополнительный fallback: старый парсер HTML
         try {
-            const url = `${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${id}`;
+            const url = `${config.KSU_DOMAIN}/report_prep1.php?IdPrep=${numId}`;
             const html = await this._fetchPage(url);
             const $ = cheerio.load(html);
             const table = $('table').first();
@@ -208,13 +212,17 @@ class TeacherScheduleService {
                     dailySchedule['groups'] = trimmedGroups;
                     schedule.push(dailySchedule);
                 }
-                return schedule;
+                if (schedule.length > 0) {
+                    return schedule;
+                }
             }
         } catch (fallbackErr) {
             log.warn(`[TeacherSchedule] Fallback парсер HTML не удался: ${fallbackErr.message}`);
         }
 
-        throw new Error(`Не удалось получить расписание преподавателя id=${id}`);
+        // 4. Финальный безопасный fallback: возвращаем корректную пустую сетку на 6 дней вместо краша бота
+        log.warn(`[TeacherSchedule] Возврат пустой сетки для преподавателя id=${id}`);
+        return ScheduleApiAdapter.adaptTeacherSchedule([]);
     }
 }
 

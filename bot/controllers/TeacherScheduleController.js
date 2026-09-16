@@ -11,6 +11,7 @@ import config from "../config.js";
 import userActionService from "../services/userActionService.js";
 import { enrichTeacherSchedule } from "../services/teacherScheduleEnricher.js";
 import TeacherTableImageService from "../services/TeacherTableImageService.js";
+import ScheduleApiAdapter from "../services/scheduleApiAdapter.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
@@ -398,16 +399,27 @@ class TeacherScheduleController {
             }
 
             if (!data) {
-                const doc = await teacherScheduleService.getByTeacherId(teacherId);
-                if (doc) {
+                const doc = await teacherScheduleService.getByTeacherId(teacherId).catch(() => null);
+                if (doc && Array.isArray(doc.data) && doc.data.length > 0) {
                     data = doc.data;
                     cached = { data, timestamp: new Date(doc.updatedAt).getTime(), teacher };
                     schedule_cache[teacherId] = cached;
                 } else {
-                    const response = await downloadSchedule(teacherId);
-                    data = response.data;
-                    cached = { data, timestamp: Date.now(), teacher };
-                    schedule_cache[teacherId] = cached;
+                    try {
+                        const response = await downloadSchedule(teacherId);
+                        data = response.data;
+                        cached = { data, timestamp: Date.now(), teacher };
+                        schedule_cache[teacherId] = cached;
+                    } catch (downloadErr) {
+                        log.warn(`Не удалось загрузить расписание для преподавателя ${teacherId}: ${downloadErr.message}`);
+                        if (doc && Array.isArray(doc.data)) {
+                            data = doc.data;
+                        } else {
+                            data = ScheduleApiAdapter.adaptTeacherSchedule([]);
+                        }
+                        cached = { data, timestamp: Date.now(), teacher };
+                        schedule_cache[teacherId] = cached;
+                    }
                 }
             }
 
@@ -441,8 +453,7 @@ class TeacherScheduleController {
                 ]
             };
 
-            await bot.deleteMessage(call.message.chat.id, call.message.message_id).catch(() => {});
-            await bot.sendPhoto(call.message.chat.id, pngBuffer, {
+            const photoMsg = await bot.sendPhoto(call.message.chat.id, pngBuffer, {
                 caption,
                 parse_mode: 'HTML',
                 reply_markup: markup
@@ -450,7 +461,15 @@ class TeacherScheduleController {
                 filename: 'teacher_schedule.png',
                 contentType: 'image/png'
             });
+
+            if (photoMsg) {
+                await bot.deleteMessage(call.message.chat.id, call.message.message_id).catch(() => {});
+            }
         } catch (e) {
+            log.error('Ошибка генерации изображения расписания преподавателя', {
+                stack: e.stack,
+                teacherId: call.data
+            });
             await unexpectedCallbackErrorController(e, call.message, call.data);
         }
     }
