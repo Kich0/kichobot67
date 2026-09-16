@@ -16,6 +16,7 @@ import ScheduleApiAdapter from "../services/scheduleApiAdapter.js";
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
 const refreshCooldowns = new Map();
+const REFRESH_COOLDOWN_MS = 60 * 1000; // 1 минута кулдаун на обновление
 
 async function downloadSchedule(teacherId, attemption = 1) {
     try {
@@ -59,10 +60,18 @@ class TeacherScheduleController {
         return resultString;
     }
 
-    addSymbolToEachLine(inputString, symbol) {
-        const lines = inputString.split('\n');
-        const linesWithSymbol = lines.map((line) => `${symbol} ${line}`);
+    addSymbolToEachLine(inputString, symbol) {
+        const lines = inputString.split('\n');
+        const linesWithSymbol = lines.map((line) => `${symbol} ${line}`);
         return linesWithSymbol.join('\n');
+    }
+
+    formatElapsedTime(timestamp, user_language) {
+        return ScheduleController.formatElapsedTime(timestamp, user_language);
+    }
+
+    formatTimestamp(timestamp) {
+        return ScheduleController.formatTimestamp(timestamp);
     }
 
     async getDepartmentMenu(msgToEdit, prePage) {
@@ -224,9 +233,32 @@ class TeacherScheduleController {
             let [, teacherId] = data_array
 
             if (isRefresh) {
-                await bot.answerCallbackQuery(call.id).catch(() => {});
+                const now = Date.now();
+                const cooldownKey = `${call.message.chat.id}_${teacherId}_text`;
+                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
+                const timeDiff = now - lastRefresh;
+                if (timeDiff < REFRESH_COOLDOWN_MS) {
+                    const remainingSec = Math.ceil((REFRESH_COOLDOWN_MS - timeDiff) / 1000);
+                    const user_language = await userService.getUserLanguage(call.message.chat.id);
+                    const cooldownMsg = user_language === 'kz'
+                        ? `⏳ Кесте жаңартылған. Қайта жаңарту ${remainingSec} сек. кейін қолжетімді`
+                        : `⏳ Расписание уже актуально. Повторное обновление через ${remainingSec} сек.`;
+                    return await bot.answerCallbackQuery(call.id, { text: cooldownMsg, show_alert: false }).catch(() => {});
+                }
+                refreshCooldowns.set(cooldownKey, now);
+                const user_language = await userService.getUserLanguage(call.message.chat.id);
+                await bot.answerCallbackQuery(call.id, {
+                    text: user_language === 'kz' ? '🔄 Кесте жаңартылуда...' : '🔄 Обновляю расписание...'
+                }).catch(() => {});
                 delete schedule_cache[teacherId];
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
+
+                if (refreshCooldowns.size > 2000) {
+                    const threshold = now - REFRESH_COOLDOWN_MS;
+                    for (const [k, v] of refreshCooldowns.entries()) {
+                        if (v < threshold) refreshCooldowns.delete(k);
+                    }
+                }
             }
 
             const cached = schedule_cache[teacherId];
@@ -385,9 +417,30 @@ class TeacherScheduleController {
             let [, teacherId, dayNumber = 0] = data_array;
 
             if (forceRefresh) {
-                await bot.answerCallbackQuery(call.id).catch(() => {});
+                const now = Date.now();
+                const cooldownKey = `${call.message.chat.id}_${teacherId}_img`;
+                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
+                const timeDiff = now - lastRefresh;
+                if (timeDiff < REFRESH_COOLDOWN_MS) {
+                    const remainingSec = Math.ceil((REFRESH_COOLDOWN_MS - timeDiff) / 1000);
+                    const cooldownMsg = user_language === 'kz'
+                        ? `⏳ Кесте жаңартылған. Қайта жаңарту ${remainingSec} сек. кейін қолжетімді`
+                        : `⏳ Таблица уже актуальна. Повторное обновление через ${remainingSec} сек.`;
+                    return await bot.answerCallbackQuery(call.id, { text: cooldownMsg, show_alert: false }).catch(() => {});
+                }
+                refreshCooldowns.set(cooldownKey, now);
+                await bot.answerCallbackQuery(call.id, {
+                    text: user_language === 'kz' ? '🔄 Кесте жаңартылуда...' : '🔄 Обновляю таблицу...'
+                }).catch(() => {});
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
                 delete schedule_cache[teacherId];
+
+                if (refreshCooldowns.size > 2000) {
+                    const threshold = now - REFRESH_COOLDOWN_MS;
+                    for (const [k, v] of refreshCooldowns.entries()) {
+                        if (v < threshold) refreshCooldowns.delete(k);
+                    }
+                }
             }
 
             let cached = schedule_cache[teacherId];
@@ -435,8 +488,8 @@ class TeacherScheduleController {
             }
 
             const timestamp = cached?.timestamp || Date.now();
-            const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language);
-            const scheduleDateTime = this.formatTimestamp(timestamp);
+            const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
+            const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
 
             const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);

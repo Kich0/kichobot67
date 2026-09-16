@@ -124,7 +124,9 @@ export default function setupCallbackHandlers() {
 
             if (call.data.startsWith("teacherImg|") || call.data.startsWith("refreshteacherImg|")) {
                 const isRefresh = call.data.startsWith("refreshteacherImg|");
-                bot.answerCallbackQuery(call.id).catch(() => {});
+                if (!isRefresh) {
+                    bot.answerCallbackQuery(call.id).catch(() => {});
+                }
                 try {
                     await TeacherScheduleController.sendScheduleImage(call, isRefresh);
                 } catch (e) {
@@ -167,8 +169,9 @@ export default function setupCallbackHandlers() {
                 const isRefresh = call.data.includes("refresh");
                 if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
+                } else {
+                    bot.answerCallbackQuery(call.id).catch(() => {});
                 }
-                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.getScheduleMenu(call, isRefresh)
                 } catch (e) {
