@@ -9,6 +9,8 @@ import {bot} from "../app.js";
 import i18next from 'i18next'
 import config from "../config.js";
 import userActionService from "../services/userActionService.js";
+import { enrichTeacherSchedule } from "../services/teacherScheduleEnricher.js";
+import TeacherTableImageService from "../services/TeacherTableImageService.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
@@ -39,16 +41,16 @@ class TeacherScheduleController {
         }
     }
 
-    transformGroupString(inputString) {
-        const regex = /\((\d+)\/(\d+)\)/g;
-        let resultString = inputString.replace(regex, '(Ауд. $1 | $2 корпус)');
-        const parts = resultString.split(') ');
+    transformGroupString(inputString) {
+        const regex = /\s*\(([^/]+)\/([^)]+)\)/g;
+        let resultString = inputString.replace(regex, ' (Ауд. $1 | $2 корпус)');
+        const parts = resultString.split(') ');
         if (parts.length > 1) {
             for (let i = 0; i < parts.length - 1; i++) {
                 parts[i] += ')\n';
             }
             resultString = parts.join('');
-        }
+        }
         resultString = resultString.trim();
 
         return resultString;
@@ -102,9 +104,14 @@ class TeacherScheduleController {
             const currentMenuText = `📌 ${i18next.t('teacher_pick', { lng: user_language })}\n📘 ${i18next.t('department', { lng: user_language, departmentName: department.name })}`
             const msgText = `${currentMenuText}\n${currentPageText}`
 
-            await bot.editMessageText(msgText, {
-                chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
-            })
+            if (msgToEdit.photo) {
+                await bot.deleteMessage(msgToEdit.chat.id, msgToEdit.message_id).catch(() => {});
+                await bot.sendMessage(msgToEdit.chat.id, msgText, { reply_markup: markup });
+            } else {
+                await bot.editMessageText(msgText, {
+                    chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
+                });
+            }
         } catch (e) {
             throw e
         }
@@ -116,15 +123,23 @@ class TeacherScheduleController {
 
             const timestamp = schedule_cache.timestamp
             const data = schedule_cache.data
-            const teacher = schedule_cache.teacher
+            let teacher = schedule_cache.teacher
 
             const data_array = call.data.split('|');
-            let [, , dayNumber] = data_array
+            let [, teacherId, dayNumber] = data_array
             if (+dayNumber > 5) {
                 dayNumber = 0
             }
             if (+dayNumber < 0) {
                 dayNumber = 5
+            }
+
+            // Если teacher не было в объекте кэша — пробуем подгрузить из базы
+            if (!teacher && teacherId) {
+                teacher = await teacherService.getById(teacherId).catch(() => null);
+                if (teacher) {
+                    schedule_cache.teacher = teacher;
+                }
             }
 
             const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language)
@@ -136,14 +151,21 @@ class TeacherScheduleController {
             const schedule = preSchedule.filter(obj => obj.group !== '')
 
             let schedule_text = ``
-            const headerText = `👥 <u>${teacher.name}</u>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
+            const teacherName = teacher?.name || `ID ${teacherId || ''}`
+            const headerText = `👥 <u>${teacherName}</u>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
 
             if (!schedule.length) {
                 schedule_text = `🥳 <b>${i18next.t('vacation', { lng: user_language })}</b>\n`
             }
             for (const item of schedule) {
                 schedule_text += '⌚️ ' + item.time + '\n'
-                schedule_text += this.addSymbolToEachLine(this.transformGroupString(item.group), '📚') + '\n\n'
+                const formattedGroup = this.transformGroupString(item.group)
+                schedule_text += this.addSymbolToEachLine(formattedGroup, '👥') + '\n'
+                if (item.subject) {
+                    const lessonTypeStr = item.lessonType ? ` (${item.lessonType})` : ''
+                    schedule_text += `📖 <i>${item.subject}${lessonTypeStr}</i>\n`
+                }
+                schedule_text += '\n'
             }
             let end_text = `🕰 <i><b>${i18next.t('schedule_downloaded', {lng:user_language, timeAgo:scheduleLifeTime})} || ${scheduleDateTime}</b></i>\n` +
                 `${i18next.t('for_help', {lng:user_language})}\n` +
@@ -152,7 +174,7 @@ class TeacherScheduleController {
             let msg_text = preMessage + headerText + schedule_text + end_text
 
             const preCallback = data_array.slice(0, -1).join("|")
-            const departmentId = teacher.department || 0;
+            const departmentId = teacher?.department || 0;
 
             let markup = {
                 inline_keyboard: [
@@ -162,17 +184,28 @@ class TeacherScheduleController {
                     }, {
                         text: `${i18next.t('go_forward', {lng:user_language})}➡️`, callback_data: preCallback + `|${+dayNumber + 1}`
                     }],
+                    [{ text: `📊 ${i18next.t('schedule_table_week', { lng: user_language })}`, callback_data: `teacherImg|${teacherId}|${dayNumber}` }],
                     [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
                 ]
             }
-            await bot.editMessageText(msg_text,
-                {
-                    message_id: call.message.message_id,
-                    chat_id: call.message.chat.id,
+
+            if (call.message.photo) {
+                await bot.deleteMessage(call.message.chat.id, call.message.message_id).catch(() => {});
+                await bot.sendMessage(call.message.chat.id, msg_text, {
                     parse_mode: "HTML",
                     reply_markup: markup,
                     disable_web_page_preview: true
-                })
+                });
+            } else {
+                await bot.editMessageText(msg_text,
+                    {
+                        message_id: call.message.message_id,
+                        chat_id: call.message.chat.id,
+                        parse_mode: "HTML",
+                        reply_markup: markup,
+                        disable_web_page_preview: true
+                    });
+            }
         } catch (e) {
             await unexpectedCallbackErrorController(e, call.message, call.data)
         }
@@ -183,16 +216,55 @@ class TeacherScheduleController {
             const data_array = call.data.split('|');
             let [, teacherId] = data_array
 
-            if (teacherId in schedule_cache && Date.now() - schedule_cache[teacherId].timestamp <= 30 * 60 * 1000) {
-                await this.sendSchedule(call, schedule_cache[teacherId])
+            const cached = schedule_cache[teacherId];
+            const now = Date.now();
+            const FRESH_TTL = 30 * 60 * 1000;    // 30 мин — кэш считается свежим
+            const STALE_TTL = 2 * 60 * 60 * 1000; // 2 часа — кэш можно показать, но обновить в фоне
+
+            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
+                if (!cached.teacher) {
+                    cached.teacher = await teacherService.getById(teacherId).catch(() => null);
+                }
+                const hasSubjects = cached.data?.some(d => d.groups?.some(g => g.subject));
+                if (!hasSubjects) {
+                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                }
+                // Кэш свежий — показываем мгновенно
+                await this.sendSchedule(call, cached)
+            } else if (cached && (now - cached.timestamp <= STALE_TTL)) {
+                if (!cached.teacher) {
+                    cached.teacher = await teacherService.getById(teacherId).catch(() => null);
+                }
+                const hasSubjects = cached.data?.some(d => d.groups?.some(g => g.subject));
+                if (!hasSubjects) {
+                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                }
+                // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
+                await this.sendSchedule(call, cached)
+                // Фоновое обновление (не ждём результат)
+                downloadSchedule(teacherId)
+                    .then(async (response) => {
+                        const teacher = await teacherService.getById(teacherId).catch(() => null)
+                        const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher }
+                        TeacherTableImageService.invalidateTeacherImage(teacherId);
+                        await teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, {
+                            stack: e.stack
+                        }))
+                        log.info(`[Stale-Revalidate] Расписание для преподавателя ${teacherId} обновлено в фоне`)
+                    })
+                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание преподавателя в фоне: ${e.message}`))
             } else {
+                // Нет кэша или он слишком старый — скачиваем заново
                 await downloadSchedule(teacherId)
                     .then(async (response) => {
-                        const teacher = await teacherService.getById(teacherId)
-                        schedule_cache[teacherId] = {data: response.data, timestamp: Date.now(), teacher}
+                        const teacher = await teacherService.getById(teacherId).catch(() => null)
+                        const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher }
+                        TeacherTableImageService.invalidateTeacherImage(teacherId);
                         await this.sendSchedule(call, schedule_cache[teacherId])
 
-                        await teacherScheduleService.updateByTeacherId(teacherId, response.data).catch(e => log.error(`Ошибка при попытке сохранить резервную копию teacher расписания в бд. teacherId:${teacherId}. Пользователь никак не пострадал.`, {
+                        await teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при попытке сохранить резервную копию teacher расписания в бд. teacherId:${teacherId}. Пользователь никак не пострадал.`, {
                             stack: e.stack, call, userId: call.message.chat.id
                         }))
                     })
@@ -203,10 +275,10 @@ class TeacherScheduleController {
                             let error_text = "⚠️ Произошла непредвиденная ошибка. Не получилось загрузить ваше расписание. Попробуйте обновить расписание."
                             if (e.response) {
                                 if (e.response.status === 503)
-                                    error_text = i18next.t('schedule_error_503')
+                                    error_text = i18next.t('schedule_error_503', {lng: user_language})
 
                                 if (e.response.status === 500) {
-                                    error_text = i18next.t('schedule_error_500')
+                                    error_text = i18next.t('schedule_error_500', {lng: user_language})
                                 }
                             }
                             log.warn(`Teacher ${call.message.chat.id} | ${teacherId} gets a cached schedule.` + error_text + e.message, {
@@ -267,7 +339,13 @@ class TeacherScheduleController {
             const timestamp = updatedAt.getTime();
 
             const teacher = await teacherService.getById(teacherId)
-            schedule_cache[teacherId] = {data: response.data, timestamp, teacher}
+            const hasSubjects = response.data?.some(d => d.groups?.some(g => g.subject));
+            let data = response.data;
+            if (!hasSubjects) {
+                data = await enrichTeacherSchedule(data, teacher);
+                teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
+            }
+            schedule_cache[teacherId] = {data, timestamp, teacher}
             await this.sendSchedule(call, schedule_cache[teacherId], `<b>${error_text} \n` +
                 `${i18next.t('reserved_schedule_header', {lng:user_language})}\n\n</b>`)
         } else {
@@ -277,6 +355,94 @@ class TeacherScheduleController {
                     inline_keyboard: [[{text: i18next.t('try_again', {lng:user_language}), callback_data: call.data}]]
                 }
             })
+        }
+    }
+
+    async sendScheduleImage(call, forceRefresh = false) {
+        try {
+            const user_language = await userService.getUserLanguage(call.message.chat.id);
+            const data_array = call.data.split('|');
+            let [, teacherId, dayNumber = 0] = data_array;
+
+            if (forceRefresh) {
+                TeacherTableImageService.invalidateTeacherImage(teacherId);
+                delete schedule_cache[teacherId];
+            }
+
+            let cached = schedule_cache[teacherId];
+            let data = cached?.data;
+            let teacher = cached?.teacher;
+
+            if (!teacher) {
+                teacher = await teacherService.getById(teacherId).catch(() => null);
+            }
+
+            if (!data) {
+                const doc = await teacherScheduleService.getByTeacherId(teacherId);
+                if (doc) {
+                    data = doc.data;
+                    cached = { data, timestamp: new Date(doc.updatedAt).getTime(), teacher };
+                    schedule_cache[teacherId] = cached;
+                } else {
+                    const response = await downloadSchedule(teacherId);
+                    data = response.data;
+                    cached = { data, timestamp: Date.now(), teacher };
+                    schedule_cache[teacherId] = cached;
+                }
+            }
+
+            const hasSubjects = data?.some(d => d.groups?.some(g => g.subject));
+            if (!hasSubjects) {
+                data = await enrichTeacherSchedule(data, teacher);
+                if (cached) cached.data = data;
+            }
+
+            const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);
+
+            const teacherName = teacher?.name || `ID ${teacherId}`;
+            const caption = i18next.t('teacher_grid_caption', { lng: user_language, teacherName });
+            const departmentId = teacher?.department || 0;
+
+            const markup = {
+                inline_keyboard: [
+                    [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
+                    [{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }],
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
+                ]
+            };
+
+            await bot.deleteMessage(call.message.chat.id, call.message.message_id).catch(() => {});
+            await bot.sendPhoto(call.message.chat.id, pngBuffer, {
+                caption,
+                parse_mode: 'HTML',
+                reply_markup: markup
+            });
+        } catch (e) {
+            await unexpectedCallbackErrorController(e, call.message, call.data);
+        }
+    }
+
+    async sendScheduleFromImage(call) {
+        try {
+            const data_array = call.data.split('|');
+            let [, teacherId, dayNumber = 0] = data_array;
+            call.data = `TeacherSchedule|${teacherId}|${dayNumber}`;
+            let cached = schedule_cache[teacherId];
+            if (!cached) {
+                const doc = await teacherScheduleService.getByTeacherId(teacherId);
+                const teacher = await teacherService.getById(teacherId).catch(() => null);
+                if (doc) {
+                    cached = { data: doc.data, timestamp: new Date(doc.updatedAt).getTime(), teacher };
+                    schedule_cache[teacherId] = cached;
+                }
+            }
+            if (cached) {
+                await this.sendSchedule(call, cached);
+            } else {
+                await this.getScheduleMenu(call);
+            }
+        } catch (e) {
+            await unexpectedCallbackErrorController(e, call.message, call.data);
         }
     }
 }

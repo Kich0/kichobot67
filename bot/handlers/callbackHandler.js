@@ -1,6 +1,5 @@
 import ScheduleController from "../controllers/ScheduleController.js";
 import log from "../logging/logging.js";
-import {schedule_cache} from "../controllers/ScheduleController.js";
 import {callbackAntiSpamMiddleware} from "../middlewares/bot/callbackAntiSpamMiddleware.js";
 import ProfileController from "../controllers/ProfileController.js";
 import {queryValidationErrorController} from "../exceptions/bot/queryValidationErrorController.js";
@@ -75,7 +74,6 @@ export default function setupCallbackHandlers() {
                     return await queryValidationErrorController(call)
                 }
                 if (call.data.includes("refresh")) {
-                    delete schedule_cache[groupId]
                     call.data = call.data.replace('refresh', '')
                 }
                 try {
@@ -123,7 +121,30 @@ export default function setupCallbackHandlers() {
                 }
             }
 
-            if (call.data.includes("teacher|")) {
+            if (call.data.startsWith("teacherImg|") || call.data.startsWith("refreshteacherImg|")) {
+                const isRefresh = call.data.startsWith("refreshteacherImg|");
+                try {
+                    await TeacherScheduleController.sendScheduleImage(call, isRefresh);
+                } catch (e) {
+                    log.error("ОШИБКА В КОЛБЕК ХЕНДЛЕРЕ teacherImg", {
+                        userId: call.message.chat.id,
+                        stack: e.stack
+                    });
+                }
+            }
+
+            if (call.data.startsWith("teacherText|")) {
+                try {
+                    await TeacherScheduleController.sendScheduleFromImage(call);
+                } catch (e) {
+                    log.error("ОШИБКА В КОЛБЕК ХЕНДЛЕРЕ teacherText", {
+                        userId: call.message.chat.id,
+                        stack: e.stack
+                    });
+                }
+            }
+
+            if (call.data.startsWith("teacher|")) {
                 try {
                     const [, departmentId, page] = call.data.split('|');
                     if (isNaN(parseFloat(page))) {
@@ -141,7 +162,6 @@ export default function setupCallbackHandlers() {
                     return await queryValidationErrorController(call)
                 }
                 if (call.data.includes("refresh")) {
-                    delete schedule_cache[teacherId]
                     call.data = call.data.replace('refresh', '')
                 }
                 try {

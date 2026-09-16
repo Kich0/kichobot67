@@ -2,7 +2,9 @@ import mongoose from "mongoose";
 
 const groupSchema = new mongoose.Schema({
     time: String,
-    group: String
+    group: String,
+    subject: String,
+    lessonType: String
 });
 
 const teacherScheduleDaySchema = new mongoose.Schema({

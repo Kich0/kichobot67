@@ -13,6 +13,7 @@
     "postinstall": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "axios": "^1.4.0",
     "body-parser": "^1.20.2",
     "cheerio": "^1.2.0",
