@@ -59,7 +59,10 @@ export async function runDailyDataUpdate(isStartup = false) {
 }
 
 export async function setupDailyDataUpdate(){
-    cron.schedule('00 5 * * *', async () => {
+    // Запуск в 06:00 утра по времени Казахстана (Asia/Almaty, UTC+5)
+    cron.schedule('00 6 * * *', async () => {
         await runDailyDataUpdate();
+    }, {
+        timezone: "Asia/Almaty"
     });
 }

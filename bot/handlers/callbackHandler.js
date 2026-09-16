@@ -12,25 +12,6 @@ import {redirectToNewScheduleMenu} from "../controllers/commands/newScheduleComm
 import userService from "../services/userService.js";
 import {welcomePageRedirectController} from "../controllers/commands/startCommandController.js";
 
-const refreshCooldownMap = new Map(); // key: chatId, value: timestamp
-const REFRESH_COOLDOWN_MS = 15000; // 15 секунд
-
-function checkRefreshCooldown(chatId) {
-    const now = Date.now();
-    const last = refreshCooldownMap.get(chatId) || 0;
-    const diff = now - last;
-    if (diff < REFRESH_COOLDOWN_MS) {
-        return Math.ceil((REFRESH_COOLDOWN_MS - diff) / 1000);
-    }
-    refreshCooldownMap.set(chatId, now);
-    if (refreshCooldownMap.size > 2000) {
-        for (const [k, v] of refreshCooldownMap.entries()) {
-            if (now - v > 60000) refreshCooldownMap.delete(k);
-        }
-    }
-    return 0;
-}
-
 export default function setupCallbackHandlers() {
     bot.on('callback_query', async (call) => {
         log.silly(`User ${call.message.chat.id} clicked to btn ${call.data}`, {call, userId: call.message.chat.id})
@@ -94,6 +75,7 @@ export default function setupCallbackHandlers() {
                 }
                 if (call.data.includes("refresh")) {
                     call.data = call.data.replace('refresh', '')
+                    bot.answerCallbackQuery(call.id).catch(() => {});
                 }
                 try {
                     await ScheduleController.getScheduleMenu(call)
@@ -142,19 +124,7 @@ export default function setupCallbackHandlers() {
 
             if (call.data.startsWith("teacherImg|") || call.data.startsWith("refreshteacherImg|")) {
                 const isRefresh = call.data.startsWith("refreshteacherImg|");
-                if (isRefresh) {
-                    const waitSec = checkRefreshCooldown(call.message.chat.id);
-                    if (waitSec > 0) {
-                        return await bot.answerCallbackQuery(call.id, {
-                            text: `⏳ Подождите ${waitSec} сек. перед повторным обновлением`,
-                            show_alert: false
-                        }).catch(() => {});
-                    }
-                    bot.answerCallbackQuery(call.id, {
-                        text: `🔄 Обновляю расписание...`,
-                        show_alert: false
-                    }).catch(() => {});
-                }
+                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.sendScheduleImage(call, isRefresh);
                 } catch (e) {
@@ -166,6 +136,7 @@ export default function setupCallbackHandlers() {
             }
 
             if (call.data.startsWith("teacherText|")) {
+                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.sendScheduleFromImage(call);
                 } catch (e) {
@@ -196,18 +167,8 @@ export default function setupCallbackHandlers() {
                 const isRefresh = call.data.includes("refresh");
                 if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
-                    const waitSec = checkRefreshCooldown(call.message.chat.id);
-                    if (waitSec > 0) {
-                        return await bot.answerCallbackQuery(call.id, {
-                            text: `⏳ Подождите ${waitSec} сек. перед повторным обновлением`,
-                            show_alert: false
-                        }).catch(() => {});
-                    }
-                    bot.answerCallbackQuery(call.id, {
-                        text: `🔄 Обновляю расписание...`,
-                        show_alert: false
-                    }).catch(() => {});
                 }
+                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.getScheduleMenu(call, isRefresh)
                 } catch (e) {

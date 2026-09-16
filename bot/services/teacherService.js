@@ -156,6 +156,7 @@ class teacherService {
             const res = await Teacher.bulkWrite(operations, { ordered: false });
             this.invalidateCache();
             await this._ensureCache().catch(() => {});
+            log.info(`[TeacherService] Обновление преподавателей завершено: добавлено новых: ${res.upsertedCount || 0}, обновлено: ${res.modifiedCount || 0}, всего уникальных: ${uniqueTeachers.length}`);
             return res;
         } catch (e) {
             throw new Error("Ошибка при обновлении всех Teacher: " + e.stack);

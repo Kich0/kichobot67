@@ -30,6 +30,24 @@ class ScheduleApiAdapter {
             .trim();
     }
 
+    formatLessonType(type) {
+        if (!type) return '';
+        const lower = type.toLowerCase().trim();
+        if (lower.includes('лекц') || lower === 'лек') return '/Лекция/';
+        if (lower.includes('прак') || lower.includes('семин') || lower === 'пр') return '/Прак.зан./';
+        if (lower.includes('лаб')) return '/Лаб.раб./';
+        if (lower.includes('сроп')) return '/СРОП/';
+        return `/${type.trim()}/`;
+    }
+
+    formatRoom(room, building) {
+        if (!room && !building) return '';
+        if (room && building) {
+            return `Ауд.${room}/${building}`;
+        }
+        return `Ауд.${room || building}`;
+    }
+
     /**
      * Адаптация записей API в формат расписания студента для бота
      * @param {Array} records - Массив объектов records от API
@@ -54,19 +72,14 @@ class ScheduleApiAdapter {
                 const time = this.normalizeTime(r.time || (r.slot ? `Пара ${r.slot}` : ''));
                 if (!time) continue;
 
-                let lines = [];
-                if (r.subject) lines.push(r.subject);
-                
-                let details = [];
-                if (r.teacher) details.push(r.teacher);
-                if (r.room || r.building) {
-                    details.push(`(${r.room || ''}/${r.building || ''})`);
-                }
-                if (details.length) lines.push(details.join(' '));
+                const parts = [];
+                if (r.subject) parts.push(r.subject.trim());
+                if (r.type) parts.push(this.formatLessonType(r.type));
+                if (r.teacher) parts.push(r.teacher.trim());
+                const roomStr = this.formatRoom(r.room, r.building);
+                if (roomStr) parts.push(roomStr);
 
-                if (r.type) lines.push(`(${r.type})`);
-
-                const subjectText = lines.join('\n');
+                const subjectText = parts.join(' ');
 
                 if (timeSlotMap.has(time)) {
                     // Если в это время уже есть пара (например, вторая подгруппа)
@@ -118,8 +131,12 @@ class ScheduleApiAdapter {
                 if (timeSlotMap.has(time)) {
                     // Поточная лекция или несколько групп
                     const slotData = timeSlotMap.get(time);
-                    if (!slotData.group.includes(groupName)) {
-                        slotData.group = `${slotData.group.replace(/\s*\([^)]*\)/, '')}, ${groupName}${roomStr}`;
+                    if (!slotData.groupsList) {
+                        slotData.groupsList = [slotData.group.replace(/\s*\([^)]*\)/g, '').trim()];
+                    }
+                    if (!slotData.groupsList.includes(groupName)) {
+                        slotData.groupsList.push(groupName);
+                        slotData.group = `${slotData.groupsList.join(', ')}${roomStr}`;
                     }
                     if (!slotData.subject && r.subject) {
                         slotData.subject = r.subject;
@@ -128,6 +145,7 @@ class ScheduleApiAdapter {
                     timeSlotMap.set(time, {
                         time,
                         group: `${groupName}${roomStr}`,
+                        groupsList: [groupName],
                         subject: r.subject || '',
                         lessonType: r.type || '',
                         room: r.room || '',

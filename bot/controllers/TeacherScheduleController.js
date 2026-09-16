@@ -223,17 +223,7 @@ class TeacherScheduleController {
             let [, teacherId] = data_array
 
             if (isRefresh) {
-                const cooldownKey = `${call.message.chat.id}_${teacherId}`;
-                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
-                if (Date.now() - lastRefresh < 10000) {
-                    const remaining = Math.ceil((10000 - (Date.now() - lastRefresh)) / 1000);
-                    return await bot.answerCallbackQuery(call.id, {
-                        text: `⏳ Подождите ${remaining} сек. перед повторным обновлением`,
-                        show_alert: false
-                    });
-                }
-                refreshCooldowns.set(cooldownKey, Date.now());
-                await bot.answerCallbackQuery(call.id, { text: '🔄 Обновляю расписание...' }).catch(() => {});
+                await bot.answerCallbackQuery(call.id).catch(() => {});
                 delete schedule_cache[teacherId];
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
             }
@@ -394,17 +384,7 @@ class TeacherScheduleController {
             let [, teacherId, dayNumber = 0] = data_array;
 
             if (forceRefresh) {
-                const cooldownKey = `${call.message.chat.id}_${teacherId}_img`;
-                const lastRefresh = refreshCooldowns.get(cooldownKey) || 0;
-                if (Date.now() - lastRefresh < 10000) {
-                    const remaining = Math.ceil((10000 - (Date.now() - lastRefresh)) / 1000);
-                    return await bot.answerCallbackQuery(call.id, {
-                        text: `⏳ Подождите ${remaining} сек. перед повторным обновлением таблицы`,
-                        show_alert: false
-                    });
-                }
-                refreshCooldowns.set(cooldownKey, Date.now());
-                await bot.answerCallbackQuery(call.id, { text: '🔄 Обновляю таблицу...' }).catch(() => {});
+                await bot.answerCallbackQuery(call.id).catch(() => {});
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
                 delete schedule_cache[teacherId];
             }
@@ -442,10 +422,15 @@ class TeacherScheduleController {
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
             }
 
+            const timestamp = cached?.timestamp || Date.now();
+            const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language);
+            const scheduleDateTime = this.formatTimestamp(timestamp);
+            const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
+
             const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);
 
             const teacherName = teacher?.name || `ID ${teacherId}`;
-            const caption = i18next.t('teacher_grid_caption', { lng: user_language, teacherName });
+            const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
             const departmentId = teacher?.department || 0;
 
             const markup = {

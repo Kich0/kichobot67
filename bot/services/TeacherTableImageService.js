@@ -13,12 +13,15 @@ function escapeXml(unsafe) {
 
 function parseGroupSlot(rawGroup) {
     if (!rawGroup) return { groups: [], rooms: [], groupStr: '', roomStr: '' };
-    const regex = /([^\s()]+)\s*(?:\(([^)]+)\))?/g;
+    const regex = /([^\s(),]+)\s*(?:\(([^)]+)\))?/g;
     let m;
     const groups = [];
     const rooms = [];
     while ((m = regex.exec(rawGroup)) !== null) {
-        if (m[1]) groups.push(m[1].trim());
+        if (m[1]) {
+            const cleanG = m[1].replace(/,/g, '').trim();
+            if (cleanG) groups.push(cleanG);
+        }
         if (m[2]) rooms.push(m[2].trim());
     }
     const uniqueRooms = Array.from(new Set(rooms));
@@ -69,6 +72,16 @@ function normalizeTime(t) {
         .replace(/[–—]/g, '-')
         .replace(/(^|-)0(\d)/g, '$1$2')
         .trim();
+}
+
+function formatLessonTypeBadge(type) {
+    if (!type) return '';
+    const lower = type.toLowerCase().trim();
+    if (lower.includes('лекц') || lower === 'лек') return '(Лекция)';
+    if (lower.includes('прак') || lower.includes('семин') || lower === 'пр') return '(Прак.зан.)';
+    if (lower.includes('лаб')) return '(Лаб.раб.)';
+    if (lower.includes('сроп')) return '(СРОП)';
+    return `(${type.trim()})`;
 }
 
 class TeacherTableImageService {
@@ -176,9 +189,19 @@ class TeacherTableImageService {
 
                     let cellContentHtml = '';
 
-                    let groupFontSize = 11.5;
+                    let groupDisplayText = parsed.groups.join(', ');
+                    let groupFontSize = 10;
                     if (parsed.groups.length >= 2) {
-                        groupFontSize = 10;
+                        if (groupDisplayText.length > 22) {
+                            if (parsed.groups.length > 2) {
+                                groupDisplayText = `${parsed.groups.slice(0, 2).join(', ')} (+${parsed.groups.length - 2})`;
+                            }
+                            if (groupDisplayText.length > 22) {
+                                groupFontSize = 8.5;
+                            } else {
+                                groupFontSize = 9.5;
+                            }
+                        }
                     } else if (parsed.groupStr.length > 15) {
                         groupFontSize = 10.5;
                     }
@@ -188,7 +211,7 @@ class TeacherTableImageService {
                     if (parsed.groups.length >= 2) {
                         // Поточные пары (2+ группы)
                         cellContentHtml += `
-                            <text x="${x + colWidth / 2}" y="${y + 20}" fill="${colors.groupText}" font-size="${groupFontSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(parsed.groups.join(', '))}</text>
+                            <text x="${x + colWidth / 2}" y="${y + 20}" fill="${colors.groupText}" font-size="${groupFontSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(groupDisplayText)}</text>
                         `;
                         if (roomBadge) {
                             cellContentHtml += `
@@ -205,7 +228,7 @@ class TeacherTableImageService {
                                 `;
                             } else if (slot.lessonType) {
                                 cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.lessonTypeText}" font-size="9.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">(${escapeXml(slot.lessonType)})</text>
+                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.lessonTypeText}" font-size="9.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(formatLessonTypeBadge(slot.lessonType))}</text>
                                 `;
                             }
                         }
@@ -228,7 +251,7 @@ class TeacherTableImageService {
                                 `;
                             } else if (slot.lessonType) {
                                 cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">(${escapeXml(slot.lessonType)})</text>
+                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(formatLessonTypeBadge(slot.lessonType))}</text>
                                 `;
                             }
                         }
@@ -293,9 +316,9 @@ class TeacherTableImageService {
         // 2. Генерируем SVG
         const svg = this.buildSvg(teacher, scheduleData, lang);
 
-        // 3. Рендерим PNG через @resvg/resvg-js
+        // 3. Рендерим PNG через @resvg/resvg-js в ультра-чётком разрешении (Retina 2x HiDPI)
         const resvg = new Resvg(svg, {
-            fitTo: { mode: 'zoom', value: 1.2 }
+            fitTo: { mode: 'zoom', value: 2.0 }
         });
         const pngBuffer = resvg.render().asPng();
 
