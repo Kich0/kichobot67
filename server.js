@@ -136,7 +136,7 @@ const appStart = async () => {
                 await webhookRetryManager.setWebhookWithRetry(webhookUrl);
                 setInterval(async () => {
                     await webhookRetryManager.monitorWebhookHealth();
-                }, 5 * 60 * 1000);
+                }, 60 * 1000);
             }
         });
 
@@ -217,8 +217,9 @@ const appStart = async () => {
                 server.close(() => backendLog.info('HTTP server closed'));
 
                 if (config.BOT_MODE === 'webhook') {
-                    await bot.deleteWebHook();
-                    backendLog.info('Webhook removed');
+                    // При редеплое на Render старый контейнер выключается ПОСЛЕ старта нового.
+                    // Не удаляем вебхук, чтобы переход был бесшовным (zero-downtime).
+                    backendLog.info('Webhook kept active for zero-downtime transition');
                 } else {
                     await bot.stopPolling();
                     backendLog.info('Polling stopped');
