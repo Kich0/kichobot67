@@ -53,6 +53,16 @@ function extractSurnameToken(fullName) {
     return candidate || '';
 }
 
+function normalizeLessonType(type) {
+    if (!type) return '';
+    const lower = type.toLowerCase().trim();
+    if (lower.includes('лекц') || lower === 'лек') return 'Лекция';
+    if (lower.includes('прак') || lower.includes('семин') || lower === 'пр') return 'Прак.зан.';
+    if (lower.includes('лаб')) return 'Лаб.раб.';
+    if (lower.includes('сроп')) return 'СРОП';
+    return type.trim();
+}
+
 /**
  * Распарсить строку предмета из расписания группы вида:
  * "Название предмета /Тип занятия/ Звание Имя Ауд."
@@ -64,7 +74,7 @@ function parseSubjectLine(line) {
     if (match) {
         return {
             subject: match[1].trim(),
-            lessonType: match[2].trim()
+            lessonType: normalizeLessonType(match[2].trim())
         };
     }
     return {

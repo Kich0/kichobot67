@@ -40,6 +40,16 @@ class ScheduleApiAdapter {
         return `/${type.trim()}/`;
     }
 
+    formatLessonTypeBadge(type) {
+        if (!type) return '';
+        const lower = type.toLowerCase().trim();
+        if (lower.includes('лекц') || lower === 'лек') return 'Лекция';
+        if (lower.includes('прак') || lower.includes('семин') || lower === 'пр') return 'Прак.зан.';
+        if (lower.includes('лаб')) return 'Лаб.раб.';
+        if (lower.includes('сроп')) return 'СРОП';
+        return type.trim();
+    }
+
     formatRoom(room, building) {
         if (!room && !building) return '';
         if (room && building) {
@@ -141,13 +151,16 @@ class ScheduleApiAdapter {
                     if (!slotData.subject && r.subject) {
                         slotData.subject = r.subject;
                     }
+                    if (!slotData.lessonType && r.type) {
+                        slotData.lessonType = this.formatLessonTypeBadge(r.type);
+                    }
                 } else {
                     timeSlotMap.set(time, {
                         time,
                         group: `${groupName}${roomStr}`,
                         groupsList: [groupName],
                         subject: r.subject || '',
-                        lessonType: r.type || '',
+                        lessonType: this.formatLessonTypeBadge(r.type) || '',
                         room: r.room || '',
                         building: r.building || ''
                     });

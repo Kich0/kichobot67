@@ -124,9 +124,7 @@ export default function setupCallbackHandlers() {
 
             if (call.data.startsWith("teacherImg|") || call.data.startsWith("refreshteacherImg|")) {
                 const isRefresh = call.data.startsWith("refreshteacherImg|");
-                if (!isRefresh) {
-                    bot.answerCallbackQuery(call.id).catch(() => {});
-                }
+                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.sendScheduleImage(call, isRefresh);
                 } catch (e) {
@@ -135,6 +133,7 @@ export default function setupCallbackHandlers() {
                         stack: e.stack
                     });
                 }
+                return;
             }
 
             if (call.data.startsWith("teacherText|")) {
@@ -147,6 +146,7 @@ export default function setupCallbackHandlers() {
                         stack: e.stack
                     });
                 }
+                return;
             }
 
             if (call.data.startsWith("teacher|")) {
@@ -159,6 +159,7 @@ export default function setupCallbackHandlers() {
                 } catch (e) {
                     return await unexpectedCallbackErrorController(e, call.message, call.data)
                 }
+                return;
             }
 
             if (call.data.includes("TeacherSchedule|")) {
@@ -169,9 +170,8 @@ export default function setupCallbackHandlers() {
                 const isRefresh = call.data.includes("refresh");
                 if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
-                } else {
-                    bot.answerCallbackQuery(call.id).catch(() => {});
                 }
+                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.getScheduleMenu(call, isRefresh)
                 } catch (e) {
@@ -181,7 +181,7 @@ export default function setupCallbackHandlers() {
                         stack: e.stack
                     })
                 }
-
+                return;
             }
             if (call.data.includes("searchGroup|")) {
                 try {
