@@ -23,6 +23,9 @@ async function downloadSchedule(groupId, language, attemption = 1) {
         const data = await BackendScheduleService.get_schedule_by_groupId(groupId, language);
         return { data, status: 200 };
     } catch (e) {
+        if (e.code === 'NO_SCHEDULE') {
+            throw e;
+        }
         if (attemption < 1) {
             await sleep(1000)
             log.info(`group ${groupId} попала в рекурсивную функцию по получению расписания!`)
@@ -245,6 +248,14 @@ class ScheduleController {
                 }
             }
 
+            // Если во всей неделе нет ни одного предмета — показываем экран об отсутствии расписания
+            const hasAnySubjects = Array.isArray(data) && data.some(day =>
+                Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== '')
+            );
+            if (!hasAnySubjects) {
+                return await this.handleNoSchedule(call, groupId, group?.name);
+            }
+
             const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language)
             const scheduleDateTime = this.formatTimestamp(timestamp)
 
@@ -322,7 +333,10 @@ class ScheduleController {
             chat_id: call.message.chat.id, message_id: call.message.message_id
         })
         const response = await scheduleService.getByGroupId(groupId)
-        if (response) {
+        const hasSubjects = Array.isArray(response?.data) && response.data.some(day =>
+            Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== '')
+        );
+        if (response && hasSubjects) {
             const updatedAt = new Date(response.updatedAt);
             const timestamp = updatedAt.getTime();
 
@@ -354,6 +368,51 @@ class ScheduleController {
             await this.getReservedSchedule(call, groupId, error_text);
         } catch (err) {
             log.error("Ошибка при получении резервного расписания.", {
+                stack: err.stack,
+                call,
+                userId: call.message.chat.id
+            });
+            await unexpectedCallbackErrorController(err, call.message, call.data);
+        }
+    }
+
+    async handleNoSchedule(call, groupId, groupName) {
+        try {
+            const user_language = await userService.getUserLanguage(call.message.chat.id);
+            const group = await groupService.getById(Number(groupId)).catch(() => null);
+            const finalGroupName = groupName || group?.name || `Группа ${groupId}`;
+
+            let facultyId = 0;
+            if (group) {
+                try {
+                    facultyId = await facultyService.getIdByGroup(group) || 0;
+                } catch (ignore) {}
+            }
+            const backCallback = group?.program ? `group|${facultyId}|${group.program}|0` : 'start';
+
+            const msg_text = i18next.t('no_schedule_for_group', { lng: user_language, groupName: finalGroupName });
+
+            const markup = {
+                inline_keyboard: [
+                    [{ text: `🔄 ${i18next.t('try_again', { lng: user_language })}`, callback_data: call.data }],
+                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: backCallback }]
+                ]
+            };
+
+            await bot.editMessageText(msg_text, {
+                chat_id: call.message.chat.id,
+                message_id: call.message.message_id,
+                parse_mode: 'HTML',
+                reply_markup: markup,
+                disable_web_page_preview: true
+            }).catch(err => {
+                if (err.message && err.message.includes('message is not modified')) {
+                    return;
+                }
+                throw err;
+            });
+        } catch (err) {
+            log.error("Ошибка при отображении экрана отсутствия расписания:", {
                 stack: err.stack,
                 call,
                 userId: call.message.chat.id
@@ -395,7 +454,11 @@ class ScheduleController {
                         await this.sendSchedule(call, schedule_cache[groupIdent]);
                         scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, { stack: e.stack }));
                     } catch (e) {
-                        await this.handleScheduleError(e, call, groupId);
+                        if (e.code === 'NO_SCHEDULE') {
+                            await this.handleNoSchedule(call, groupId, e.groupName);
+                        } else {
+                            await this.handleScheduleError(e, call, groupId);
+                        }
                     }
                 }
             } else {
@@ -424,7 +487,11 @@ class ScheduleController {
                         await this.sendSchedule(call, schedule_cache[groupIdent]);
                         scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении расписания в бд. groupId:${groupId}`, { stack: e.stack }));
                     } catch (e) {
-                        await this.handleScheduleError(e, call, groupId);
+                        if (e.code === 'NO_SCHEDULE') {
+                            await this.handleNoSchedule(call, groupId, e.groupName);
+                        } else {
+                            await this.handleScheduleError(e, call, groupId);
+                        }
                     }
                 }
             }

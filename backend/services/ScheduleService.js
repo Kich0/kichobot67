@@ -139,26 +139,43 @@ class ScheduleService {
      * ОСНОВНОЙ МЕТОД — вызывается из бота.
      */
     get_schedule_by_groupId = async (id, language) => {
+        let currentGroup = null;
+
         // 1. Приоритетный путь: официальный API КарУ
         try {
-            const group = await Group.findOne({ id }).catch(() => null);
-            if (group && group.name) {
-                const apiData = await BuketovApiService.getGroupSchedule(group.name);
-                if (apiData && Array.isArray(apiData.records) && apiData.records.length > 0) {
-                    return ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
+            currentGroup = await Group.findOne({ id }).catch(() => null);
+            if (currentGroup && currentGroup.name) {
+                const apiData = await BuketovApiService.getGroupSchedule(currentGroup.name);
+                if (apiData && Array.isArray(apiData.records)) {
+                    if (apiData.records.length > 0) {
+                        return ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
+                    } else {
+                        // Официальный API успешно ответил (200 OK), но записей расписания для этой группы нет
+                        const err = new Error(`У группы ${currentGroup.name} нет расписания`);
+                        err.code = 'NO_SCHEDULE';
+                        err.groupName = currentGroup.name;
+                        throw err;
+                    }
                 }
             }
         } catch (apiErr) {
+            if (apiErr.code === 'NO_SCHEDULE') {
+                throw apiErr;
+            }
             log.warn(`[Schedule] Ошибка BuketovApiService для группы id=${id}: ${apiErr.message}`);
         }
 
         // 2. Резервный Fallback: кэш из базы данных MongoDB
         try {
             const { Schedule } = await import("../../bot/models/schedule.js");
-            const dbDoc = await Schedule.findOne({ groupId: id }).catch(() => null);
-            if (dbDoc && Array.isArray(dbDoc.schedule) && dbDoc.schedule.length > 0) {
-                log.info(`[Schedule] Использован кэш MongoDB для группы id=${id}`);
-                return dbDoc.schedule;
+            const dbDoc = await Schedule.findOne({ groupId: id }).lean().catch(() => null);
+            const scheduleData = dbDoc?.data || dbDoc?.schedule;
+            if (Array.isArray(scheduleData) && scheduleData.length > 0) {
+                const hasSubjects = scheduleData.some(day => Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== ''));
+                if (hasSubjects) {
+                    log.info(`[Schedule] Использован кэш MongoDB для группы id=${id}`);
+                    return scheduleData;
+                }
             }
         } catch (dbErr) {
             log.warn(`[Schedule] Ошибка чтения кэша MongoDB: ${dbErr.message}`);
@@ -171,9 +188,23 @@ class ScheduleService {
             const html = await this._fetchScheduleHtml(url, cookie);
             const tableHTML = this._extractTableHtml(html);
             if (tableHTML) {
-                return this._parseScheduleTable(tableHTML, language);
+                const schedule = this._parseScheduleTable(tableHTML, language);
+                if (Array.isArray(schedule) && schedule.length > 0) {
+                    const hasSubjects = schedule.some(day => Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== ''));
+                    if (hasSubjects) {
+                        return schedule;
+                    } else {
+                        const err = new Error(`У группы ${currentGroup?.name || id} нет расписания`);
+                        err.code = 'NO_SCHEDULE';
+                        err.groupName = currentGroup?.name;
+                        throw err;
+                    }
+                }
             }
         } catch (fallbackErr) {
+            if (fallbackErr.code === 'NO_SCHEDULE') {
+                throw fallbackErr;
+            }
             log.warn(`[Schedule] Fallback парсер HTML не удался: ${fallbackErr.message}`);
         }
 

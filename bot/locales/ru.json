@@ -65,5 +65,6 @@
   "schedule_table_week": "Таблица недели",
   "schedule_text_view": "По дням (текст)",
   "teacher_grid_caption": "👥 <b>{{teacherName}}</b>\n📊 Таблица занятости на неделю",
-  "schedule_generating_image": "⌛️ Создаю таблицу недели..."
+  "schedule_generating_image": "⌛️ Создаю таблицу недели...",
+  "no_schedule_for_group": "ℹ️ У группы {{groupName}} нет расписания."
 }

@@ -65,5 +65,6 @@
   "schedule_table_week": "Апталық кесте",
   "schedule_text_view": "Күндер бойынша (мәтін)",
   "teacher_grid_caption": "👥 <b>{{teacherName}}</b>\n📊 Апталық сабақ кестесі",
-  "schedule_generating_image": "⌛️ Апталық кесте жасалуда..."
+  "schedule_generating_image": "⌛️ Апталық кесте жасалуда...",
+  "no_schedule_for_group": "ℹ️ {{groupName}} тобында сабақ кестесі жоқ."
 }
