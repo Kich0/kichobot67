@@ -7,7 +7,7 @@ const userActionSchema = new mongoose.Schema({
     text: { type: String, required: true },
     entityId: { type: Number },
     entityName: { type: String },
-    createdAt: { type: Date, default: Date.now, index: true }
+    createdAt: { type: Date, default: Date.now, expires: 30 * 24 * 60 * 60, index: true }
 }, {
     timestamps: true
 });

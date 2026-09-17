@@ -6,9 +6,21 @@ import BackendScheduleService from "../../backend/services/ScheduleService.js";
 import { schedule_cache } from "../controllers/ScheduleController.js";
 import groupService from "../services/groupService.js";
 
+const KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+function isDaytimeKZ() {
+    const kzHour = new Date(Date.now() + KZ_OFFSET_MS).getUTCHours();
+    return kzHour >= 7 && kzHour < 20;
+}
+
 async function warmupTopGroups() {
     try {
-        log.info("[CacheWarmup] Начинаю прогрев кэша для популярных групп...");
+        if (!isDaytimeKZ()) {
+            log.info("[CacheWarmup] Ночное время (вне 07:00-20:00 KZ). Прогрев пропущен для экономии ресурсов.");
+            return;
+        }
+
+        log.info("[CacheWarmup] Начинаю умный прогрев кэша для топ-20 популярных групп...");
         
         // 1. Находим топ-20 самых популярных групп среди пользователей
         const topGroupsAggregation = await User.aggregate([
@@ -25,7 +37,7 @@ async function warmupTopGroups() {
 
         const topGroupIds = topGroupsAggregation.map(g => g._id);
         
-        // 2. Получаем данные о группах для извлечения языка (Otdel)
+        // 2. Получаем данные о группах
         const groups = await Group.find({ id: { $in: topGroupIds } });
         
         let successCount = 0;
@@ -34,19 +46,25 @@ async function warmupTopGroups() {
                 // Скачиваем расписание через бэкенд сервис напрямую
                 const scheduleData = await BackendScheduleService.get_schedule_by_groupId(group.id, group.language);
                 
-                // Кэшируем в боте
                 const groupIdent = `${group.id}|${group.language}`;
                 const botGroup = await groupService.getById(group.id);
+                const existing = schedule_cache[groupIdent];
                 
+                // Если в кэше уже есть свежие данные (меньше 30 минут), сохраняем timestamp,
+                // чтобы не сбивать таймер "XX мин. назад" у активных пользователей
+                const timestamp = (existing && (Date.now() - existing.timestamp < 30 * 60 * 1000))
+                    ? existing.timestamp
+                    : Date.now();
+
                 schedule_cache[groupIdent] = { 
                     data: scheduleData, 
-                    timestamp: Date.now(), 
+                    timestamp, 
                     group: botGroup 
                 };
                 
                 successCount++;
-                // Ждём чуть-чуть чтобы не DDoSit КарГУ
-                await new Promise(r => setTimeout(r, 2000));
+                // Пауза между запросами для соблюдения лимитов API КарУ (120 req/min)
+                await new Promise(r => setTimeout(r, 1500));
             } catch (e) {
                 log.warn(`[CacheWarmup] Ошибка загрузки расписания для группы ${group.id}: ${e.message}`);
             }
@@ -59,9 +77,15 @@ async function warmupTopGroups() {
 }
 
 export function setupScheduleCacheWarmup() {
-    // Запускаем каждые 20 минут
-    cron.schedule('*/20 * * * *', warmupTopGroups);
+    // Запуск раз в час в дневное время (с 07:00 до 19:00 по времени Казахстана)
+    cron.schedule('0 7-19 * * *', warmupTopGroups, {
+        timezone: "Asia/Almaty"
+    });
     
-    // И через 1 минуту после старта сервера
-    setTimeout(warmupTopGroups, 60 * 1000);
+    // Фоновый запуск через 2 минуты после старта сервера (только если сейчас день)
+    setTimeout(() => {
+        if (isDaytimeKZ()) {
+            warmupTopGroups();
+        }
+    }, 120 * 1000);
 }

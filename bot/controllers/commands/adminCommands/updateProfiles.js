@@ -29,12 +29,8 @@ export async function updateProfilesCommandController(hard = false){
     }
 
     try{
-        log.info("Начинаю обновление списка профилей. hard = " + hard)
-
-        const startTime = Date.now()
-
-        const old_profiles = await teacherProfileService.getAll()
-        const profiles = await getProfileList()
+        log.info("[Profiles] Скрейпер профилей преподавателей через браузер перенесен в архив (Puppeteer отключен).");
+        return;
 
         const endTime = Date.now()
 

@@ -94,14 +94,16 @@ app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 app.use(bodyParser.text({ type: 'text/html', limit: '5mb' }));
 
-// Логирование запросов
+// Логирование запросов (исключая частые health-check пинги от Render / мониторинга)
 app.use((req, res, next) => {
-    const decodedUrl = decodeURIComponent(req.url);
-    backendLog.info(`${req.method} ${decodedUrl}`);
+    if (req.path !== '/' && req.path !== '/bot/health') {
+        const decodedUrl = decodeURIComponent(req.url);
+        backendLog.info(`${req.method} ${decodedUrl}`);
+    }
     next();
 });
 
-// === Backend routes (парсинг, Puppeteer, расписание) ===
+// === Backend routes (расписание, WebApp API) ===
 app.use('/express/api', backendRouter);
 
 // === Bot routes (webhook, health, WebApp API) ===

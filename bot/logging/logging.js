@@ -1,13 +1,13 @@
 import "dotenv/config";
-import "winston-mongodb"
-import DailyRotateFile from "winston-daily-rotate-file"
-import {createLogger, transports, format} from "winston"
+import "winston-mongodb";
+import DailyRotateFile from "winston-daily-rotate-file";
+import {createLogger, transports, format} from "winston";
 import CustomTransport from "./customTransport.js";
 import config from "../config.js";
 
-
 const log = createLogger({
     transports: [
+        // Консоль: выводит всё (отслеживается в Render Logs Dashboard)
         new transports.Console({
             level: 'silly',
             format: format.combine(
@@ -18,24 +18,21 @@ const log = createLogger({
             ),
         }),
 
-        new transports.File({
-            filename: "logs.log",
-            level: 'silly',
-            format: format.combine(format.timestamp(), format.json())
-        }),
+        // На диск пишем только критические ошибки и предупреждения,
+        // чтобы не перегружать I/O и не забивать диск Render
         new transports.File({
             filename: "error_logs.log",
             level: 'error',
             format: format.combine(format.timestamp(), format.json())
         }),
         new DailyRotateFile({
-            level: 'silly',
+            level: 'warn',
             format: format.combine(format.timestamp(), format.json()),
             filename: 'logs/%DATE%.log',
             datePattern: 'DD.MM.YYYY',
             zippedArchive: true,
-            maxSize: '20m', // Максимальный размер файла
-            maxFiles: '30d'  // Максимальное количество файлов хранения (30 дней)
+            maxSize: '10m',
+            maxFiles: '14d'
         })
     ],
 });
@@ -43,7 +40,7 @@ const log = createLogger({
 if (!config.DEBUG) {
     log.add(new CustomTransport({
         level: "warn"
-    }))  // telegram warning notifications
+    })); // telegram warning notifications
 }
 
-export default log
+export default log;

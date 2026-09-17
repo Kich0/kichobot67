@@ -38,10 +38,10 @@ services:
       - key: WEBHOOK_PATH
         value: /bot/webhook
       - key: START_BROWSER
-        value: "true"
+        value: "false"
       - key: AUTO_KSU_AUTH
-        value: "true"
+        value: "false"
       - key: USE_FREE_PROXIES
-        value: "true"
+        value: "false"
       - key: DEBUG
         value: "false"

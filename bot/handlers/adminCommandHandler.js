@@ -411,11 +411,7 @@ export default function setupAdminCommandHandler() {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
 
-      await bot.sendMessage(msg.chat.id, "Ща всё будет")
-
-      const { default: BrowserController } = await import("../../backend/controllers/BrowserController.js");
-      await BrowserController.auth();
-      await bot.sendMessage(msg.chat.id, "Браузер перезапущен!")
+      await bot.sendMessage(msg.chat.id, "Браузер и Puppeteer отключены. Бот работает на официальном REST API КарУ (BuketovApiService) 🚀");
     } catch (e) {
       log.error({stack: e.stack})
     }

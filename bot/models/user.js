@@ -8,8 +8,8 @@ const userSchema = new mongoose.Schema(
         firstName: {type: String},
         lastName: {type: String},
         username: {type: String, index: true},
-        group: {type: Number, ref: 'Group', field:"id"},
-        teacher: {type: Number, ref: 'Teacher', field:"id"},
+        group: {type: Number, ref: 'Group', field:"id", index: true},
+        teacher: {type: Number, ref: 'Teacher', field:"id", index: true},
         scheduleType:{type:String},
         isAdmin:{type:Boolean},
         language:{type:String}

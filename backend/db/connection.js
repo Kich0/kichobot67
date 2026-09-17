@@ -8,6 +8,9 @@ class Database{
             await mongoose.connect(URI, {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
+                maxPoolSize: 10,
+                minPoolSize: 2,
+                serverSelectionTimeoutMS: 5000,
             });
 
             // Если существует отдельный экземпляр mongoose в bot/node_modules (локальный dev),

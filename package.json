@@ -28,7 +28,6 @@
     "node-cron": "^4.2.1",
     "node-telegram-bot-api": "^0.67.0",
     "nodemon": "^3.0.1",
-    "puppeteer": "^21.0.2",
     "winston": "^3.10.0",
     "winston-daily-rotate-file": "^4.7.1",
     "winston-mongodb": "^5.1.1",
