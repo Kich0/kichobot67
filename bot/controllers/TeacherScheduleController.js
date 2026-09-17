@@ -295,10 +295,10 @@ class TeacherScheduleController {
 
             const cached = schedule_cache[teacherId];
             const now = Date.now();
-            const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (отдых/кулдаун на 1 мин как у студентов)
-            const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
+            const FRESH_TTL = 5 * 60 * 1000;    // 5 мин — кэш свежий (кулдаун на 5 мин)
+            const STALE_TTL = 30 * 60 * 1000;   // 30 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
-            if (!isRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
+            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.teacher) {
                     cached.teacher = await teacherService.getById(teacherId).catch(() => null);
                 }
@@ -452,11 +452,11 @@ class TeacherScheduleController {
             let [, teacherId, dayNumber = 0] = data_array;
 
             const now = Date.now();
-            const FRESH_TTL = 1 * 60 * 1000;
+            const FRESH_TTL = 5 * 60 * 1000;
             let cached = schedule_cache[teacherId];
 
             if (forceRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
-                // Если меньше 1 минуты: просто обновляем секунды в подписи фото
+                // Если меньше 5 минут: просто обновляем секунды в подписи фото
                 const timestamp = cached.timestamp;
                 const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
                 const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);

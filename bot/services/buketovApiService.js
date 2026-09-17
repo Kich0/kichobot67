@@ -4,7 +4,7 @@ import log from "../logging/logging.js";
 class BuketovApiService {
     constructor() {
         this.cache = new Map(); // key -> { etag, data, timestamp }
-        this.cacheTTL = 1 * 60 * 1000; // 1 минута локального кэша (Near Real-Time)
+        this.cacheTTL = 10 * 60 * 1000; // 10 минут локального кэша
     }
 
     /**

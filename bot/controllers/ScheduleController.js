@@ -339,14 +339,14 @@ class ScheduleController {
             const groupIdent = `${groupId}|${language}`;
             const cached = schedule_cache[groupIdent];
             const now = Date.now();
-            const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (Near Real-Time)
-            const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
+            const FRESH_TTL = 10 * 60 * 1000;   // 10 мин — кэш свежий (кулдаун 10 мин)
+            const STALE_TTL = 30 * 60 * 1000;   // 30 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
-            if (!isRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
+            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.group) {
                     cached.group = await groupService.getById(Number(groupId)).catch(() => null);
                 }
-                // Кэш свежий — показываем мгновенно
+                // Кэш свежий — показываем мгновенно (при клике refresh обновятся секунды/минуты "X мин. назад")
                 await this.sendSchedule(call, cached);
             } else if (!isRefresh && cached && (now - cached.timestamp <= STALE_TTL)) {
                 if (!cached.group) {
