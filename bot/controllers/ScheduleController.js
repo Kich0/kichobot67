@@ -86,6 +86,10 @@ class ScheduleController {
             return `${statusEmoji} ${diffInSeconds} ${i18next.t('second', {lng:user_language})}`;
         } else if (diffInSeconds < 3600) {
             const minutes = Math.floor(diffInSeconds / 60);
+            const seconds = diffInSeconds % 60;
+            if (seconds > 0) {
+                return `${statusEmoji} ${minutes} ${i18next.t('minute', {lng:user_language})} ${seconds} ${i18next.t('second', {lng:user_language})}`;
+            }
             return `${statusEmoji} ${minutes} ${i18next.t('minute', {lng:user_language})}`;
         } else if (diffInSeconds < 86400) {
             return `${statusEmoji} ${diffInHours} ${i18next.t('hour', {lng:user_language})}`;
@@ -271,12 +275,14 @@ class ScheduleController {
             let msg_text = preMessage + headerText + schedule_text + end_text
 
             const preCallback = data_array.slice(0, -1).join("|")
-            let facultyId = 0
-            if (group) {
+            let facultyId = schedule_cache.facultyId;
+            if (facultyId === undefined && group) {
                 try {
-                    facultyId = await facultyService.getIdByGroup(group) || 0
+                    facultyId = await facultyService.getIdByGroup(group) || 0;
+                    schedule_cache.facultyId = facultyId;
                 } catch (ignore) {}
             }
+            facultyId = facultyId || 0;
 
             const backCallback = group?.program ? `group|${facultyId}|${group.program}|0` : 'start'
 
@@ -298,6 +304,11 @@ class ScheduleController {
                     parse_mode: "HTML",
                     reply_markup: markup,
                     disable_web_page_preview: true
+                }).catch(err => {
+                    if (err.message && err.message.includes('message is not modified')) {
+                        return;
+                    }
+                    throw err;
                 })
         } catch (e) {
             await unexpectedCallbackErrorController(e, call.message, call.data)
@@ -329,6 +340,28 @@ class ScheduleController {
         }
     }
 
+    async handleScheduleError(e, call, groupId) {
+        try {
+            const user_language = await userService.getUserLanguage(call.message.chat.id);
+            let error_text = i18next.t('schedule_error', { lng: user_language });
+            if (e.response) {
+                if (e.response.status === 503) error_text = i18next.t('schedule_error_503', { lng: user_language });
+                if (e.response.status === 500) error_text = i18next.t('schedule_error_500', { lng: user_language });
+            }
+            log.warn(`Student ${call.message.chat.id} from group ${groupId} gets a cached schedule. ` + error_text + e.message, {
+                stack: e.stack,
+            });
+            await this.getReservedSchedule(call, groupId, error_text);
+        } catch (err) {
+            log.error("Ошибка при получении резервного расписания.", {
+                stack: err.stack,
+                call,
+                userId: call.message.chat.id
+            });
+            await unexpectedCallbackErrorController(err, call.message, call.data);
+        }
+    }
+
     async getScheduleMenu(call, forceRefresh = false) {
         try {
             const isRefresh = forceRefresh || call.data.includes("refresh");
@@ -340,71 +373,64 @@ class ScheduleController {
             const groupIdent = `${groupId}|${language}`;
             const cached = schedule_cache[groupIdent];
             const now = Date.now();
-            const FRESH_TTL = 10 * 60 * 1000;   // 10 мин — кэш свежий (кулдаун 10 мин)
-            const STALE_TTL = 30 * 60 * 1000;   // 30 мин — мгновенная отдача + тихий фоновый ETag-запрос
+            const REFRESH_COOLDOWN = 10 * 60 * 1000; // 10 мин кулдаун для кнопки 🔄
+            const CACHE_MAX_AGE = 30 * 60 * 1000;    // 30 мин хранение в оперативной памяти
 
-            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
-                if (!cached.group) {
-                    cached.group = await groupService.getById(Number(groupId)).catch(() => null);
-                }
-                // Кэш свежий — показываем мгновенно (при клике refresh обновятся секунды/минуты "X мин. назад")
-                await this.sendSchedule(call, cached);
-            } else if (!isRefresh && cached && (now - cached.timestamp <= STALE_TTL)) {
-                if (!cached.group) {
-                    cached.group = await groupService.getById(Number(groupId)).catch(() => null);
-                }
-                // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
-                await this.sendSchedule(call, cached);
-                // Фоновое обновление (не ждём результат)
-                downloadSchedule(groupId, language)
-                    .then(async (response) => {
-                        const group = await groupService.getById(Number(groupId)).catch(() => null);
-                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group };
-                        await scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, {
-                            stack: e.stack
-                        }));
-                        log.info(`[Stale-Revalidate] Расписание для группы ${groupId} обновлено в фоне`);
-                    })
-                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание в фоне: ${e.message}`));
-            } else {
-                // Нет кэша или он слишком старый — скачиваем заново
-                await downloadSchedule(groupId, language)
-                    .then(async (response) => {
-                        const group = await groupService.getById(Number(groupId)).catch(() => null)
-                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group }
-                        await this.sendSchedule(call, schedule_cache[groupIdent])
-
-                        await scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при попытке сохранить резервную копию расписания в бд. groupId:${groupId}. Пользователь никак не пострадал.`, {
-                            stack: e.stack, call, userId: call.message.chat.id
-                        }))
-                    })
-                    .catch(async (e) => {
-                        try {
-                            const user_language = await userService.getUserLanguage(call.message.chat.id)
-
-                            let error_text = i18next.t('schedule_error', {lng:user_language})
-                            if (e.response) {
-                                if (e.response.status === 503)
-                                    error_text = i18next.t('schedule_error_503', {lng:user_language})
-                                if (e.response.status === 500) {
-                                    error_text = i18next.t('schedule_error_500', {lng:user_language})
-                                }
-                            }
-                            log.warn(`Student ${call.message.chat.id} from group ${groupId} gets a cached schedule.` + error_text + e.message, {
-                                stack: e.stack,
-                            })
-                            await this.getReservedSchedule(call, groupId, error_text)
-                        } catch (e) {
-                            log.error("Ошбика при получении резервного расписания.", {
-                                stack: e.stack,
-                                call,
-                                userId: call.message.chat.id
-                            })
-                            return await unexpectedCallbackErrorController(e, call.message, call.data)
+            if (isRefresh) {
+                // Пользователь нажал кнопку «Обновить»
+                bot.answerCallbackQuery(call.id).catch(() => {});
+                if (cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
+                    // Кулдаун 10 минут еще не прошел: просто тихо перерисовываем, чтобы обновить счётчик снизу (например, "1 мин. 30 сек.")
+                    await this.sendSchedule(call, cached);
+                } else {
+                    // Прошло >= 10 минут (или кэша нет) — скачиваем свежее расписание
+                    try {
+                        const response = await downloadSchedule(groupId, language);
+                        const group = cached?.group || await groupService.getById(Number(groupId)).catch(() => null);
+                        let facultyId = cached?.facultyId;
+                        if (facultyId === undefined && group) {
+                            facultyId = await facultyService.getIdByGroup(group).catch(() => 0) || 0;
                         }
-                    })
+                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group, facultyId };
+                        await this.sendSchedule(call, schedule_cache[groupIdent]);
+                        scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, { stack: e.stack }));
+                    } catch (e) {
+                        await this.handleScheduleError(e, call, groupId);
+                    }
+                }
+            } else {
+                // Обычное переключение дней недели (◀️ / ▶️) или вход в расписание
+                if (cached && (now - cached.timestamp < CACHE_MAX_AGE)) {
+                    // В пределах 30 минут: мгновенная отдача из памяти, НОЛЬ запросов к API, время НЕ меняется
+                    if (!cached.group) {
+                        cached.group = await groupService.getById(Number(groupId)).catch(() => null);
+                    }
+                    if (cached.facultyId === undefined && cached.group) {
+                        cached.facultyId = await facultyService.getIdByGroup(cached.group).catch(() => 0) || 0;
+                    }
+                    bot.answerCallbackQuery(call.id).catch(() => {});
+                    await this.sendSchedule(call, cached);
+                } else {
+                    // Кэш отсутствует или старше 30 минут — скачиваем с сайта
+                    try {
+                        const response = await downloadSchedule(groupId, language);
+                        const group = cached?.group || await groupService.getById(Number(groupId)).catch(() => null);
+                        let facultyId = cached?.facultyId;
+                        if (facultyId === undefined && group) {
+                            facultyId = await facultyService.getIdByGroup(group).catch(() => 0) || 0;
+                        }
+                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group, facultyId };
+                        bot.answerCallbackQuery(call.id).catch(() => {});
+                        await this.sendSchedule(call, schedule_cache[groupIdent]);
+                        scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении расписания в бд. groupId:${groupId}`, { stack: e.stack }));
+                    } catch (e) {
+                        await this.handleScheduleError(e, call, groupId);
+                    }
+                }
             }
-            const userOldData = await userService.updateUser(call.message.chat.id, {
+
+            // Фоновое обновление пользователя без блокировки UI
+            userService.updateUser(call.message.chat.id, {
                 userId: call.message.chat.id,
                 userType: String(call.message.chat.type),
                 userTitle: call.message.chat.title,
@@ -413,34 +439,30 @@ class ScheduleController {
                 username: call.message.chat.username,
                 group: groupId,
                 scheduleType: "student"
-            }).catch((e) => log.error("Ошибка при обновлении данных о пользователе при получении расписания. ", {
-                stack: e.stack, call, userId: call.message.chat.id
-            }))
-            if (userOldData && !userOldData.group){
-                log.warn(`User ${call.message.chat.id} получил своё первое расписание. Юхууу! Щас вышлю инфу о нем. `)
-                try {
-                    await getAndSendUserInfoByUserId(call.message.chat.id, config.LOG_CHANEL_ID)
-                } catch (notificationError) {
-                    log.error(`Не удалось отправить уведомление о новом пользователе: ${notificationError.message}. Убедитесь, что LOG_CHANEL_ID в .env верный и бот добавлен в этот канал.`);
+            }).then(userOldData => {
+                if (userOldData && !userOldData.group) {
+                    log.warn(`User ${call.message.chat.id} получил своё первое расписание.`);
+                    getAndSendUserInfoByUserId(call.message.chat.id, config.LOG_CHANEL_ID).catch(() => {});
                 }
-            }
+            }).catch((e) => log.error("Ошибка при обновлении данных о пользователе: " + e.message));
 
-            // Понятное логирование действия на русском языке
-            groupService.getById(groupId).then(grp => {
-                const groupName = grp?.name ? `"${grp.name}"` : `ID ${groupId}`;
+            // Логируем действие пользователя только при первом входе или принудительном обновлении
+            if (!cached || isRefresh) {
+                const groupObj = cached?.group || schedule_cache[groupIdent]?.group;
+                const groupName = groupObj?.name ? `"${groupObj.name}"` : `ID ${groupId}`;
                 userActionService.logAction(
                     call.message.chat.id,
                     call.message.chat.username,
                     'view_group',
                     `Открыл расписание группы ${groupName}`,
-                    { entityId: Number(groupId), entityName: grp?.name }
-                );
-            }).catch(() => {});
+                    { entityId: Number(groupId), entityName: groupObj?.name }
+                ).catch(() => {});
+            }
         } catch (e) {
-            return await unexpectedCallbackErrorController(e, call.message, call.data)
+            return await unexpectedCallbackErrorController(e, call.message, call.data);
         }
-
     }
+
     async chooseScheduleLanguage(call){
         const languages = {
             ru: "русский",

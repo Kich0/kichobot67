@@ -279,6 +279,11 @@ class TeacherScheduleController {
                         parse_mode: "HTML",
                         reply_markup: markup,
                         disable_web_page_preview: true
+                    }).catch(err => {
+                        if (err.message && err.message.includes('message is not modified')) {
+                            return;
+                        }
+                        throw err;
                     });
             }
         } catch (e) {
@@ -293,97 +298,83 @@ class TeacherScheduleController {
                 call.data = call.data.replace('refresh', '');
             }
             const data_array = call.data.split('|');
-            let [, teacherId] = data_array
+            let [, teacherId] = data_array;
 
             const cached = schedule_cache[teacherId];
             const now = Date.now();
-            const FRESH_TTL = 5 * 60 * 1000;    // 5 мин — кэш свежий (кулдаун на 5 мин)
-            const STALE_TTL = 30 * 60 * 1000;   // 30 мин — мгновенная отдача + тихий фоновый ETag-запрос
+            const REFRESH_COOLDOWN = 5 * 60 * 1000;    // 5 мин — кулдаун для кнопки 🔄
+            const CACHE_MAX_AGE = 30 * 60 * 1000;      // 30 мин — хранение в оперативной памяти
 
-            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
-                if (!cached.teacher) {
-                    cached.teacher = await teacherService.getById(teacherId).catch(() => null);
-                }
-                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
-                if (hasMissingSubjects && !cached._enriched) {
-                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
-                    cached._enriched = true;
-                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
+            if (isRefresh) {
+                // Пользователь нажал кнопку «Обновить»
+                bot.answerCallbackQuery(call.id).catch(() => {});
+                if (cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
+                    // Кулдаун 5 минут еще не прошел: просто тихо перерисовываем, чтобы обновить счётчик снизу
+                    await this.sendSchedule(call, cached);
+                } else {
+                    // Прошло >= 5 минут (или кэша нет) — скачиваем свежее расписание
                     TeacherTableImageService.invalidateTeacherImage(teacherId);
-                }
-                // Кэш свежий — показываем мгновенно (при клике refresh обновятся секунды "X секунд назад")
-                await this.sendSchedule(call, cached);
-            } else if (!isRefresh && cached && (now - cached.timestamp <= STALE_TTL)) {
-                if (!cached.teacher) {
-                    cached.teacher = await teacherService.getById(teacherId).catch(() => null);
-                }
-                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
-                if (hasMissingSubjects && !cached._enriched) {
-                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
-                    cached._enriched = true;
-                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
-                    TeacherTableImageService.invalidateTeacherImage(teacherId);
-                }
-                // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
-                await this.sendSchedule(call, cached);
-                // Фоновое обновление (не ждём результат)
-                downloadSchedule(teacherId)
-                    .then(async (response) => {
-                        const teacher = await teacherService.getById(teacherId).catch(() => null);
+                    try {
+                        const teacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const response = await downloadSchedule(teacherId);
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
-                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher, _enriched: true };
-                        TeacherTableImageService.invalidateTeacherImage(teacherId);
-                        await teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, {
-                            stack: e.stack
-                        }));
-                        log.info(`[Stale-Revalidate] Расписание для преподавателя ${teacherId} обновлено в фоне`);
-                    })
-                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание преподавателя в фоне: ${e.message}`));
+                        schedule_cache[teacherId] = {
+                            data: enrichedData,
+                            timestamp: Date.now(),
+                            teacher,
+                            _enriched: true,
+                            departmentId: teacher?.department || 0
+                        };
+                        await this.sendSchedule(call, schedule_cache[teacherId]);
+                        teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, { stack: e.stack }));
+                    } catch (e) {
+                        await this.handleTeacherScheduleError(e, call, teacherId);
+                    }
+                }
             } else {
-                // Если кликнули обновить после 1 минуты или кэш старше 15 минут — скачиваем свежее расписание
-                if (isRefresh) {
-                    TeacherTableImageService.invalidateTeacherImage(teacherId);
-                }
-                await downloadSchedule(teacherId)
-                    .then(async (response) => {
-                        const teacher = await teacherService.getById(teacherId).catch(() => null)
-                        const enrichedData = await enrichTeacherSchedule(response.data, teacher);
-                        schedule_cache[teacherId] = { data: enrichedData, timestamp: Date.now(), teacher, _enriched: true }
+                // Обычное переключение дней недели (⬅️ / ➡️) или вход в расписание
+                if (cached && (now - cached.timestamp < CACHE_MAX_AGE)) {
+                    // В пределах 30 минут: мгновенная отдача из памяти, НОЛЬ запросов к API, время НЕ меняется
+                    if (!cached.teacher) {
+                        cached.teacher = await teacherService.getById(teacherId).catch(() => null);
+                    }
+                    if (cached.departmentId === undefined) {
+                        cached.departmentId = cached.teacher?.department || 0;
+                    }
+                    const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
+                    if (hasMissingSubjects && !cached._enriched) {
+                        cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                        cached._enriched = true;
+                        teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
                         TeacherTableImageService.invalidateTeacherImage(teacherId);
-                        await this.sendSchedule(call, schedule_cache[teacherId])
-
-                        await teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при попытке сохранить резервную копию teacher расписания в бд. teacherId:${teacherId}. Пользователь никак не пострадал.`, {
-                            stack: e.stack, call, userId: call.message.chat.id
-                        }))
-                    })
-                    .catch(async (e) => {
-                        try {
-                            const user_language = await userService.getUserLanguage(call.message.chat.id)
-
-                            let error_text = "⚠️ Произошла непредвиденная ошибка. Не получилось загрузить ваше расписание. Попробуйте обновить расписание."
-                            if (e.response) {
-                                if (e.response.status === 503)
-                                    error_text = i18next.t('schedule_error_503', {lng: user_language})
-
-                                if (e.response.status === 500) {
-                                    error_text = i18next.t('schedule_error_500', {lng: user_language})
-                                }
-                            }
-                            log.warn(`Teacher ${call.message.chat.id} | ${teacherId} gets a cached schedule.` + error_text + e.message, {
-                                stack: e.stack,
-                            })
-                            await this.getReservedSchedule(call, teacherId, error_text)
-                        } catch (e) {
-                            log.error("Ошбика при получении резервного Teacher расписания.", {
-                                stack: e.stack,
-                                call,
-                                userId: call.message.chat.id
-                            })
-                            return await unexpectedCallbackErrorController(e, call.message, call.data)
-                        }
-                    })
+                    }
+                    bot.answerCallbackQuery(call.id).catch(() => {});
+                    await this.sendSchedule(call, cached);
+                } else {
+                    // Кэш отсутствует или старше 30 минут — скачиваем с сайта
+                    try {
+                        const teacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const response = await downloadSchedule(teacherId);
+                        const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                        schedule_cache[teacherId] = {
+                            data: enrichedData,
+                            timestamp: Date.now(),
+                            teacher,
+                            _enriched: true,
+                            departmentId: teacher?.department || 0
+                        };
+                        TeacherTableImageService.invalidateTeacherImage(teacherId);
+                        bot.answerCallbackQuery(call.id).catch(() => {});
+                        await this.sendSchedule(call, schedule_cache[teacherId]);
+                        teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка сохранения в бд. teacherId:${teacherId}`, { stack: e.stack }));
+                    } catch (e) {
+                        await this.handleTeacherScheduleError(e, call, teacherId);
+                    }
+                }
             }
-            await userService.updateUser(call.message.chat.id, {
+
+            // Фоновое обновление пользователя без блокировки UI
+            userService.updateUser(call.message.chat.id, {
                 userId: call.message.chat.id,
                 userType: String(call.message.chat.type),
                 userTitle: call.message.chat.title,
@@ -392,26 +383,40 @@ class TeacherScheduleController {
                 username: call.message.chat.username,
                 teacher: teacherId,
                 scheduleType: 'teacher'
-            }).catch((e) => log.error("Ошибка при обновлении данных о пользователе при получении Teacher расписания. ", {
-                stack: e.stack, call, userId: call.message.chat.id
-            }))
+            }).catch((e) => log.error("Ошибка при обновлении данных о пользователе: " + e.message));
 
-            // Понятное логирование действия на русском языке
-            teacherService.getById(teacherId).then(tch => {
-                const teacherName = tch?.name ? `"${tch.name}"` : `ID ${teacherId}`;
+            // Логируем действие только при первом входе или принудительном обновлении
+            if (!cached || isRefresh) {
+                const teacherObj = cached?.teacher || schedule_cache[teacherId]?.teacher;
+                const teacherName = teacherObj?.name || `ID ${teacherId}`;
                 userActionService.logAction(
                     call.message.chat.id,
                     call.message.chat.username,
                     'view_teacher',
-                    `Открыл расписание преподавателя ${teacherName}`,
-                    { entityId: Number(teacherId), entityName: tch?.name }
-                );
-            }).catch(() => {});
+                    `Открыл расписание преподавателя "${teacherName}"`,
+                    { entityId: Number(teacherId), entityName: teacherName }
+                ).catch(() => {});
+            }
 
         } catch (e) {
-            return await unexpectedCallbackErrorController(e, call.message, call.data)
+            return await unexpectedCallbackErrorController(e, call.message, call.data);
         }
+    }
 
+    async handleTeacherScheduleError(e, call, teacherId) {
+        try {
+            const user_language = await userService.getUserLanguage(call.message.chat.id);
+            let error_text = "⚠️ Произошла непредвиденная ошибка. Не получилось загрузить ваше расписание. Попробуйте обновить расписание.";
+            if (e.response) {
+                if (e.response.status === 503) error_text = i18next.t('schedule_error_503', { lng: user_language });
+                if (e.response.status === 500) error_text = i18next.t('schedule_error_500', { lng: user_language });
+            }
+            log.error("Ошибка при попытке получить teacher расписание: " + e.message, { stack: e.stack, call, userId: call.message.chat.id });
+            await this.getReservedSchedule(call, teacherId, error_text);
+        } catch (err) {
+            log.error("Ошибка при обработке ошибки расписания преподавателя", { stack: err.stack, call, userId: call.message.chat.id });
+            await unexpectedCallbackErrorController(err, call.message, call.data);
+        }
     }
 
     async getReservedSchedule(call, teacherId, error_text) {

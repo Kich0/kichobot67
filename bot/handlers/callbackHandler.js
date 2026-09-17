@@ -76,7 +76,6 @@ export default function setupCallbackHandlers() {
                 const isRefresh = call.data.includes("refresh");
                 if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
-                    bot.answerCallbackQuery(call.id).catch(() => {});
                 }
                 try {
                     await ScheduleController.getScheduleMenu(call, isRefresh)
@@ -172,7 +171,6 @@ export default function setupCallbackHandlers() {
                 if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
                 }
-                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.getScheduleMenu(call, isRefresh)
                 } catch (e) {
