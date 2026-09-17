@@ -94,7 +94,7 @@ class ScheduleApiAdapter {
                 if (timeSlotMap.has(time)) {
                     // Если в это время уже есть пара (например, вторая подгруппа)
                     const existing = timeSlotMap.get(time);
-                    timeSlotMap.set(time, `${existing}\n---\n${subjectText}`);
+                    timeSlotMap.set(time, `${existing}\n${subjectText}`);
                 } else {
                     timeSlotMap.set(time, subjectText);
                 }
