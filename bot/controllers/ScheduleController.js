@@ -257,11 +257,12 @@ class ScheduleController {
                 : `👥 <b>${groupName}</b>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
 
             if (!schedule.length) {
-                schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n\n`
-            }
-            for (const item of schedule) {
-                schedule_text += '⌚️ ' + item.time + '\n'
-                schedule_text += '📚 ' + (item.subject || '').trim() + '\n\n'
+                schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n`
+            } else {
+                const formattedItems = schedule.map(item => {
+                    return '⌚️ ' + item.time + '\n📚 ' + (item.subject || '').trim();
+                });
+                schedule_text = formattedItems.join('\n\n') + '\n';
             }
             let end_text = `🕒 <i><b>${scheduleLifeTime} || ${scheduleDateTime}</b></i>\n` +
                 `${i18next.t('for_help', {lng:user_language})}\n` +

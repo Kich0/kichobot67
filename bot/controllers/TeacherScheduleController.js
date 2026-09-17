@@ -229,16 +229,18 @@ class TeacherScheduleController {
 
             if (!deduplicated.length) {
                 schedule_text = `🥳 <b>${i18next.t('vacation', { lng: user_language })}</b>\n`
-            }
-            for (const item of deduplicated) {
-                schedule_text += '⌚️ ' + item.time + '\n'
-                const formattedGroup = this.transformGroupString(item.group)
-                schedule_text += this.addSymbolToEachLine(formattedGroup, '👥') + '\n'
-                if (item.subject) {
-                    const formattedSubject = this.formatSubjectWithLessonType(item.subject, item.lessonType);
-                    schedule_text += `📖 <i>${formattedSubject}</i>\n`
-                }
-                schedule_text += '\n'
+            } else {
+                const formattedItems = deduplicated.map(item => {
+                    let text = '⌚️ ' + item.time + '\n';
+                    const formattedGroup = this.transformGroupString(item.group);
+                    text += this.addSymbolToEachLine(formattedGroup, '👥') + '\n';
+                    if (item.subject) {
+                        const formattedSubject = this.formatSubjectWithLessonType(item.subject, item.lessonType);
+                        text += `📖 <i>${formattedSubject}</i>\n`;
+                    }
+                    return text.trimEnd();
+                });
+                schedule_text = formattedItems.join('\n\n') + '\n';
             }
             let end_text = `🕰 <i><b>${i18next.t('schedule_downloaded', {lng:user_language, timeAgo:scheduleLifeTime})} || ${scheduleDateTime}</b></i>\n` +
                 `${i18next.t('for_help', {lng:user_language})}\n` +
