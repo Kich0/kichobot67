@@ -298,7 +298,7 @@ class TeacherScheduleController {
             const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (отдых/кулдаун на 1 мин как у студентов)
             const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
-            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
+            if (!isRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.teacher) {
                     cached.teacher = await teacherService.getById(teacherId).catch(() => null);
                 }

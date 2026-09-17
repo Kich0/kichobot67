@@ -73,12 +73,13 @@ export default function setupCallbackHandlers() {
                 if (!groupId) {
                     return await queryValidationErrorController(call)
                 }
-                if (call.data.includes("refresh")) {
+                const isRefresh = call.data.includes("refresh");
+                if (isRefresh) {
                     call.data = call.data.replace('refresh', '')
                     bot.answerCallbackQuery(call.id).catch(() => {});
                 }
                 try {
-                    await ScheduleController.getScheduleMenu(call)
+                    await ScheduleController.getScheduleMenu(call, isRefresh)
                 } catch (e) {
                     console.error(e)
                     log.error("ОШИБКА В КОЛБЕК ХЕНДЕЛЕРЕ schedule", {userId: call.message.chat.id, stack: e.stack})

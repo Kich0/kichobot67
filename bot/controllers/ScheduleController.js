@@ -257,11 +257,11 @@ class ScheduleController {
                 : `👥 <b>${groupName}</b>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
 
             if (!schedule.length) {
-                schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n`
+                schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n\n`
             }
             for (const item of schedule) {
                 schedule_text += '⌚️ ' + item.time + '\n'
-                schedule_text += '📚 ' + item.subject + '\n'
+                schedule_text += '📚 ' + (item.subject || '').trim() + '\n\n'
             }
             let end_text = `🕒 <i><b>${scheduleLifeTime} || ${scheduleDateTime}</b></i>\n` +
                 `${i18next.t('for_help', {lng:user_language})}\n` +
@@ -328,39 +328,43 @@ class ScheduleController {
         }
     }
 
-    async getScheduleMenu(call) {
+    async getScheduleMenu(call, forceRefresh = false) {
         try {
+            const isRefresh = forceRefresh || call.data.includes("refresh");
+            if (call.data.includes("refresh")) {
+                call.data = call.data.replace('refresh', '');
+            }
             const data_array = call.data.split('|');
-            let [, language, groupId] = data_array
-            const groupIdent = `${groupId}|${language}`
+            let [, language, groupId] = data_array;
+            const groupIdent = `${groupId}|${language}`;
             const cached = schedule_cache[groupIdent];
             const now = Date.now();
             const FRESH_TTL = 1 * 60 * 1000;    // 1 мин — кэш свежий (Near Real-Time)
             const STALE_TTL = 15 * 60 * 1000;   // 15 мин — мгновенная отдача + тихий фоновый ETag-запрос
 
-            if (cached && (now - cached.timestamp <= FRESH_TTL)) {
+            if (!isRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
                 if (!cached.group) {
                     cached.group = await groupService.getById(Number(groupId)).catch(() => null);
                 }
                 // Кэш свежий — показываем мгновенно
-                await this.sendSchedule(call, cached)
-            } else if (cached && (now - cached.timestamp <= STALE_TTL)) {
+                await this.sendSchedule(call, cached);
+            } else if (!isRefresh && cached && (now - cached.timestamp <= STALE_TTL)) {
                 if (!cached.group) {
                     cached.group = await groupService.getById(Number(groupId)).catch(() => null);
                 }
                 // Stale-while-revalidate: показываем старый кэш, обновляем в фоне
-                await this.sendSchedule(call, cached)
+                await this.sendSchedule(call, cached);
                 // Фоновое обновление (не ждём результат)
                 downloadSchedule(groupId, language)
                     .then(async (response) => {
-                        const group = await groupService.getById(Number(groupId)).catch(() => null)
-                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group }
+                        const group = await groupService.getById(Number(groupId)).catch(() => null);
+                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group };
                         await scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, {
                             stack: e.stack
-                        }))
-                        log.info(`[Stale-Revalidate] Расписание для группы ${groupId} обновлено в фоне`)
+                        }));
+                        log.info(`[Stale-Revalidate] Расписание для группы ${groupId} обновлено в фоне`);
                     })
-                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание в фоне: ${e.message}`))
+                    .catch(e => log.warn(`[Stale-Revalidate] Не удалось обновить расписание в фоне: ${e.message}`));
             } else {
                 // Нет кэша или он слишком старый — скачиваем заново
                 await downloadSchedule(groupId, language)
