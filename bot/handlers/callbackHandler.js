@@ -124,10 +124,10 @@ export default function setupCallbackHandlers() {
 
             if (call.data.startsWith("teacherImg|") || call.data.startsWith("refreshteacherImg|")) {
                 const isRefresh = call.data.startsWith("refreshteacherImg|");
-                bot.answerCallbackQuery(call.id).catch(() => {});
                 try {
                     await TeacherScheduleController.sendScheduleImage(call, isRefresh);
                 } catch (e) {
+                    bot.answerCallbackQuery(call.id).catch(() => {});
                     log.error("ОШИБКА В КОЛБЕК ХЕНДЛЕРЕ teacherImg", {
                         userId: call.message.chat.id,
                         stack: e.stack

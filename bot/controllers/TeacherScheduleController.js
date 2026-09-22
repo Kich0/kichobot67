@@ -31,6 +31,25 @@ async function downloadSchedule(teacherId, attemption = 1) {
     }
 }
 
+// Защита от параллельных кликов / race condition при отправке фото и удалении сообщений
+const activeScheduleLocks = new Map();
+
+function acquireLock(chatId, maxWaitMs = 15000) {
+    if (!chatId || activeScheduleLocks.has(chatId)) return false;
+    const timeout = setTimeout(() => {
+        activeScheduleLocks.delete(chatId);
+    }, maxWaitMs);
+    activeScheduleLocks.set(chatId, timeout);
+    return true;
+}
+
+function releaseLock(chatId) {
+    if (!chatId) return;
+    const timeout = activeScheduleLocks.get(chatId);
+    if (timeout) clearTimeout(timeout);
+    activeScheduleLocks.delete(chatId);
+}
+
 class TeacherScheduleController {
     getTeachersRowMarkup(data){
         const day = ScheduleController.getCurrentDayNumber()
@@ -157,8 +176,14 @@ class TeacherScheduleController {
             const msgText = `${currentMenuText}\n${currentPageText}`
 
             if (msgToEdit.photo) {
-                await bot.deleteMessage(msgToEdit.chat.id, msgToEdit.message_id).catch(() => {});
-                await bot.sendMessage(msgToEdit.chat.id, msgText, { reply_markup: markup });
+                const chatId = msgToEdit.chat?.id;
+                if (chatId && !acquireLock(chatId, 5000)) return;
+                try {
+                    await bot.deleteMessage(msgToEdit.chat.id, msgToEdit.message_id).catch(() => {});
+                    await bot.sendMessage(msgToEdit.chat.id, msgText, { reply_markup: markup });
+                } finally {
+                    if (chatId) releaseLock(chatId);
+                }
             } else {
                 await bot.editMessageText(msgText, {
                     chat_id: msgToEdit.chat.id, message_id: msgToEdit.message_id, reply_markup: markup
@@ -453,25 +478,41 @@ class TeacherScheduleController {
     }
 
     async sendScheduleImage(call, forceRefresh = false) {
+        const chatId = call.message?.chat?.id;
+        if (!chatId) return;
+
+        // Защита от параллельных кликов / race condition при отправке фото
+        if (!acquireLock(chatId, 15000)) {
+            const user_language = await userService.getUserLanguage(chatId).catch(() => 'ru');
+            const waitMsg = user_language === 'kz' ? '⏳ Кесте жүктелуде...' : '⏳ Таблица уже загружается...';
+            await bot.answerCallbackQuery(call.id, { text: waitMsg, show_alert: false }).catch(() => {});
+            return;
+        }
+
         try {
-            const user_language = await userService.getUserLanguage(call.message.chat.id);
+            const user_language = await userService.getUserLanguage(chatId);
             const data_array = call.data.split('|');
             let [, teacherId, dayNumber = 0] = data_array;
 
             const now = Date.now();
-            const FRESH_TTL = 5 * 60 * 1000;
+            const REFRESH_COOLDOWN = 5 * 60 * 1000;    // 5 мин — кулдаун для кнопки 🔄
+            const CACHE_MAX_AGE = 30 * 60 * 1000;      // 30 мин — время жизни кэша в памяти
             let cached = schedule_cache[teacherId];
 
-            if (forceRefresh && cached && (now - cached.timestamp <= FRESH_TTL)) {
-                // Если меньше 5 минут: просто обновляем секунды в подписи фото
+            let teacher = cached?.teacher;
+            if (!teacher) {
+                teacher = await teacherService.getById(teacherId).catch(() => null);
+            }
+
+            // 1. Нажата кнопка «Обновить», но кулдаун 5 минут еще НЕ прошел
+            if (forceRefresh && cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
                 const timestamp = cached.timestamp;
                 const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
                 const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
                 const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
-                const teacher = cached.teacher || (await teacherService.getById(teacherId).catch(() => null));
                 const teacherName = teacher?.name || `ID ${teacherId}`;
                 const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
-                const departmentId = teacher?.department || 0;
+                const departmentId = teacher?.department || cached?.departmentId || 0;
                 const markup = {
                     inline_keyboard: [
                         [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
@@ -479,67 +520,92 @@ class TeacherScheduleController {
                         [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
                     ]
                 };
+
                 if (call.message.photo) {
                     await bot.editMessageCaption(caption, {
-                        chat_id: call.message.chat.id,
+                        chat_id: chatId,
                         message_id: call.message.message_id,
                         parse_mode: 'HTML',
                         reply_markup: markup
                     }).catch(() => {});
-                    return;
                 }
+
+                const freshText = user_language === 'kz' ? '✅ Кесте өзекті' : '✅ Расписание актуально';
+                await bot.answerCallbackQuery(call.id, { text: freshText, show_alert: false }).catch(() => {});
+                return;
             }
 
-            if (forceRefresh) {
+            // 2. Требуется загрузка свежих данных (принудительное обновление или кэш устарел / отсутствует)
+            const needsFetch = forceRefresh || !cached || (now - cached.timestamp >= CACHE_MAX_AGE);
+
+            if (needsFetch) {
+                const loadingText = i18next.t('schedule_generating_image', { lng: user_language }) || "⌛️ Создаю таблицу недели...";
+                await bot.answerCallbackQuery(call.id, { text: loadingText, show_alert: false }).catch(() => {});
+
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
-                delete schedule_cache[teacherId];
-                cached = null;
-            }
 
-            let data = cached?.data;
-            let teacher = cached?.teacher;
-
-            if (!teacher) {
-                teacher = await teacherService.getById(teacherId).catch(() => null);
-            }
-
-            if (!data) {
-                const doc = await teacherScheduleService.getByTeacherId(teacherId).catch(() => null);
-                if (doc && Array.isArray(doc.data) && doc.data.length > 0) {
-                    data = doc.data;
-                    cached = { data, timestamp: new Date(doc.updatedAt).getTime(), teacher };
+                try {
+                    const response = await downloadSchedule(teacherId);
+                    const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                    cached = {
+                        data: enrichedData,
+                        timestamp: Date.now(),
+                        teacher,
+                        _enriched: true,
+                        departmentId: teacher?.department || 0
+                    };
                     schedule_cache[teacherId] = cached;
-                } else {
-                    try {
-                        const response = await downloadSchedule(teacherId);
-                        data = response.data;
-                        cached = { data, timestamp: Date.now(), teacher };
-                        schedule_cache[teacherId] = cached;
-                    } catch (downloadErr) {
-                        log.warn(`Не удалось загрузить расписание для преподавателя ${teacherId}: ${downloadErr.message}`);
-                        if (doc && Array.isArray(doc.data)) {
-                            data = doc.data;
+                    teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => {
+                        log.error(`Ошибка при сохранении teacher расписания. teacherId:${teacherId}`, { stack: e.stack });
+                    });
+                } catch (downloadErr) {
+                    log.warn(`[sendScheduleImage] Не удалось загрузить расписание для преподавателя ${teacherId}: ${downloadErr.message}`);
+                    if (!cached?.data) {
+                        const doc = await teacherScheduleService.getByTeacherId(teacherId).catch(() => null);
+                        if (doc && Array.isArray(doc.data) && doc.data.length > 0) {
+                            let data = doc.data;
+                            const hasMissingSubjects = data.some(d => d.groups?.some(g => g.group && !g.subject));
+                            if (hasMissingSubjects) {
+                                data = await enrichTeacherSchedule(data, teacher);
+                                teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
+                            }
+                            cached = {
+                                data,
+                                timestamp: new Date(doc.updatedAt).getTime(),
+                                teacher,
+                                _enriched: true,
+                                departmentId: teacher?.department || 0
+                            };
+                            schedule_cache[teacherId] = cached;
                         } else {
-                            data = ScheduleApiAdapter.adaptTeacherSchedule([]);
+                            cached = {
+                                data: ScheduleApiAdapter.adaptTeacherSchedule([]),
+                                timestamp: Date.now(),
+                                teacher,
+                                _enriched: true,
+                                departmentId: teacher?.department || 0
+                            };
+                            schedule_cache[teacherId] = cached;
                         }
-                        cached = { data, timestamp: Date.now(), teacher };
-                        schedule_cache[teacherId] = cached;
                     }
                 }
-            }
-
-            const hasMissingSubjects = data?.some(d => d.groups?.some(g => g.group && !g.subject));
-            if (hasMissingSubjects && !cached?._enriched) {
-                data = await enrichTeacherSchedule(data, teacher);
-                if (cached) {
-                    cached.data = data;
-                    cached._enriched = true;
+            } else {
+                // Обычный переход и кэш еще свежий (< 30 мин)
+                await bot.answerCallbackQuery(call.id).catch(() => {});
+                if (!cached.teacher && teacher) {
+                    cached.teacher = teacher;
                 }
-                teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
-                TeacherTableImageService.invalidateTeacherImage(teacherId);
+                const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));
+                if (hasMissingSubjects && !cached._enriched) {
+                    cached.data = await enrichTeacherSchedule(cached.data, cached.teacher);
+                    cached._enriched = true;
+                    teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
+                    TeacherTableImageService.invalidateTeacherImage(teacherId);
+                }
             }
 
-            const timestamp = cached?.timestamp || Date.now();
+            const data = cached.data;
+            const timestamp = cached.timestamp || Date.now();
             const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
@@ -548,7 +614,7 @@ class TeacherScheduleController {
 
             const teacherName = teacher?.name || `ID ${teacherId}`;
             const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
-            const departmentId = teacher?.department || 0;
+            const departmentId = teacher?.department || cached?.departmentId || 0;
 
             const markup = {
                 inline_keyboard: [
@@ -558,7 +624,7 @@ class TeacherScheduleController {
                 ]
             };
 
-            const photoMsg = await bot.sendPhoto(call.message.chat.id, pngBuffer, {
+            const photoMsg = await bot.sendPhoto(chatId, pngBuffer, {
                 caption,
                 parse_mode: 'HTML',
                 reply_markup: markup
@@ -567,19 +633,30 @@ class TeacherScheduleController {
                 contentType: 'image/png'
             });
 
-            if (photoMsg) {
-                await bot.deleteMessage(call.message.chat.id, call.message.message_id).catch(() => {});
+            if (photoMsg && call.message?.message_id) {
+                await bot.deleteMessage(chatId, call.message.message_id).catch(() => {});
             }
         } catch (e) {
+            await bot.answerCallbackQuery(call.id).catch(() => {});
             log.error('Ошибка генерации изображения расписания преподавателя', {
                 stack: e.stack,
                 teacherId: call.data
             });
             await unexpectedCallbackErrorController(e, call.message, call.data);
+        } finally {
+            releaseLock(chatId);
         }
     }
 
     async sendScheduleFromImage(call) {
+        const chatId = call.message?.chat?.id;
+        if (!chatId) return;
+
+        if (!acquireLock(chatId, 10000)) {
+            await bot.answerCallbackQuery(call.id).catch(() => {});
+            return;
+        }
+
         try {
             const data_array = call.data.split('|');
             let [, teacherId, dayNumber = 0] = data_array;
@@ -610,6 +687,8 @@ class TeacherScheduleController {
             }
         } catch (e) {
             await unexpectedCallbackErrorController(e, call.message, call.data);
+        } finally {
+            releaseLock(chatId);
         }
     }
 }
