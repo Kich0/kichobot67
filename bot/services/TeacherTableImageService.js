@@ -84,38 +84,93 @@ function formatLessonTypeBadge(type) {
     return `(${type.trim()})`;
 }
 
+/**
+ * Разбивает массив групп на строки так, чтобы в каждой строке помещалось не больше maxChars
+ */
+function wrapGroupsToLines(groups, maxChars = 20) {
+    if (!groups || groups.length === 0) return [];
+    const lines = [];
+    let currentLine = '';
+
+    for (const g of groups) {
+        if (!currentLine) {
+            currentLine = g;
+        } else if ((currentLine + ', ' + g).length <= maxChars) {
+            currentLine += ', ' + g;
+        } else {
+            lines.push(currentLine);
+            currentLine = g;
+        }
+    }
+    if (currentLine) lines.push(currentLine);
+    return lines;
+}
+
+/**
+ * Рассчитывает структуру строк и высоту содержимого для ячейки пары
+ */
+function layoutCellContent(slot) {
+    if (!slot || !slot.group || !slot.group.trim()) {
+        return null;
+    }
+
+    const parsed = parseGroupSlot(slot.group);
+    const groupsList = (slot.groupsList && slot.groupsList.length > 0) ? slot.groupsList : parsed.groups;
+    const roomStr = parsed.roomStr || (slot.room ? `${slot.room}${slot.building ? '/' + slot.building : ''}` : '');
+    const subjectLines = slot.subject ? splitSubjectText(slot.subject, 21) : [];
+    const lessonType = slot.lessonType ? formatLessonTypeBadge(slot.lessonType) : '';
+
+    const groupLines = wrapGroupsToLines(groupsList, 20);
+
+    let lineCount = groupLines.length;
+    if (roomStr) lineCount += 1;
+    lineCount += subjectLines.length;
+    if (lessonType) lineCount += 1;
+
+    // Базовая комфортная высота строки 16px + внутренние паддинги
+    const estimatedHeight = Math.max(90, 20 + lineCount * 16);
+
+    return {
+        groupsList,
+        groupLines,
+        roomStr,
+        subjectLines,
+        lessonType,
+        lineCount,
+        estimatedHeight
+    };
+}
+
 class TeacherTableImageService {
     constructor() {
         // LRU Cache: Map preserves insertion order
-        // Key: teacherId (String/Number)
+        // Key: teacherId_lang (String)
         // Value: { buffer: Buffer, expiresAt: number }
         this.cache = new Map();
-        this.MAX_ENTRIES = 200; // ~28-30 MB максимум в RAM
+        this.MAX_ENTRIES = 200; // ~28-32 MB максимум в RAM
         this.TTL = 30 * 60 * 1000; // 30 минут
     }
 
     /**
-     * Построение чистого минималистичного SVG в стилистике сайта КарУ
+     * Построение адаптивного SVG с динамическим вертикальным растягиванием строк
      */
     buildSvg(teacher, scheduleData, lang = 'ru') {
         const colors = {
             canvasBg: '#ffffff',
             border: '#cbd5e1',
             titleText: '#0f172a',
-            headerBg: '#64748b',
+            headerBg: '#475569',
             headerText: '#ffffff',
-            headerSub: '#f8fafc',
+            headerSub: '#f1f5f9',
             dayBg: '#e2e8f0',
             dayText: '#1e293b',
-            busyBg: '#16a34a',
-            busyBorder: '#15803d',
+            busyBg: '#15803d',       // насыщенный благородный темно-зеленый
             groupText: '#ffffff',
-            roomText: '#fef08a',      // золотистый цвет для аудитории
-            subjectText: '#dcfce7',   // мятный цвет для предмета
-            lessonTypeText: '#bbf7d0',// мягкий зеленый для типа занятия
-            freeBg: '#dc2626',
-            freeBorder: '#b91c1c',
-            dashColor: '#ffffff'
+            roomText: '#fef08a',      // яркий желтый акцент для аудитории
+            subjectText: '#e2e8f0',   // контрастный светлый для названия предмета
+            lessonTypeText: '#86efac',// мягкий мятно-зеленый для типа пары
+            freeBg: '#b91c1c',        // приглушенный темно-красный
+            dashColor: '#f8fafc'
         };
 
         const standardTimes = [
@@ -140,21 +195,42 @@ class TeacherTableImageService {
 
         const padX = 16;
         const padY = 16;
-        const titleHeight = 50;
+        const titleHeight = 52;
         const colHeaderHeight = 44;
         const dayColWidth = 105;
-        const colWidth = 154;
-        const rowHeight = 88;
+        const colWidth = 158;
         const cellGap = 4;
+        const minRowHeight = 90;
+
+        // 1. ДИНАМИЧЕСКИЙ РАСЧЕТ ВЫСОТЫ КАЖДОЙ СТРОКИ (ДНЯ НЕДЕЛИ)
+        const rowLayouts = [];
+        const rowHeights = [];
+
+        scheduleData.forEach(day => {
+            const cellLayouts = [];
+            let maxRowH = minRowHeight;
+
+            times.forEach(t => {
+                const normT = normalizeTime(t);
+                const slot = day.groups?.find(g => normalizeTime(g.time) === normT);
+                const layout = layoutCellContent(slot);
+                cellLayouts.push(layout);
+                if (layout && layout.estimatedHeight > maxRowH) {
+                    maxRowH = layout.estimatedHeight;
+                }
+            });
+
+            rowLayouts.push(cellLayouts);
+            rowHeights.push(maxRowH);
+        });
 
         const numCols = times.length;
-        const numRows = scheduleData.length;
-
         const width = padX * 2 + dayColWidth + numCols * (colWidth + cellGap) - cellGap;
-        const height = padY * 2 + titleHeight + colHeaderHeight + numRows * (rowHeight + cellGap);
+        const totalRowsHeight = rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * cellGap;
+        const height = padY * 2 + titleHeight + colHeaderHeight + cellGap + totalRowsHeight;
 
         const startTableY = padY + titleHeight;
-        let tableElements = [];
+        const tableElements = [];
 
         // Шапка "День \ Время"
         const dayTimeLabel = lang === 'kz' ? 'Күн \\ Уақыт' : 'День \\ Время';
@@ -163,7 +239,7 @@ class TeacherTableImageService {
             <text x="${padX + dayColWidth / 2}" y="${startTableY + 27}" fill="${colors.headerText}" font-size="12" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${dayTimeLabel}</text>
         `);
 
-        // Колонки времени пар
+        // Шапка колонок времени пар
         const pairWord = lang === 'kz' ? 'сабақ' : 'пара';
         times.forEach((t, i) => {
             const x = padX + dayColWidth + cellGap + i * (colWidth + cellGap);
@@ -174,137 +250,114 @@ class TeacherTableImageService {
             `);
         });
 
-        // Строки дней недели
-        scheduleData.forEach((day, rIdx) => {
-            const y = startTableY + colHeaderHeight + cellGap + rIdx * (rowHeight + cellGap);
+        // Строки расписания
+        let currentY = startTableY + colHeaderHeight + cellGap;
 
+        scheduleData.forEach((day, rIdx) => {
+            const rowH = rowHeights[rIdx];
+            const cellLayouts = rowLayouts[rIdx];
+
+            // Ячейка названия дня недели (вертикально центрирована)
             tableElements.push(`
-                <rect x="${padX}" y="${y}" width="${dayColWidth}" height="${rowHeight}" rx="6" fill="${colors.dayBg}" />
-                <text x="${padX + dayColWidth / 2}" y="${y + rowHeight / 2 + 5}" fill="${colors.dayText}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
+                <rect x="${padX}" y="${currentY}" width="${dayColWidth}" height="${rowH}" rx="6" fill="${colors.dayBg}" />
+                <text x="${padX + dayColWidth / 2}" y="${currentY + rowH / 2 + 5}" fill="${colors.dayText}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
             `);
 
+            // Ячейки времени
             times.forEach((t, cIdx) => {
                 const x = padX + dayColWidth + cellGap + cIdx * (colWidth + cellGap);
-                const normT = normalizeTime(t);
-                const slot = day.groups?.find(g => normalizeTime(g.time) === normT);
-                const isBusy = slot && slot.group && slot.group.trim();
+                const layout = cellLayouts[cIdx];
+                const clipId = `clip-${rIdx}-${cIdx}`;
 
-                if (isBusy) {
-                    const parsed = parseGroupSlot(slot.group);
-                    const hasSubject = Boolean(slot.subject);
-                    const subjectLines = hasSubject ? splitSubjectText(slot.subject, 22) : [];
-                    const clipId = `clip-${rIdx}-${cIdx}`;
+                if (layout) {
+                    // Занятая пара
+                    const textElements = [];
+                    // Вертикальное центрирование текстового блока внутри ячейки
+                    const contentLinesCount = layout.groupLines.length 
+                        + (layout.roomStr ? 1 : 0) 
+                        + layout.subjectLines.length 
+                        + (layout.lessonType ? 1 : 0);
+                    
+                    const lineHeight = 15.5;
+                    const totalTextBlockHeight = (contentLinesCount - 1) * lineHeight;
+                    let curLineY = currentY + (rowH - totalTextBlockHeight) / 2 + 3;
 
-                    let cellContentHtml = '';
-
-                    let groupDisplayText = parsed.groups.join(', ');
-                    let groupFontSize = 10;
-                    if (parsed.groups.length >= 2) {
-                        if (groupDisplayText.length > 22) {
-                            if (parsed.groups.length > 2) {
-                                groupDisplayText = `${parsed.groups.slice(0, 2).join(', ')} (+${parsed.groups.length - 2})`;
-                            }
-                            if (groupDisplayText.length > 22) {
-                                groupFontSize = 8.5;
-                            } else {
-                                groupFontSize = 9.5;
-                            }
-                        }
-                    } else if (parsed.groupStr.length > 15) {
-                        groupFontSize = 10.5;
+                    // 1. Группы
+                    for (const gLine of layout.groupLines) {
+                        const fSize = layout.groupLines.length > 2 ? 10 : 11;
+                        textElements.push(`
+                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.groupText}" font-size="${fSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(gLine)}</text>
+                        `);
+                        curLineY += lineHeight;
                     }
 
-                    const roomBadge = parsed.roomStr ? `Ауд. ${parsed.roomStr}` : '';
+                    // 2. Аудитория
+                    if (layout.roomStr) {
+                        textElements.push(`
+                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.roomText}" font-size="10.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Ауд. ${escapeXml(layout.roomStr)}</text>
+                        `);
+                        curLineY += lineHeight;
+                    }
 
-                    if (parsed.groups.length >= 2) {
-                        // Поточные пары (2+ группы)
-                        cellContentHtml += `
-                            <text x="${x + colWidth / 2}" y="${y + 20}" fill="${colors.groupText}" font-size="${groupFontSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(groupDisplayText)}</text>
-                        `;
-                        if (roomBadge) {
-                            cellContentHtml += `
-                                <text x="${x + colWidth / 2}" y="${y + 35}" fill="${colors.roomText}" font-size="10" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(roomBadge)}</text>
-                            `;
-                        }
-                        if (subjectLines.length > 0) {
-                            cellContentHtml += `
-                                <text x="${x + colWidth / 2}" y="${y + 52}" fill="${colors.subjectText}" font-size="10" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[0])}</text>
-                            `;
-                            if (subjectLines[1]) {
-                                cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.subjectText}" font-size="10" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[1])}</text>
-                                `;
-                            } else if (slot.lessonType) {
-                                cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 67}" fill="${colors.lessonTypeText}" font-size="9.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(formatLessonTypeBadge(slot.lessonType))}</text>
-                                `;
-                            }
-                        }
-                    } else {
-                        // Одиночная группа
-                        const line1 = roomBadge ? `${parsed.groupStr} (${parsed.roomStr})` : parsed.groupStr;
-                        const fSize = line1.length > 17 ? 10.5 : 12;
+                    // 3. Предмет
+                    for (const sLine of layout.subjectLines) {
+                        textElements.push(`
+                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(sLine)}</text>
+                        `);
+                        curLineY += lineHeight;
+                    }
 
-                        cellContentHtml += `
-                            <text x="${x + colWidth / 2}" y="${y + 24}" fill="${colors.groupText}" font-size="${fSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(line1)}</text>
-                        `;
-
-                        if (subjectLines.length > 0) {
-                            cellContentHtml += `
-                                <text x="${x + colWidth / 2}" y="${y + 44}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[0])}</text>
-                            `;
-                            if (subjectLines[1]) {
-                                cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(subjectLines[1])}</text>
-                                `;
-                            } else if (slot.lessonType) {
-                                cellContentHtml += `
-                                    <text x="${x + colWidth / 2}" y="${y + 60}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(formatLessonTypeBadge(slot.lessonType))}</text>
-                                `;
-                            }
-                        }
+                    // 4. Тип занятия
+                    if (layout.lessonType) {
+                        textElements.push(`
+                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(layout.lessonType)}</text>
+                        `);
                     }
 
                     tableElements.push(`
                         <clipPath id="${clipId}">
-                            <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" />
+                            <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" />
                         </clipPath>
-                        <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" fill="${colors.busyBg}" />
+                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" fill="${colors.busyBg}" />
                         <g clip-path="url(#${clipId})">
-                            ${cellContentHtml}
+                            ${textElements.join('\n')}
                         </g>
                     `);
                 } else {
+                    // Свободное окно
                     tableElements.push(`
-                        <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" rx="6" fill="${colors.freeBg}" />
-                        <text x="${x + colWidth / 2}" y="${y + rowHeight / 2 + 7}" fill="${colors.dashColor}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
+                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" fill="${colors.freeBg}" />
+                        <text x="${x + colWidth / 2}" y="${currentY + rowH / 2 + 7}" fill="${colors.dashColor}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
                     `);
                 }
             });
+
+            currentY += rowH + cellGap;
         });
 
-        const cleanName = (teacher?.name || 'Преподаватель').replace(/^преп\.\s*/i, '');
+        const rawName = typeof teacher === 'string' ? teacher : (teacher?.name || 'Преподаватель');
+        const cleanName = rawName.replace(/^преп\.\s*/i, '');
         const titlePrefix = lang === 'kz' ? 'Оқытушының жүктемесі' : 'Загруженность преп.';
         const title = `${titlePrefix} ${cleanName}`;
 
         return `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     <rect width="${width}" height="${height}" rx="10" fill="${colors.canvasBg}" stroke="${colors.border}" stroke-width="1" />
-    <text x="${width / 2}" y="${padY + 28}" fill="${colors.titleText}" font-size="20" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(title)}</text>
+    <text x="${width / 2}" y="${padY + 30}" fill="${colors.titleText}" font-size="20" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(title)}</text>
     ${tableElements.join('\n')}
 </svg>
-        `;
+        `.trim();
     }
 
     /**
      * Получить PNG-буфер таблицы расписания (с кэшированием в памяти до 30 МБ)
-     * @param {Object} teacher
+     * @param {Object|String} teacher
      * @param {Array} scheduleData
      * @param {String} lang
      * @returns {Promise<Buffer>}
      */
     async getTeacherTableImage(teacher, scheduleData, lang = 'ru') {
-        const teacherId = teacher?.id || teacher?._id || 'unknown';
+        const teacherId = typeof teacher === 'object' ? (teacher?.id || teacher?._id || teacher?.name || 'unknown') : String(teacher);
         const cacheKey = `${teacherId}_${lang}`;
         const now = Date.now();
 
@@ -321,12 +374,15 @@ class TeacherTableImageService {
             }
         }
 
-        // 2. Генерируем SVG
+        // 2. Генерируем SVG с адаптивными высотами строк
         const svg = this.buildSvg(teacher, scheduleData, lang);
 
-        // 3. Рендерим PNG через @resvg/resvg-js в ультра-чётком разрешении (Retina 2x HiDPI)
+        // 3. Рендерим PNG через @resvg/resvg-js в Full HD (1920px) с аппаратным сглаживанием
         const resvg = new Resvg(svg, {
-            fitTo: { mode: 'zoom', value: 2.0 }
+            fitTo: { mode: 'width', value: 1920 },
+            background: '#ffffff',
+            textRendering: 1, // optimizeLegibility (включает кернинг и резкость глифов)
+            shapeRendering: 2  // geometricPrecision (сглаженные края блоков)
         });
         const pngBuffer = resvg.render().asPng();
 
