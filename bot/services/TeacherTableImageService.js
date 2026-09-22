@@ -148,7 +148,7 @@ class TeacherTableImageService {
         // Value: { buffer: Buffer, expiresAt: number }
         this.cache = new Map();
         this.MAX_ENTRIES = 200; // ~28-32 MB максимум в RAM
-        this.TTL = 30 * 60 * 1000; // 30 минут
+        this.TTL = 20 * 60 * 1000; // 20 минут (согласно настройке таблицы недели)
     }
 
     /**
