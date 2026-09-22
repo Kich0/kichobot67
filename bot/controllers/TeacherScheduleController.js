@@ -327,7 +327,7 @@ class TeacherScheduleController {
 
             const cached = schedule_cache[teacherId];
             const now = Date.now();
-            const REFRESH_COOLDOWN = 15 * 1000;        // 15 сек — кулдаун для кнопки 🔄
+            const REFRESH_COOLDOWN = 30 * 60 * 1000;   // 30 мин — кулдаун для кнопки 🔄
             const CACHE_MAX_AGE = 30 * 60 * 1000;      // 30 мин — хранение в оперативной памяти
 
             if (isRefresh) {
@@ -495,7 +495,7 @@ class TeacherScheduleController {
             let [, teacherId, dayNumber = 0] = data_array;
 
             const now = Date.now();
-            const REFRESH_COOLDOWN = 5 * 60 * 1000;    // 5 мин — кулдаун для кнопки 🔄
+            const REFRESH_COOLDOWN = 30 * 60 * 1000;   // 30 мин — кулдаун для кнопки 🔄
             const CACHE_MAX_AGE = 30 * 60 * 1000;      // 30 мин — время жизни кэша в памяти
             let cached = schedule_cache[teacherId];
 
@@ -504,7 +504,38 @@ class TeacherScheduleController {
                 teacher = await teacherService.getById(teacherId).catch(() => null);
             }
 
-            // Требуется загрузка свежих данных (принудительное обновление кнопкой 🔄 или кэш устарел / отсутствует)
+            // 1. Нажата кнопка «Обновить», но 30 минут еще НЕ прошло (0 запросов к API)
+            if (forceRefresh && cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
+                const timestamp = cached.timestamp;
+                const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
+                const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
+                const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
+                const teacherName = teacher?.name || `ID ${teacherId}`;
+                const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
+                const departmentId = teacher?.department || cached?.departmentId || 0;
+                const markup = {
+                    inline_keyboard: [
+                        [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
+                        [{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }],
+                        [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
+                    ]
+                };
+
+                if (call.message.photo) {
+                    await bot.editMessageCaption(caption, {
+                        chat_id: chatId,
+                        message_id: call.message.message_id,
+                        parse_mode: 'HTML',
+                        reply_markup: markup
+                    }).catch(() => {});
+                }
+
+                const freshText = user_language === 'kz' ? '✅ Кесте өзекті' : '✅ Расписание актуально';
+                await bot.answerCallbackQuery(call.id, { text: freshText, show_alert: false }).catch(() => {});
+                return;
+            }
+
+            // 2. Требуется загрузка свежих данных (прошло >= 30 минут или кэш отсутствует)
             const needsFetch = forceRefresh || !cached || (now - cached.timestamp >= CACHE_MAX_AGE);
 
             if (needsFetch) {
