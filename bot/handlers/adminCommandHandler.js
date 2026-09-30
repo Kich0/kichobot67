@@ -15,9 +15,11 @@ import {updateProfilesCommandController} from "../controllers/commands/adminComm
 import blackListService from "../services/blackListService.js";
 import {updateDepartmentsCommandController} from "../controllers/commands/adminCommands/updateDepartments.js";
 import {updateTeachersCommandController} from "../controllers/commands/adminCommands/updateTeachers.js";
+import {updateSchedulesCommandController} from "../controllers/commands/adminCommands/updateSchedules.js";
 import {getUserCommandController, getUserLogsCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
+import axios from "axios";
 
 
 export function sleep(ms) {
@@ -90,7 +92,16 @@ export default function setupAdminCommandHandler() {
       }
       await updateTeachersCommandController(hard)
     })
+  })
 
+  bot.onText(/^\/updateSchedules/i, async (msg) => {
+    await isAdminMiddleware(msg, async () => {
+      let hard = false
+      if (msg.text.includes("hard")) {
+        hard = true
+      }
+      await updateSchedulesCommandController(hard)
+    })
   })
 
 

@@ -94,22 +94,30 @@ function parseSubjectLine(line) {
 export async function enrichTeacherSchedule(scheduleData, teacher) {
     if (!scheduleData || !Array.isArray(scheduleData)) return scheduleData;
 
+    // 0. Быстрый выход: если у всех пар уже есть предметы (из REST API), не нагружаем БД
+    const needsEnrichment = scheduleData.some(day => 
+        day.groups?.some(g => g.group && !g.subject)
+    );
+    if (!needsEnrichment) return scheduleData;
+
     try {
         const teacherName = typeof teacher === 'string' ? teacher : (teacher?.name || '');
         const surnameToken = extractSurnameToken(teacherName);
 
         // 1. Собрать все уникальные имена групп из расписания
-        const groupRegex = /([^\s()]+)\s*\(([^)]+)\)/g;
         const groupNamesSet = new Set();
 
         for (const day of scheduleData) {
             if (!day.groups) continue;
             for (const g of day.groups) {
                 if (!g.group) continue;
-                groupRegex.lastIndex = 0;
-                let m;
-                while ((m = groupRegex.exec(g.group)) !== null) {
-                    groupNamesSet.add(m[1].trim());
+                if (Array.isArray(g.groupsList) && g.groupsList.length > 0) {
+                    for (const gn of g.groupsList) groupNamesSet.add(gn.trim());
+                } else {
+                    const matches = g.group.match(/[A-Za-zА-Яа-яЁё0-9]+(?:-[A-Za-zА-Яа-яЁё0-9]+)*/g);
+                    if (matches) {
+                        for (const m of matches) groupNamesSet.add(m.trim());
+                    }
                 }
             }
         }
@@ -169,15 +177,13 @@ export async function enrichTeacherSchedule(scheduleData, teacher) {
             for (const g of day.groups) {
                 if (!g.group) continue;
 
-                // Если предмет уже заполнен, пропускаем
-                if (g.subject) continue;
-
-                groupRegex.lastIndex = 0;
-                let match;
+                const targetGroups = (Array.isArray(g.groupsList) && g.groupsList.length > 0)
+                    ? g.groupsList
+                    : (g.group.match(/[A-Za-zА-Яа-яЁё0-9]+(?:-[A-Za-zА-Яа-яЁё0-9]+)*/g) || []);
                 const subjectsFound = [];
 
-                while ((match = groupRegex.exec(g.group)) !== null) {
-                    const grpName = match[1].trim();
+                for (const rawName of targetGroups) {
+                    const grpName = rawName.trim();
                     const grpId = groupNameToId.get(grpName.toLowerCase());
                     if (!grpId) continue;
 

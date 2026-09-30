@@ -23,10 +23,24 @@ class CustomTransport extends Transport {
 
             const msgStr = typeof info.message === 'string' ? info.message : JSON.stringify(info.message);
             const rawText = `[${BASE_DIR}][${info.level}] ${msgStr}`.slice(0, 4000);
-            const text = encodeURIComponent(rawText);
+            const payload = JSON.stringify({
+                chat_id: log_chanel_id,
+                text: rawText
+            });
 
-            const url = `https://api.telegram.org/bot${token}/sendMessage?chat_id=${log_chanel_id}&text=${text}`;
-            https.get(url).on('error', () => {});
+            const req = https.request({
+                hostname: 'api.telegram.org',
+                port: 443,
+                path: `/bot${token}/sendMessage`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(payload)
+                }
+            });
+            req.on('error', () => {});
+            req.write(payload);
+            req.end();
         } catch (e) {
             console.error("ОШИБКА ПРИ ПОПЫТКЕ ОТОСЛАТЬ ЛОГ В ТЕЛЕГРАМ:", e.message);
         } finally {

@@ -133,10 +133,11 @@ const appStart = async () => {
             backendLog.info(`   Bot routes:  http://localhost:${port}/bot/`);
 
             // Настройка webhook если нужно
+            let webhookHealthInterval = null;
             if (config.BOT_MODE === 'webhook' && webhookRetryManager) {
                 const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
                 await webhookRetryManager.setWebhookWithRetry(webhookUrl);
-                setInterval(async () => {
+                webhookHealthInterval = setInterval(async () => {
                     await webhookRetryManager.monitorWebhookHealth();
                 }, 60 * 1000);
             }
@@ -212,11 +213,32 @@ const appStart = async () => {
             else backendLog.info("DNS TEST SUCCESS: " + addresses.join(', '));
         });
 
+        // === Периодическая сборка мусора при флаге --expose-gc ===
+        setInterval(() => {
+            if (global.gc) {
+                try {
+                    global.gc();
+                } catch (err) {
+                    backendLog.warn("[Memory] GC error: " + err.message);
+                }
+            }
+        }, 15 * 60 * 1000).unref();
+
         // === Graceful Shutdown ===
         const gracefulShutdown = async (signal) => {
             backendLog.info(`${signal} received. Starting graceful shutdown...`);
             try {
-                server.close(() => backendLog.info('HTTP server closed'));
+                if (webhookHealthInterval) {
+                    clearInterval(webhookHealthInterval);
+                    webhookHealthInterval = null;
+                }
+
+                await new Promise((resolve) => {
+                    server.close(() => {
+                        backendLog.info('HTTP server closed');
+                        resolve();
+                    });
+                });
 
                 if (config.BOT_MODE === 'webhook') {
                     // При редеплое на Render старый контейнер выключается ПОСЛЕ старта нового.

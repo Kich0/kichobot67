@@ -17,6 +17,14 @@ const errorCatch = async (e, msg) =>{
 
 export const searchGroupMenuCache = {}
 
+// Фоновая очистка кэша поиска групп раз в 15 минут
+setInterval(() => {
+    const keys = Object.keys(searchGroupMenuCache);
+    if (keys.length > 50) {
+        for (const k of keys) delete searchGroupMenuCache[k];
+    }
+}, 15 * 60 * 1000).unref();
+
 export async function searchGroupCommandController(msg){
     await commandAntiSpamMiddleware(msg, async() => {
         try{

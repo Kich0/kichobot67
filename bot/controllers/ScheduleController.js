@@ -16,6 +16,17 @@ import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
 export let schedule_cache = {}
 
+// Фоновая очистка устаревших записей расписания раз в 15 минут
+setInterval(() => {
+    const now = Date.now();
+    const MAX_AGE = 30 * 60 * 1000;
+    for (const key in schedule_cache) {
+        if (schedule_cache[key] && (now - schedule_cache[key].timestamp > MAX_AGE)) {
+            delete schedule_cache[key];
+        }
+    }
+}, 15 * 60 * 1000).unref();
+
 async function downloadSchedule(groupId, language, attemption = 1) {
     try {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
@@ -26,12 +37,12 @@ async function downloadSchedule(groupId, language, attemption = 1) {
         if (e.code === 'NO_SCHEDULE') {
             throw e;
         }
-        if (attemption < 1) {
-            await sleep(1000)
-            log.info(`group ${groupId} попала в рекурсивную функцию по получению расписания!`)
-            return await downloadSchedule(groupId, language, ++attemption)
+        if (attemption < 2) {
+            await sleep(1000);
+            log.info(`group ${groupId} попала в повторный запрос расписания (попытка ${attemption + 1})!`);
+            return await downloadSchedule(groupId, language, attemption + 1);
         } else {
-            throw e
+            throw e;
         }
     }
 }
@@ -57,7 +68,7 @@ class ScheduleController {
 
     configureMenuData(data, page, user_language) {
         const row_per_page = 10
-        const page_count = Math.floor(data.length / row_per_page)
+        const page_count = Math.max(0, Math.ceil(data.length / row_per_page) - 1)
         if (page > page_count) {
             page = 0
         }
@@ -232,12 +243,10 @@ class ScheduleController {
             let group = schedule_cache.group
 
             const data_array = call.data.split('|');
-            let [, , groupId, dayNumber] = data_array
-            if (+dayNumber > 5) {
-                dayNumber = 0
-            }
-            if (+dayNumber < 0) {
-                dayNumber = 5
+            let [, , groupId, rawDay] = data_array;
+            let dayNumber = parseInt(rawDay, 10);
+            if (isNaN(dayNumber) || dayNumber > 5 || dayNumber < 0) {
+                dayNumber = 0;
             }
 
             // Если group не было в объекте кэша — пробуем подгрузить из базы

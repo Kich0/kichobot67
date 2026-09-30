@@ -147,8 +147,18 @@ class TeacherTableImageService {
         // Key: teacherId_lang (String)
         // Value: { buffer: Buffer, expiresAt: number }
         this.cache = new Map();
-        this.MAX_ENTRIES = 200; // ~28-32 MB максимум в RAM
+        this.MAX_ENTRIES = 80; // ~14 MB максимум в RAM (защита от Render 512MB OOM)
         this.TTL = 20 * 60 * 1000; // 20 минут (согласно настройке таблицы недели)
+
+        // Фоновая очистка протухших буферов изображений раз в 10 минут
+        setInterval(() => {
+            const now = Date.now();
+            for (const [k, entry] of this.cache.entries()) {
+                if (entry && entry.expiresAt <= now) {
+                    this.cache.delete(k);
+                }
+            }
+        }, 10 * 60 * 1000).unref();
     }
 
     /**

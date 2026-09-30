@@ -89,7 +89,8 @@ router.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
     } catch (e) {
         log.error('Error processing webhook update', { stack: e.stack, update: req.body });
-        return res.sendStatus(500);
+        // Всегда возвращаем 200, чтобы Telegram не входил в 24-часовой шторм повторов
+        return res.sendStatus(200);
     }
 });
 router.post('/webhook/test', authMiddleware, async (req, res) => {
@@ -126,7 +127,8 @@ router.post("/log", logRateLimiter, async (req,res) => {
     if (str.length > 2048) {
         return res.status(413).json({ error: "Payload too large (max 2KB)" });
     }
-    log.warn(`[Client Log] ${str}`);
+    // info вместо warn, чтобы не засорять закрытый админ-канал через CustomTransport
+    log.info(`[Client Log] ${str}`);
     return res.json('logged');
 })
 

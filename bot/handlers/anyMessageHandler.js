@@ -14,7 +14,8 @@ const COMMAND_REGEXES = [
     /^\/remove/i, /^Г (.+)/i, /^Т (.+)/i, /^Г$/i, /^Т$/i,
     /^Группа/i, /^Тобы/i, /^П (.+)/i, /^О (.+)/i, /^П$/i, /^О$/i, /^Преподаватель/i, /^Оқытушы/i,
     /^\/search/i, /^Поиск/i,
-    /^(сикс|север|севен|six|seven|67|шестьдесят семь)/i
+    /^(сикс|север|севен|six|seven|67|шестьдесят семь)/i,
+    /^\/(sync|pull_new|stat|users|sms|test|info|get_user|group_stat|update|clean|user_logs|stat_all|delete_user)/i
 ];
 
 export function setupAnyMessageHandler() {
@@ -23,7 +24,7 @@ export function setupAnyMessageHandler() {
         const isBlackListed = await blackListService.isBlackListed(msg.chat.id)
         if (!isBlackListed) {
             if (msg.chat.type !== 'private') {
-                log.silly(`User ${msg.chat.id} || ${msg.from.id} написал в чат: ${msg.text}`, {
+                log.silly(`User ${msg.chat.id} || ${msg.from?.id} написал в чат: ${msg.text}`, {
                     msg,
                     userId: msg.chat.id
                 })

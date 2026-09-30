@@ -32,6 +32,12 @@ class BuketovApiService {
 
         const cacheKey = url.toString();
         const cached = this.cache.get(cacheKey);
+        const now = Date.now();
+
+        // 1. Мгновенная отдача из локального RAM-кэша (0 сетевых запросов при свежем кэше)
+        if (cached && (now - cached.timestamp < this.cacheTTL)) {
+            return cached.data;
+        }
 
         const headers = {
             'Accept': 'application/json',
@@ -58,8 +64,9 @@ class BuketovApiService {
 
             clearTimeout(timeoutId);
 
-            // 304 Not Modified — отдаем закэшированные данные
+            // 304 Not Modified — продлеваем время жизни кэша и отдаем закэшированные данные
             if (response.status === 304 && cached) {
+                cached.timestamp = Date.now();
                 return cached.data;
             }
 
@@ -78,11 +85,11 @@ class BuketovApiService {
                 timestamp: Date.now()
             });
 
-            // Очистка старого кэша (если больше 500 записей)
-            if (this.cache.size > 500) {
-                const now = Date.now();
+            // Очистка старого кэша (если больше 250 записей)
+            if (this.cache.size > 250) {
+                const currentTime = Date.now();
                 for (const [k, v] of this.cache.entries()) {
-                    if (now - v.timestamp > this.cacheTTL) {
+                    if (currentTime - v.timestamp > this.cacheTTL) {
                         this.cache.delete(k);
                     }
                 }
@@ -92,6 +99,11 @@ class BuketovApiService {
         } catch (e) {
             // Маскируем авторизацию при логировании ошибки
             log.error(`[BuketovApiService] Ошибка запроса к API (${params.group || params.teacher || params.q}): ${e.message}`);
+            // Резервный возврат: если сеть дала сбой, отдаем кэш, даже если он старше 10 минут
+            if (cached && cached.data) {
+                log.warn(`[BuketovApiService] Использован резервный локальный кэш для ${cacheKey} из-за сбоя сети`);
+                return cached.data;
+            }
             throw e;
         }
     }

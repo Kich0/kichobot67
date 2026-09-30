@@ -15,6 +15,8 @@ import ScheduleApiAdapter from "../services/scheduleApiAdapter.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
 async function downloadSchedule(teacherId, attemption = 1) {
     try {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
@@ -22,11 +24,12 @@ async function downloadSchedule(teacherId, attemption = 1) {
         const data = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
         return { data, status: 200 };
     } catch (e) {
-        if (attemption < 1) {
-            log.info(`teacher ${teacherId} попал в рекурсивную функцию по получению расписания!`)
-            return await downloadSchedule(teacherId, ++attemption)
-        }else {
-            throw e
+        if (attemption < 2) {
+            await sleep(1000);
+            log.info(`teacher ${teacherId} попал в повторный запрос расписания (попытка ${attemption + 1})!`);
+            return await downloadSchedule(teacherId, attemption + 1);
+        } else {
+            throw e;
         }
     }
 }
@@ -37,6 +40,22 @@ export const teacher_text_cache = {};
 
 // 2. Графическая таблица недели (Teacher ID -> { data, timestamp, teacher, departmentId, _enriched })
 export const teacher_table_cache = {};
+
+// Фоновая очистка устаревших записей кэшей преподавателей раз в 15 минут
+setInterval(() => {
+    const now = Date.now();
+    const MAX_AGE = 30 * 60 * 1000;
+    for (const key in teacher_text_cache) {
+        if (teacher_text_cache[key] && (now - teacher_text_cache[key].timestamp > MAX_AGE)) {
+            delete teacher_text_cache[key];
+        }
+    }
+    for (const key in teacher_table_cache) {
+        if (teacher_table_cache[key] && (now - teacher_table_cache[key].timestamp > MAX_AGE)) {
+            delete teacher_table_cache[key];
+        }
+    }
+}, 15 * 60 * 1000).unref();
 
 // Защита от параллельных кликов / race condition при отправке фото и удалении сообщений
 const activeScheduleLocks = new Map();
@@ -210,12 +229,10 @@ class TeacherScheduleController {
             let teacher = schedule_cache.teacher
 
             const data_array = call.data.split('|');
-            let [, teacherId, dayNumber] = data_array
-            if (+dayNumber > 5) {
-                dayNumber = 0
-            }
-            if (+dayNumber < 0) {
-                dayNumber = 5
+            let [, teacherId, rawDay] = data_array;
+            let dayNumber = parseInt(rawDay, 10);
+            if (isNaN(dayNumber) || dayNumber > 5 || dayNumber < 0) {
+                dayNumber = 0;
             }
 
             // Если teacher не было в объекте кэша — пробуем подгрузить из базы

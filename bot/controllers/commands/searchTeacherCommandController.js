@@ -19,6 +19,14 @@ const errorCatch = async (e, msg) => {
 
 export const searchTeacherMenuCache = {}
 
+// Фоновая очистка кэша поиска преподавателей раз в 15 минут
+setInterval(() => {
+    const keys = Object.keys(searchTeacherMenuCache);
+    if (keys.length > 50) {
+        for (const k of keys) delete searchTeacherMenuCache[k];
+    }
+}, 15 * 60 * 1000).unref();
+
 export async function searchTeacherCommandController(msg) {
     await commandAntiSpamMiddleware(msg, async () => {
         try {

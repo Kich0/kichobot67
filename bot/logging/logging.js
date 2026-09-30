@@ -23,6 +23,8 @@ const log = createLogger({
         new transports.File({
             filename: "error_logs.log",
             level: 'error',
+            maxsize: 5242880, // Максимум 5 МБ (защита от переполнения диска Render)
+            maxFiles: 2,
             format: format.combine(format.timestamp(), format.json())
         }),
         new DailyRotateFile({
