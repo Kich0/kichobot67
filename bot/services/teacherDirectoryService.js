@@ -85,23 +85,39 @@ class TeacherDirectoryService {
     _loadDirectory() {
         try {
             const dataPath = path.resolve(__dirname, '../../data/teachers_full_directory.json');
+            const customPath = path.resolve(__dirname, '../../data/teachers_custom_directory.json');
+            const combined = [];
+
             if (fs.existsSync(dataPath)) {
                 const raw = fs.readFileSync(dataPath, 'utf8');
                 const list = JSON.parse(raw);
                 if (Array.isArray(list)) {
-                    this.teachers = list.map(t => ({
-                        ...t,
-                        fullName: formatTitleCase(t.fullName),
-                        firstName: formatTitleCase(t.firstName),
-                        lastName: formatTitleCase(t.lastName),
-                        patronymic: formatTitleCase(t.patronymic)
-                    }));
-                    this._buildIndexes();
-                    log.info(`[TeacherDirectory] Успешно загружен справочник КарУ: ${this.teachers.length} преподавателей`);
-                    return;
+                    combined.push(...list);
+                }
+            } else {
+                log.warn(`[TeacherDirectory] Файл teachers_full_directory.json не найден по пути: ${dataPath}`);
+            }
+
+            if (fs.existsSync(customPath)) {
+                const rawCustom = fs.readFileSync(customPath, 'utf8');
+                const listCustom = JSON.parse(rawCustom);
+                if (Array.isArray(listCustom)) {
+                    combined.push(...listCustom);
                 }
             }
-            log.warn(`[TeacherDirectory] Файл teachers_full_directory.json не найден по пути: ${dataPath}`);
+
+            if (combined.length > 0) {
+                this.teachers = combined.map(t => ({
+                    ...t,
+                    fullName: formatTitleCase(t.fullName),
+                    firstName: formatTitleCase(t.firstName),
+                    lastName: formatTitleCase(t.lastName),
+                    patronymic: formatTitleCase(t.patronymic)
+                }));
+                this._buildIndexes();
+                log.info(`[TeacherDirectory] Успешно загружен справочник КарУ: ${this.teachers.length} преподавателей`);
+                return;
+            }
         } catch (e) {
             log.error(`[TeacherDirectory] Ошибка загрузки справочника преподавателей: ${e.message}`);
         }
@@ -154,8 +170,78 @@ class TeacherDirectoryService {
             // Дополнительный индекс по строке initials из справочника
             if (t.initials) {
                 const normInitials = normalizeCyrillic(cleanTitles(t.initials));
-                if (normInitials && !this.byInitialsMap.has(normInitials)) {
-                    this.byInitialsMap.set(normInitials, [t]);
+                if (normInitials) {
+                    if (!this.byInitialsMap.has(normInitials)) {
+                        this.byInitialsMap.set(normInitials, []);
+                    }
+                    if (!this.byInitialsMap.get(normInitials).includes(t)) {
+                        this.byInitialsMap.get(normInitials).push(t);
+                    }
+                }
+            }
+
+            // Индексируем псевдонимы (aliases), если они есть
+            if (t.aliases && Array.isArray(t.aliases)) {
+                for (const alias of t.aliases) {
+                    const cleanA = cleanTitles(alias);
+                    const normA = normalizeCyrillic(cleanA);
+                    if (!normA) continue;
+
+                    // Добавляем в byFullNameMap если нет
+                    if (!this.byFullNameMap.has(normA)) {
+                        this.byFullNameMap.set(normA, t);
+                    }
+
+                    // Анализируем структуру псевдонима
+                    const aWords = normA.split(' ').filter(Boolean);
+                    if (aWords.length === 1) {
+                        // Одиночная фамилия-синоним (например "айденова", "адикенова", "казыгулов", "толегенов")
+                        const aSurname = aWords[0];
+                        if (!this.bySurnameMap.has(aSurname)) {
+                            this.bySurnameMap.set(aSurname, []);
+                        }
+                        if (!this.bySurnameMap.get(aSurname).includes(t)) {
+                            this.bySurnameMap.get(aSurname).push(t);
+                        }
+
+                        // Привязываем инициалы t к этой фамилии-синониму
+                        const fInit = normalizeCyrillic(t.firstName)?.[0];
+                        if (fInit) {
+                            const sKey = aSurname + ' ' + fInit;
+                            if (!this.bySingleInitialMap.has(sKey)) {
+                                this.bySingleInitialMap.set(sKey, []);
+                            }
+                            if (!this.bySingleInitialMap.get(sKey).includes(t)) {
+                                this.bySingleInitialMap.get(sKey).push(t);
+                            }
+                            const pInit = normalizeCyrillic(t.patronymic)?.[0];
+                            if (pInit) {
+                                const dKey = aSurname + ' ' + fInit + ' ' + pInit;
+                                if (!this.byInitialsMap.has(dKey)) {
+                                    this.byInitialsMap.set(dKey, []);
+                                }
+                                if (!this.byInitialsMap.get(dKey).includes(t)) {
+                                    this.byInitialsMap.get(dKey).push(t);
+                                }
+                            }
+                        }
+                    } else if (aWords.length === 2 && aWords[1].length === 1) {
+                        // "фамилия и" (например "айденова б", "тулегенов б")
+                        if (!this.bySingleInitialMap.has(normA)) {
+                            this.bySingleInitialMap.set(normA, []);
+                        }
+                        if (!this.bySingleInitialMap.get(normA).includes(t)) {
+                            this.bySingleInitialMap.get(normA).push(t);
+                        }
+                    } else if (aWords.length >= 2) {
+                        // Инициалы или имя с отчеством
+                        if (!this.byInitialsMap.has(normA)) {
+                            this.byInitialsMap.set(normA, []);
+                        }
+                        if (!this.byInitialsMap.get(normA).includes(t)) {
+                            this.byInitialsMap.get(normA).push(t);
+                        }
+                    }
                 }
             }
         }
@@ -255,6 +341,7 @@ class TeacherDirectoryService {
                 firstName: formatTitleCase(matched.firstName),
                 lastName: formatTitleCase(matched.lastName),
                 patronymic: formatTitleCase(matched.patronymic),
+                aliases: matched.aliases || [],
                 jobTitle: matched.jobTitle,
                 photoUrl: matched.photoUrl,
                 isHead: !!matched.isHead,
@@ -327,23 +414,47 @@ class TeacherDirectoryService {
                 continue;
             }
 
+            // 1.1 Точное совпадение с именем
+            if (normFirst === normQ) {
+                results.push({ teacher: t, score: 115 });
+                continue;
+            }
+
+            // 1.2 Совпадение по псевдонимам (aliases)
+            if (t.aliases && Array.isArray(t.aliases)) {
+                const aliasMatched = t.aliases.some(alias => {
+                    const normAlias = normalizeCyrillic(alias);
+                    return normAlias === normQ || normAlias.startsWith(normQ) || (tokens.length > 1 && normAlias.includes(normQ));
+                });
+                if (aliasMatched) {
+                    results.push({ teacher: t, score: 110 });
+                    continue;
+                }
+            }
+
             // 2. Фамилия начинается с запроса
             if (normLast.startsWith(normQ)) {
-                results.push({ teacher: t, score: 90 });
+                results.push({ teacher: t, score: 95 });
                 continue;
             }
 
             // 3. Имя начинается с запроса (например: "Надежда", "Салтанат")
             if (normFirst.startsWith(normQ)) {
-                results.push({ teacher: t, score: 80 });
+                results.push({ teacher: t, score: 85 });
                 continue;
             }
 
-            // 4. Многословный запрос (например: "Попова Надежда", "Танин Алибек", "Надежда Викторовна")
+            // 3.1 Отчество начинается с запроса (например: "Камелович")
+            if (normPatr && normPatr.startsWith(normQ)) {
+                results.push({ teacher: t, score: 75 });
+                continue;
+            }
+
+            // 4. Многословный запрос (например: "Попова Надежда", "Саликов Нурсултан", "Надежда Викторовна")
             // Каждый токен запроса должен быть префиксом хотя бы одного слова в ФИО
             const allTokensMatchPrefix = tokens.every(qTok => words.some(w => w.startsWith(qTok)));
             if (allTokensMatchPrefix) {
-                results.push({ teacher: t, score: 70 });
+                results.push({ teacher: t, score: 105 });
                 continue;
             }
         }

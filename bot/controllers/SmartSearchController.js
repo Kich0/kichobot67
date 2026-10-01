@@ -55,32 +55,53 @@ class SmartSearchController {
             const normQ = normalizeCyrillic(text);
             const compactQuery = normQ.replace(/\s+/g, '');
 
-            const exactTeacher = teachers.find(t => {
-                const normName = normalizeCyrillic(t.name);
-                const normFull = normalizeCyrillic(t.fullName || t.name);
-                const normLast = normalizeCyrillic(t.lastName || '');
-                return normFull === normQ || normName === normQ || normFull.replace(/\s+/g, '') === compactQuery || (normLast && normLast === normQ);
-            });
+            // Точным совпадением преподавателя считаем:
+            // 1. Если найден ровно 1 преподаватель и 0 групп
+            // 2. ИЛИ если запрос полностью совпал с ФИО или инициалами конкретного преподавателя (например "Попова Надежда Викторовна" или "Попова Н. В.")
+            let exactTeacher = null;
+            if (teachers.length === 1 && groups.length === 0) {
+                exactTeacher = teachers[0];
+            } else if (teachers.length > 0) {
+                const fullExactMatches = teachers.filter(t => {
+                    const normName = normalizeCyrillic(t.name);
+                    const normFull = normalizeCyrillic(t.fullName || t.name);
+                    const aliasMatches = t.aliases && Array.isArray(t.aliases) && t.aliases.some(a => {
+                        const nA = normalizeCyrillic(a);
+                        return nA === normQ || nA.replace(/\s+/g, '') === compactQuery;
+                    });
+                    return normFull === normQ || normName === normQ || normFull.replace(/\s+/g, '') === compactQuery || aliasMatches;
+                });
+                if (fullExactMatches.length === 1) {
+                    exactTeacher = fullExactMatches[0];
+                }
+            }
 
-            const exactGroup = groups.find(g => {
-                const gNorm = normalizeCyrillic(g.name);
-                return gNorm.replace(/\s+/g, '') === compactQuery || gNorm === normQ;
-            });
+            // Точным совпадением группы считаем полное совпадение названия
+            let exactGroup = null;
+            if (groups.length === 1 && teachers.length === 0) {
+                exactGroup = groups[0];
+            } else if (groups.length > 0) {
+                const groupExactMatches = groups.filter(g => {
+                    const gNorm = normalizeCyrillic(g.name);
+                    return gNorm.replace(/\s+/g, '') === compactQuery || gNorm === normQ;
+                });
+                if (groupExactMatches.length === 1) {
+                    exactGroup = groupExactMatches[0];
+                }
+            }
 
             // =========================================================================
             // СЦЕНАРИЙ 1: Точное или единственное совпадение среди преподавателей
             // =========================================================================
-            if ((exactTeacher && !exactGroup) || (teachers.length === 1 && groups.length === 0)) {
-                const targetTeacher = exactTeacher || teachers[0];
-                return await this.openTeacherScheduleDirectly(chatId, msg, targetTeacher, text, user_language);
+            if (exactTeacher && !exactGroup) {
+                return await this.openTeacherScheduleDirectly(chatId, msg, exactTeacher, text, user_language);
             }
 
             // =========================================================================
             // СЦЕНАРИЙ 2: Точное или единственное совпадение среди групп
             // =========================================================================
-            if ((exactGroup && !exactTeacher) || (groups.length === 1 && teachers.length === 0)) {
-                const targetGroup = exactGroup || groups[0];
-                return await this.openGroupScheduleDirectly(chatId, msg, targetGroup, text, user_language);
+            if (exactGroup && !exactTeacher) {
+                return await this.openGroupScheduleDirectly(chatId, msg, exactGroup, text, user_language);
             }
 
             // =========================================================================

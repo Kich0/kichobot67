@@ -213,6 +213,24 @@ class teacherService {
                         continue;
                     }
 
+                    // 2.1 Точное совпадение по имени (например: "Нурсултан", "Надежда")
+                    if (normFirst && normFirst === normQuery) {
+                        matches.push({ teacher: t, score: 115 });
+                        continue;
+                    }
+
+                    // 2.2 Совпадение по псевдонимам (aliases)
+                    if (t.aliases && Array.isArray(t.aliases)) {
+                        const aliasMatched = t.aliases.some(alias => {
+                            const normAlias = normalizeCyrillic(alias);
+                            return normAlias === normQuery || normAlias.startsWith(normQuery) || (tokens.length > 1 && normAlias.includes(normQuery));
+                        });
+                        if (aliasMatched) {
+                            matches.push({ teacher: t, score: 110 });
+                            continue;
+                        }
+                    }
+
                     // 3. Фамилия начинается с запроса (например: "попов" -> "Попова")
                     if (normLast.startsWith(normQuery)) {
                         matches.push({ teacher: t, score: 100 });
@@ -225,18 +243,24 @@ class teacherService {
                         continue;
                     }
 
+                    // 4.1 Отчество начинается с запроса (например: "камелович", "викторовна")
+                    if (normPatr && normPatr.startsWith(normQuery)) {
+                        matches.push({ teacher: t, score: 75 });
+                        continue;
+                    }
+
                     // 5. Инициалы начинаются с запроса (например: "попова н" -> "Попова Н. В.")
                     if (normName.startsWith(normQuery) || normName.replace(/\s+/g, '').startsWith(compactQuery)) {
                         matches.push({ teacher: t, score: 90 });
                         continue;
                     }
 
-                    // 6. Многословный запрос (например: "Попова Надежда", "Танин Алибек", "Надежда Викторовна")
+                    // 6. Многословный запрос (например: "Попова Надежда", "Саликов Нурсултан", "Надежда Викторовна")
                     // Каждый токен запроса должен быть префиксом хотя бы одного слова в ФИО
                     if (tokens.length > 1) {
                         const allTokensMatch = tokens.every(qTok => fullTokens.some(w => w.startsWith(qTok)));
                         if (allTokensMatch) {
-                            matches.push({ teacher: t, score: 80 });
+                            matches.push({ teacher: t, score: 105 });
                             continue;
                         }
                     }

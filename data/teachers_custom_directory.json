@@ -1,0 +1,1269 @@
+[
+  {
+    "fullName": "Адекенова Алия Нурлановна",
+    "lastName": "Адекенова",
+    "firstName": "Алия",
+    "patronymic": "Нурлановна",
+    "initials": "Адекенова А. Н.",
+    "aliases": [
+      "Адикенова А. Н.",
+      "Адикенова",
+      "Адекенова",
+      "Адекенова А.Н."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Айдынова Балжан Айдыновна",
+    "lastName": "Айдынова",
+    "firstName": "Балжан",
+    "patronymic": "Айдыновна",
+    "initials": "Айдынова Б. А.",
+    "aliases": [
+      "Айденова Б.",
+      "Айденова",
+      "Айдынова Б.",
+      "Айдынова",
+      "Айденова Б. А.",
+      "Айдынова Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Қазығұлов Бердібек Нұрханұлы",
+    "lastName": "Қазығұлов",
+    "firstName": "Бердібек",
+    "patronymic": "Нұрханұлы",
+    "initials": "Қазығұлов Б. Н.",
+    "aliases": [
+      "Казыгулов Б. Н.",
+      "Казыгулов",
+      "Қазығұлов",
+      "Казыгулов Бердибек",
+      "Қазығұлов Б.Н."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Тулегенов Бауыржан Амангельдиевич",
+    "lastName": "Тулегенов",
+    "firstName": "Бауыржан",
+    "patronymic": "Амангельдиевич",
+    "initials": "Тулегенов Б. А.",
+    "aliases": [
+      "Тулегенов Б.",
+      "Төлегенов Б. А.",
+      "Төлегенов",
+      "Тулегенов Б.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Сейтжан Нартай Сәрсенұлы",
+    "lastName": "Сейтжан",
+    "firstName": "Нартай",
+    "patronymic": "Сәрсенұлы",
+    "initials": "Сейтжан Н. С.",
+    "aliases": [
+      "Сейтжан Нартай",
+      "Сейтжанов Н. С.",
+      "Сейтжан Н.С."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Оралбек Мерей Саятұлы",
+    "lastName": "Оралбек",
+    "firstName": "Мерей",
+    "patronymic": "Саятұлы",
+    "initials": "Оралбек М. С.",
+    "aliases": [
+      "Оралбек Мерей",
+      "Оралбеков М. С.",
+      "Оралбек М.С."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 13,
+    "departmentName": "КАФЕДРА МЕХАНИКИ И РОБОТОТЕХНИКИ"
+  },
+  {
+    "fullName": "Жумина Асель Галымовна",
+    "lastName": "Жумина",
+    "firstName": "Асель",
+    "patronymic": "Галымовна",
+    "initials": "Жумина А. Г.",
+    "aliases": [
+      "Жумина А.Г."
+    ],
+    "jobTitle": "Ассоциированный профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Киздарбекова Антонина Сериковна",
+    "lastName": "Киздарбекова",
+    "firstName": "Антонина",
+    "patronymic": "Сериковна",
+    "initials": "Киздарбекова А. С.",
+    "aliases": [
+      "Киздарбекова А.С."
+    ],
+    "jobTitle": "Профессор",
+    "photoUrl": "https://karnu-buketov.edu.kz/files/image_avatar_staff/455/6a4746f04ce05.jpg",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Аршабеков Темірғали Тлеубекұлы",
+    "lastName": "Аршабеков",
+    "firstName": "Темірғали",
+    "patronymic": "Тлеубекұлы",
+    "initials": "Аршабеков Т. Т.",
+    "aliases": [
+      "Аршабеков Т.Т."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Крумент Светлана Фадисовна",
+    "lastName": "Крумент",
+    "firstName": "Светлана",
+    "patronymic": "Фадисовна",
+    "initials": "Крумент С. Ф.",
+    "aliases": [
+      "Крумент С.Ф."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 11,
+    "departmentName": "КАФЕДРА ТЕОРИИ И МЕТОДИКИ ИНОЯЗЫЧНОЙ ПОДГОТОВКИ"
+  },
+  {
+    "fullName": "Байгожина Гульнар Муратовна",
+    "lastName": "Байгожина",
+    "firstName": "Гульнар",
+    "patronymic": "Муратовна",
+    "initials": "Байгожина Г. М.",
+    "aliases": [
+      "Байгожина Г.М."
+    ],
+    "jobTitle": "Ассистент-профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 10,
+    "departmentName": "КАФЕДРА ТЕОРИИ И ПРАКТИКИ ПЕРЕВОДА"
+  },
+  {
+    "fullName": "Байкенжина Шырын Такеновна",
+    "lastName": "Байкенжина",
+    "firstName": "Шырын",
+    "patronymic": "Такеновна",
+    "initials": "Байкенжина Ш. Т.",
+    "aliases": [
+      "Байкенжина Ш.Т."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Жакулаев Адил Муратович",
+    "lastName": "Жакулаев",
+    "firstName": "Адил",
+    "patronymic": "Муратович",
+    "initials": "Жакулаев А. М.",
+    "aliases": [
+      "Жакулаев А.М."
+    ],
+    "jobTitle": "Ассистент-профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 36,
+    "departmentName": "КАФЕДРА ФИЛОСОФИИ И ТЕОРИИ КУЛЬТУРЫ"
+  },
+  {
+    "fullName": "Сармурзин Ербол Жаңбырбайұлы",
+    "lastName": "Сармурзин",
+    "firstName": "Ербол",
+    "patronymic": "Жаңбырбайұлы",
+    "initials": "Сармурзин Е. Ж.",
+    "aliases": [
+      "Сармурзин Е.Ж."
+    ],
+    "jobTitle": "PhD, Ассоциированный профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 36,
+    "departmentName": "КАФЕДРА ФИЛОСОФИИ И ТЕОРИИ КУЛЬТУРЫ"
+  },
+  {
+    "fullName": "Абыласимов Мұрагер Настаевич",
+    "lastName": "Абыласимов",
+    "firstName": "Мұрагер",
+    "patronymic": "Настаевич",
+    "initials": "Абыласимов М. Н.",
+    "aliases": [
+      "Абыласимов М.Н."
+    ],
+    "jobTitle": "PhD, Ассоциированный профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 26,
+    "departmentName": "КАФЕДРА КОНСТИТУЦИОННОГО И МЕЖДУНАРОДНОГО ПРАВА"
+  },
+  {
+    "fullName": "Жетимекова Гаухар Женисовна",
+    "lastName": "Жетимекова",
+    "firstName": "Гаухар",
+    "patronymic": "Женисовна",
+    "initials": "Жетимекова Г. Ж.",
+    "aliases": [
+      "Жетимекова Г.Ж."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 16,
+    "departmentName": "КАФЕДРА МАТЕМАТИКИ И ЦИФРОВОГО ОБРАЗОВАНИЯ"
+  },
+  {
+    "fullName": "Шульгина-Таращук Алевтина Сергеевна",
+    "lastName": "Шульгина-Таращук",
+    "firstName": "Алевтина",
+    "patronymic": "Сергеевна",
+    "initials": "Шульгина-Таращук А. С.",
+    "aliases": [
+      "Шульгина-Таращук А.С."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 16,
+    "departmentName": "КАФЕДРА МАТЕМАТИКИ И ЦИФРОВОГО ОБРАЗОВАНИЯ"
+  },
+  {
+    "fullName": "Барикова Алёна Рудольфовна",
+    "lastName": "Барикова",
+    "firstName": "Алёна",
+    "patronymic": "Рудольфовна",
+    "initials": "Барикова А. Р.",
+    "aliases": [
+      "Барикова А.Р."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 43,
+    "departmentName": "КАФЕДРА ФИНАНСОВ"
+  },
+  {
+    "fullName": "Умуркулова Мадина Максимовна",
+    "lastName": "Умуркулова",
+    "firstName": "Мадина",
+    "patronymic": "Максимовна",
+    "initials": "Умуркулова М. М.",
+    "aliases": [
+      "Умуркулова М.М."
+    ],
+    "jobTitle": "Профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 43,
+    "departmentName": "КАФЕДРА ФИНАНСОВ"
+  },
+  {
+    "fullName": "Ширинбекова Жаркын Амангелдиевна",
+    "lastName": "Ширинбекова",
+    "firstName": "Жаркын",
+    "patronymic": "Амангелдиевна",
+    "initials": "Ширинбекова Ж. А.",
+    "aliases": [
+      "Ширинбекова Ж.А."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 43,
+    "departmentName": "КАФЕДРА ФИНАНСОВ"
+  },
+  {
+    "fullName": "Сюй-Фу-Шун Наталья Валентиновна",
+    "lastName": "Сюй-Фу-Шун",
+    "firstName": "Наталья",
+    "patronymic": "Валентиновна",
+    "initials": "Сюй-Фу-Шун Н. В.",
+    "aliases": [
+      "Сюй-Фу-Шун Н.В."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 23,
+    "departmentName": "КАФЕДРА ФИЗИКИ И НАНОТЕХНОЛОГИЙ"
+  },
+  {
+    "fullName": "Саржанова Ғалия Байжұмақызы",
+    "lastName": "Саржанова",
+    "firstName": "Ғалия",
+    "patronymic": "Байжұмақызы",
+    "initials": "Саржанова Ғ. Б.",
+    "aliases": [
+      "Саржанова Г.Б.",
+      "Саржанова Г. Б."
+    ],
+    "jobTitle": "Профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Рысмагамбетова Гульнара Мусиевна",
+    "lastName": "Рысмагамбетова",
+    "firstName": "Гульнара",
+    "patronymic": "Мусиевна",
+    "initials": "Рысмагамбетова Г. М.",
+    "aliases": [
+      "Рысмагамбетова Г.М."
+    ],
+    "jobTitle": "Профессор",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 25,
+    "departmentName": "КАФЕДРА ТЕОРИИ И ИСТОРИИ ГОСУДАРСТВА И ПРАВА"
+  },
+  {
+    "fullName": "Тян Ольга Алексеевна",
+    "lastName": "Тян",
+    "firstName": "Ольга",
+    "patronymic": "Алексеевна",
+    "initials": "Тян О. А.",
+    "aliases": [
+      "Тян О.А."
+    ],
+    "jobTitle": "Доцент",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Круглякова Татьяна Александровна",
+    "lastName": "Круглякова",
+    "firstName": "Татьяна",
+    "patronymic": "Александровна",
+    "initials": "Круглякова Т. А.",
+    "aliases": [
+      "Круглякова Т.А."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 52,
+    "departmentName": "КАФЕДРА РУССКОГО ЯЗЫКА И ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Ілден Нұрбол Ерікұлы",
+    "lastName": "Ілден",
+    "firstName": "Нұрбол",
+    "patronymic": "Ерікұлы",
+    "initials": "Ілден Н. Е.",
+    "aliases": [
+      "Илден Н. Е.",
+      "Илден Н.Е.",
+      "Ілден Н.Е."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Муратова Мадина Болатовна",
+    "lastName": "Муратова",
+    "firstName": "Мадина",
+    "patronymic": "Болатовна",
+    "initials": "Муратова М. Б.",
+    "aliases": [
+      "Муратова М.Б."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Мәкен Әлібек Бауыржанұлы",
+    "lastName": "Мәкен",
+    "firstName": "Әлібек",
+    "patronymic": "Бауыржанұлы",
+    "initials": "Мәкен Ә. Б.",
+    "aliases": [
+      "Макен А. Б.",
+      "Макен А.Б.",
+      "Мәкен Ә.Б."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Сакабай Талғат Қайратұлы",
+    "lastName": "Сакабай",
+    "firstName": "Талғат",
+    "patronymic": "Қайратұлы",
+    "initials": "Сакабай Т. Қ.",
+    "aliases": [
+      "Сакабай Т. К.",
+      "Сакабай Т.К.",
+      "Сакабай Т.Қ."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Үмітқалиев Думан Бауыржанұлы",
+    "lastName": "Үмітқалиев",
+    "firstName": "Думан",
+    "patronymic": "Бауыржанұлы",
+    "initials": "Үмітқалиев Д. Б.",
+    "aliases": [
+      "Умиткалиев Д. Б.",
+      "Умиткалиев Д.Б.",
+      "Үмітқалиев Д.Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 6,
+    "departmentName": "КАФЕДРА АРХЕОЛОГИИ, ЭТНОЛОГИИ И ОТЕЧЕСТВЕННОЙ ИСТОРИИ"
+  },
+  {
+    "fullName": "Аталикова Алия Сабитовна",
+    "lastName": "Аталикова",
+    "firstName": "Алия",
+    "patronymic": "Сабитовна",
+    "initials": "Аталикова А. С.",
+    "aliases": [
+      "Аталикова А.С."
+    ],
+    "jobTitle": "Доцент",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Выдрин Денис Евгеньевич",
+    "lastName": "Выдрин",
+    "firstName": "Денис",
+    "patronymic": "Евгеньевич",
+    "initials": "Выдрин Д. Е.",
+    "aliases": [
+      "Выдрин Д.Е."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Кейкин Ербол Куандыкович",
+    "lastName": "Кейкин",
+    "firstName": "Ербол",
+    "patronymic": "Куандыкович",
+    "initials": "Кейкин Е. К.",
+    "aliases": [
+      "Кейкин Е.К."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Кинаятов Марат Амангельдиевич",
+    "lastName": "Кинаятов",
+    "firstName": "Марат",
+    "patronymic": "Амангельдиевич",
+    "initials": "Кинаятов М. А.",
+    "aliases": [
+      "Кинаятов М.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Погосян Гаяне Петросовна",
+    "lastName": "Погосян",
+    "firstName": "Гаяне",
+    "patronymic": "Петросовна",
+    "initials": "Погосян Г. П.",
+    "aliases": [
+      "Погосян Г.П."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 1,
+    "departmentName": "КАФЕДРА БОТАНИКИ"
+  },
+  {
+    "fullName": "Абдыгалиева Перизат Касымовна",
+    "lastName": "Абдыгалиева",
+    "firstName": "Перизат",
+    "patronymic": "Касымовна",
+    "initials": "Абдыгалиева П. К.",
+    "aliases": [
+      "Абдыгалиева П.К."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 46,
+    "departmentName": "КАФЕДРА БУХГАЛТЕРСКОГО УЧЕТА И АУДИТА"
+  },
+  {
+    "fullName": "Ақынов Дәурен Мұратұлы",
+    "lastName": "Ақынов",
+    "firstName": "Дәурен",
+    "patronymic": "Мұратұлы",
+    "initials": "Ақынов Д. М.",
+    "aliases": [
+      "Акынов Д. М.",
+      "Акынов Д.М.",
+      "Ақынов Д.М."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 46,
+    "departmentName": "КАФЕДРА БУХГАЛТЕРСКОГО УЧЕТА И АУДИТА"
+  },
+  {
+    "fullName": "Шакенова Гульнар Амановна",
+    "lastName": "Шакенова",
+    "firstName": "Гульнар",
+    "patronymic": "Амановна",
+    "initials": "Шакенова Г. А.",
+    "aliases": [
+      "Шакенова Г.А."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 46,
+    "departmentName": "КАФЕДРА БУХГАЛТЕРСКОГО УЧЕТА И АУДИТА"
+  },
+  {
+    "fullName": "Абжанова Алмагуль Рашитовна",
+    "lastName": "Абжанова",
+    "firstName": "Алмагуль",
+    "patronymic": "Рашитовна",
+    "initials": "Абжанова А. Р.",
+    "aliases": [
+      "Абжанова А.Р."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 7,
+    "departmentName": "КАФЕДРА ВСЕМИРНОЙ ИСТОРИИ И МЕЖДУНАРОДНЫХ ОТНОШЕНИЙ"
+  },
+  {
+    "fullName": "Байманов Канат Жумабаевич",
+    "lastName": "Байманов",
+    "firstName": "Канат",
+    "patronymic": "Жумабаевич",
+    "initials": "Байманов К. Ж.",
+    "aliases": [
+      "Байманов К.Ж."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 7,
+    "departmentName": "КАФЕДРА ВСЕМИРНОЙ ИСТОРИИ И МЕЖДУНАРОДНЫХ ОТНОШЕНИЙ"
+  },
+  {
+    "fullName": "Досмахов Серик Мейрамович",
+    "lastName": "Досмахов",
+    "firstName": "Серик",
+    "patronymic": "Мейрамович",
+    "initials": "Досмахов С. М.",
+    "aliases": [
+      "Досмахов С.М."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Жаканова Гульнара Тулегеновна",
+    "lastName": "Жаканова",
+    "firstName": "Гульнара",
+    "patronymic": "Тулегеновна",
+    "initials": "Жаканова Г. Т.",
+    "aliases": [
+      "Жаканова Г.Т."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Жанаева Мейрамгуль Болатовна",
+    "lastName": "Жанаева",
+    "firstName": "Мейрамгуль",
+    "patronymic": "Болатовна",
+    "initials": "Жанаева М. Б.",
+    "aliases": [
+      "Жанаева М.Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Кожахметова Лаура Тулеутаевна",
+    "lastName": "Кожахметова",
+    "firstName": "Лаура",
+    "patronymic": "Тулеутаевна",
+    "initials": "Кожахметова Л. Т.",
+    "aliases": [
+      "Кожахметова Л.Т."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Майған Азамат Төлеуұлы",
+    "lastName": "Майған",
+    "firstName": "Азамат",
+    "patronymic": "Төлеуұлы",
+    "initials": "Майған А. Т.",
+    "aliases": [
+      "Майган А. Т.",
+      "Майган А.Т.",
+      "Майған А.Т."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Тулешова Қарлығаш Амангелдіқызы",
+    "lastName": "Тулешова",
+    "firstName": "Қарлығаш",
+    "patronymic": "Амангелдіқызы",
+    "initials": "Тулешова Қ. А.",
+    "aliases": [
+      "Тулешова К. А.",
+      "Тулешова К.А.",
+      "Тулешова Қ.А."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 2,
+    "departmentName": "КАФЕДРА ГЕОГРАФИИ"
+  },
+  {
+    "fullName": "Армеева Татьяна Сериковна",
+    "lastName": "Армеева",
+    "firstName": "Татьяна",
+    "patronymic": "Сериковна",
+    "initials": "Армеева Т. С.",
+    "aliases": [
+      "Армеева Т.С."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Даненбаев Ардак Какимович",
+    "lastName": "Даненбаев",
+    "firstName": "Ардак",
+    "patronymic": "Какимович",
+    "initials": "Даненбаев А. К.",
+    "aliases": [
+      "Даненбаев А.К."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Жагалов Рустем Бауыржанович",
+    "lastName": "Жагалов",
+    "firstName": "Рустем",
+    "patronymic": "Бауыржанович",
+    "initials": "Жагалов Р. Б.",
+    "aliases": [
+      "Жагалов Р.Б."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Мырзалиева Жанар Тусуповна",
+    "lastName": "Мырзалиева",
+    "firstName": "Жанар",
+    "patronymic": "Тусуповна",
+    "initials": "Мырзалиева Ж. Т.",
+    "aliases": [
+      "Мырзалиева Ж.Т."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Шайменова Айгуль Болатовна",
+    "lastName": "Шайменова",
+    "firstName": "Айгуль",
+    "patronymic": "Болатовна",
+    "initials": "Шайменова А. Б.",
+    "aliases": [
+      "Шайменова А.Б."
+    ],
+    "jobTitle": "Старший преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 27,
+    "departmentName": "КАФЕДРА ГРАЖДАНСКОГО И ТРУДОВОГО ПРАВА"
+  },
+  {
+    "fullName": "Грабова Вера Павловна",
+    "lastName": "Грабова",
+    "firstName": "Вера",
+    "patronymic": "Павловна",
+    "initials": "Грабова В. П.",
+    "aliases": [
+      "Грабова В.П."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 18,
+    "departmentName": "КАФЕДРА ДОШКОЛЬНОЙ И ПСИХОЛОГО-ПЕДАГОГИЧЕСКОЙ ПОДГОТОВКИ"
+  },
+  {
+    "fullName": "Пронич Ксения Александровна",
+    "lastName": "Пронич",
+    "firstName": "Ксения",
+    "patronymic": "Александровна",
+    "initials": "Пронич К. А.",
+    "aliases": [
+      "Пронич К.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 49,
+    "departmentName": "КАФЕДРА ЖУРНАЛИСТИКИ"
+  },
+  {
+    "fullName": "Блялова Жанар Жанатовна",
+    "lastName": "Блялова",
+    "firstName": "Жанар",
+    "patronymic": "Жанатовна",
+    "initials": "Блялова Ж. Ж.",
+    "aliases": [
+      "Блялова Ж.Ж."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 3,
+    "departmentName": "КАФЕДРА ЗООЛОГИИ"
+  },
+  {
+    "fullName": "Болат Арайлым Болатқызы",
+    "lastName": "Болат",
+    "firstName": "Арайлым",
+    "patronymic": "Болатқызы",
+    "initials": "Болат А. Б.",
+    "aliases": [
+      "Болат А.Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 3,
+    "departmentName": "КАФЕДРА ЗООЛОГИИ"
+  },
+  {
+    "fullName": "Булегенова Индира Ерлановна",
+    "lastName": "Булегенова",
+    "firstName": "Индира",
+    "patronymic": "Ерлановна",
+    "initials": "Булегенова И. Е.",
+    "aliases": [
+      "Булегенова И.Е."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 3,
+    "departmentName": "КАФЕДРА ЗООЛОГИИ"
+  },
+  {
+    "fullName": "Сабиров Жандос Бауржанович",
+    "lastName": "Сабиров",
+    "firstName": "Жандос",
+    "patronymic": "Бауржанович",
+    "initials": "Сабиров Ж. Б.",
+    "aliases": [
+      "Сабиров Ж.Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 3,
+    "departmentName": "КАФЕДРА ЗООЛОГИИ"
+  },
+  {
+    "fullName": "Ахатова Меруерт Талгатовна",
+    "lastName": "Ахатова",
+    "firstName": "Меруерт",
+    "patronymic": "Талгатовна",
+    "initials": "Ахатова М. Т.",
+    "aliases": [
+      "Ахатова М.Т."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 20,
+    "departmentName": "КАФЕДРА ИЗОБРАЗИТЕЛЬНОГО ИСКУССТВА И ДИЗАЙНА"
+  },
+  {
+    "fullName": "Гылимов Данияр Талгатович",
+    "lastName": "Гылимов",
+    "firstName": "Данияр",
+    "patronymic": "Талгатович",
+    "initials": "Гылимов Д. Т.",
+    "aliases": [
+      "Гылимов Д.Т."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 20,
+    "departmentName": "КАФЕДРА ИЗОБРАЗИТЕЛЬНОГО ИСКУССТВА И ДИЗАЙНА"
+  },
+  {
+    "fullName": "Ненахова Ирина Николаевна",
+    "lastName": "Ненахова",
+    "firstName": "Ирина",
+    "patronymic": "Николаевна",
+    "initials": "Ненахова И. Н.",
+    "aliases": [
+      "Ненахова И.Н."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 20,
+    "departmentName": "КАФЕДРА ИЗОБРАЗИТЕЛЬНОГО ИСКУССТВА И ДИЗАЙНА"
+  },
+  {
+    "fullName": "Токтыбаева Гульнур Сериковна",
+    "lastName": "Токтыбаева",
+    "firstName": "Гульнур",
+    "patronymic": "Сериковна",
+    "initials": "Токтыбаева Г. С.",
+    "aliases": [
+      "Токтыбаева Г.С."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 20,
+    "departmentName": "КАФЕДРА ИЗОБРАЗИТЕЛЬНОГО ИСКУССТВА И ДИЗАЙНА"
+  },
+  {
+    "fullName": "Фятхуллина Рината Рашитовна",
+    "lastName": "Фятхуллина",
+    "firstName": "Рината",
+    "patronymic": "Рашитовна",
+    "initials": "Фятхуллина Р. Р.",
+    "aliases": [
+      "Фятхуллина Р.Р."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 20,
+    "departmentName": "КАФЕДРА ИЗОБРАЗИТЕЛЬНОГО ИСКУССТВА И ДИЗАЙНА"
+  },
+  {
+    "fullName": "Кожанбергенова Алия Сериковна",
+    "lastName": "Кожанбергенова",
+    "firstName": "Алия",
+    "patronymic": "Сериковна",
+    "initials": "Кожанбергенова А. С.",
+    "aliases": [
+      "Кожанбергенова А.С."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 8,
+    "departmentName": "КАФЕДРА ИНОСТРАННОЙ ФИЛОЛОГИИ"
+  },
+  {
+    "fullName": "Сеитова Лаура Амантаевна",
+    "lastName": "Сеитова",
+    "firstName": "Лаура",
+    "patronymic": "Амантаевна",
+    "initials": "Сеитова Л. А.",
+    "aliases": [
+      "Сеитова Л.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 9,
+    "departmentName": "КАФЕДРА ИНОСТРАННЫХ ЯЗЫКОВ"
+  },
+  {
+    "fullName": "Чекмарёва Наталья Владимировна",
+    "lastName": "Чекмарёва",
+    "firstName": "Наталья",
+    "patronymic": "Владимировна",
+    "initials": "Чекмарёва Н. В.",
+    "aliases": [
+      "Чекмарева Н. В.",
+      "Чекмарева Н.В.",
+      "Чекмарёва Н.В."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 9,
+    "departmentName": "КАФЕДРА ИНОСТРАННЫХ ЯЗЫКОВ"
+  },
+  {
+    "fullName": "Черепнин Юрий Юрьевич",
+    "lastName": "Черепнин",
+    "firstName": "Юрий",
+    "patronymic": "Юрьевич",
+    "initials": "Черепнин Ю. Ю.",
+    "aliases": [
+      "Черепнин Ю.Ю."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 9,
+    "departmentName": "КАФЕДРА ИНОСТРАННЫХ ЯЗЫКОВ"
+  },
+  {
+    "fullName": "Баймагамбетова Айгерим Амангельдиевна",
+    "lastName": "Баймагамбетова",
+    "firstName": "Айгерим",
+    "patronymic": "Амангельдиевна",
+    "initials": "Баймагамбетова А. А.",
+    "aliases": [
+      "Баймагамбетова А.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 5,
+    "departmentName": "КАФЕДРА ИСТОРИИ КАЗАХСТАНА И АССАМБЛЕИ НАРОДА КАЗАХСТАНА"
+  },
+  {
+    "fullName": "Есентаева Айгерим Ериковна",
+    "lastName": "Есентаева",
+    "firstName": "Айгерим",
+    "patronymic": "Ериковна",
+    "initials": "Есентаева А. Е.",
+    "aliases": [
+      "Есентаева А.Е."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 5,
+    "departmentName": "КАФЕДРА ИСТОРИИ КАЗАХСТАНА И АССАМБЛЕИ НАРОДА КАЗАХСТАНА"
+  },
+  {
+    "fullName": "Шохатаев Олжас Саятович",
+    "lastName": "Шохатаев",
+    "firstName": "Олжас",
+    "patronymic": "Саятович",
+    "initials": "Шохатаев О. С.",
+    "aliases": [
+      "Шохатаев О.С."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 5,
+    "departmentName": "КАФЕДРА ИСТОРИИ КАЗАХСТАНА И АССАМБЛЕИ НАРОДА КАЗАХСТАНА"
+  },
+  {
+    "fullName": "Адилов Ильхам Хакимович",
+    "lastName": "Адилов",
+    "firstName": "Ильхам",
+    "patronymic": "Хакимович",
+    "initials": "Адилов И. Х.",
+    "aliases": [
+      "Адилов И.Х."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 48,
+    "departmentName": "КАФЕДРА КАЗАХСКОГО ЯЗЫКОЗНАНИЯ"
+  },
+  {
+    "fullName": "Айнабаева Мадина Муратовна",
+    "lastName": "Айнабаева",
+    "firstName": "Мадина",
+    "patronymic": "Муратовна",
+    "initials": "Айнабаева М. М.",
+    "aliases": [
+      "Айнабаева М.М."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 48,
+    "departmentName": "КАФЕДРА КАЗАХСКОГО ЯЗЫКОЗНАНИЯ"
+  },
+  {
+    "fullName": "Бақытқызы Динара",
+    "lastName": "Бақытқызы",
+    "firstName": "Динара",
+    "patronymic": "",
+    "initials": "Бақытқызы Д.",
+    "aliases": [
+      "Бакыткызы Д.",
+      "Бақытқызы Д."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 48,
+    "departmentName": "КАФЕДРА КАЗАХСКОГО ЯЗЫКОЗНАНИЯ"
+  },
+  {
+    "fullName": "Бажикеев Кайрат Кадырович",
+    "lastName": "Бажикеев",
+    "firstName": "Кайрат",
+    "patronymic": "Кадырович",
+    "initials": "Бажикеев К. К.",
+    "aliases": [
+      "Бажикеев К.К."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Жумагелдин Жаркын Шарипович",
+    "lastName": "Жумагелдин",
+    "firstName": "Жаркын",
+    "patronymic": "Шарипович",
+    "initials": "Жумагелдин Ж. Ш.",
+    "aliases": [
+      "Жумагелдин Ж.Ш."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Конурова Назгуль Амантаевна",
+    "lastName": "Конурова",
+    "firstName": "Назгуль",
+    "patronymic": "Амантаевна",
+    "initials": "Конурова Н. А.",
+    "aliases": [
+      "Конурова Н.А."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Медеубекова Айнур Жаксылыковна",
+    "lastName": "Медеубекова",
+    "firstName": "Айнур",
+    "patronymic": "Жаксылыковна",
+    "initials": "Медеубекова А. Ж.",
+    "aliases": [
+      "Медеубекова А.Ж."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Муратова Алия Ораловна",
+    "lastName": "Муратова",
+    "firstName": "Алия",
+    "patronymic": "Ораловна",
+    "initials": "Муратова А. О.",
+    "aliases": [
+      "Муратова А.О."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Мурсалиева Баян Газизовна",
+    "lastName": "Мурсалиева",
+    "firstName": "Баян",
+    "patronymic": "Газизовна",
+    "initials": "Мурсалиева Б. Г.",
+    "aliases": [
+      "Мурсалиева Б.Г."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Сакенов Ерлан Нурланович",
+    "lastName": "Сакенов",
+    "firstName": "Ерлан",
+    "patronymic": "Нурланович",
+    "initials": "Сакенов Е. Н.",
+    "aliases": [
+      "Сакенов Е.Н."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 50,
+    "departmentName": "КАФЕДРА КАЗАХСКОЙ ЛИТЕРАТУРЫ"
+  },
+  {
+    "fullName": "Айтпаева Зауреш Каиркеновна",
+    "lastName": "Айтпаева",
+    "firstName": "Зауреш",
+    "patronymic": "Каиркеновна",
+    "initials": "Айтпаева З. К.",
+    "aliases": [
+      "Айтпаева З.К."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 24,
+    "departmentName": "КАФЕДРА ТРАНСПОРТА И ЛОГИСТИЧЕСКИХ СИСТЕМ"
+  },
+  {
+    "fullName": "Сулейменов Нурлан Маратович",
+    "lastName": "Сулейменов",
+    "firstName": "Нурлан",
+    "patronymic": "Маратович",
+    "initials": "Сулейменов Н. М.",
+    "aliases": [
+      "Сулейменов Н.М."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 24,
+    "departmentName": "КАФЕДРА ТРАНСПОРТА И ЛОГИСТИЧЕСКИХ СИСТЕМ"
+  },
+  {
+    "fullName": "Ботагарин Руслан Бауыржанович",
+    "lastName": "Ботагарин",
+    "firstName": "Руслан",
+    "patronymic": "Бауыржанович",
+    "initials": "Ботагарин Р. Б.",
+    "aliases": [
+      "Ботагарин Р.Б."
+    ],
+    "jobTitle": "Преподаватель",
+    "photoUrl": "",
+    "isHead": false,
+    "departmentId": 26,
+    "departmentName": "КАФЕДРА КОНСТИТУЦИОННОГО И МЕЖДУНАРОДНОГО ПРАВА"
+  }
+]
