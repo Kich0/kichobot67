@@ -12,6 +12,7 @@ import userActionService from "../services/userActionService.js";
 import { enrichTeacherSchedule } from "../services/teacherScheduleEnricher.js";
 import TeacherTableImageService from "../services/TeacherTableImageService.js";
 import ScheduleApiAdapter from "../services/scheduleApiAdapter.js";
+import teacherDirectoryService from "../services/teacherDirectoryService.js";
 // ПРЯМОЙ ИМПОРТ бэкенд-сервиса вместо HTTP
 import BackendTeacherScheduleService from "../../backend/services/TeacherScheduleService.js";
 
@@ -83,9 +84,8 @@ class TeacherScheduleController {
         return {
             inline_keyboard: data.map((item) => {
                 const label = item.fullName || item.name;
-                const star = item.isHead ? ' ⭐' : '';
                 return [{
-                    text: `${label}${star}`, callback_data: `TeacherSchedule|${item.id}|${day}`
+                    text: label, callback_data: `TeacherSchedule|${item.id}|${day}`
                 }];
             })
         }
@@ -193,7 +193,8 @@ class TeacherScheduleController {
         try {
             const user_language = await userService.getUserLanguage(msgToEdit.chat.id)
 
-            const teachers = await teacherService.getByDepartmentId(departmentId)
+            const rawTeachers = await teacherService.getByDepartmentId(departmentId)
+            const teachers = (rawTeachers || []).map(t => teacherDirectoryService.enrich(t))
             const department = await departmentService.getById(departmentId)
 
             const {data, page, page_count, currentPageText} = ScheduleController.configureMenuData(teachers, prePage, user_language)
@@ -239,10 +240,17 @@ class TeacherScheduleController {
                 dayNumber = 0;
             }
 
-            // Если teacher не было в объекте кэша — пробуем подгрузить из базы
+            // Гарантированное обогащение объекта преподавателя данными справочника КарУ
             if (!teacher && teacherId) {
                 teacher = await teacherService.getById(teacherId).catch(() => null);
-                if (teacher) {
+            }
+            if (teacher) {
+                teacher = teacherDirectoryService.enrich(teacher);
+                schedule_cache.teacher = teacher;
+            } else if (teacherId) {
+                const matched = teacherDirectoryService.findMatch(teacherId);
+                if (matched) {
+                    teacher = teacherDirectoryService.enrich(matched);
                     schedule_cache.teacher = teacher;
                 }
             }
@@ -278,16 +286,9 @@ class TeacherScheduleController {
 
             let schedule_text = ``
             const displayName = teacher?.fullName || teacher?.name || `ID ${teacherId || ''}`;
-            let infoLine = '';
-            if (teacher?.isHead) {
-                const job = teacher.jobTitle || (user_language === 'kz' ? 'Кафедра меңгерушісі' : 'Заведующий кафедрой');
-                const dept = teacher.departmentName ? ` • <i>${teacher.departmentName}</i>` : '';
-                infoLine = `⭐ <b>${job}</b>${dept}\n`;
-            } else if (teacher?.jobTitle) {
-                const dept = teacher.departmentName ? ` • <i>${teacher.departmentName}</i>` : '';
-                infoLine = `🎓 <i>${teacher.jobTitle}</i>${dept}\n`;
-            }
-            const headerText = `👥 <u>${displayName}</u>\n${infoLine}📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`;
+            const jobTitle = teacher?.jobTitle || (teacher?.isHead ? (user_language === 'kz' ? 'Кафедра меңгерушісі' : 'Заведующий кафедрой') : '');
+            const titlePart = jobTitle ? ` (${jobTitle})` : '';
+            const headerText = `👥 <b>${displayName}</b>${titlePart}\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`;
 
             if (!deduplicated.length) {
                 schedule_text = `🥳 <b>${i18next.t('vacation', { lng: user_language })}</b>\n`
@@ -377,7 +378,8 @@ class TeacherScheduleController {
                     // Прошло >= 5 минут (или кэша нет) — скачиваем свежее расписание
                     // ТАБЛИЦА НЕДЕЛИ НЕ ЗАТРАГИВАЕТСЯ И НЕ СБРАСЫВАЕТСЯ!
                     try {
-                        const teacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId);
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
                         teacher_text_cache[teacherId] = {
@@ -397,8 +399,9 @@ class TeacherScheduleController {
                 // Обычное переключение дней недели (⬅️ / ➡️) или вход в расписание
                 if (cached && (now - cached.timestamp < CACHE_MAX_AGE)) {
                     // В пределах 30 минут: мгновенная отдача из памяти, НОЛЬ запросов к API, время НЕ меняется
-                    if (!cached.teacher) {
-                        cached.teacher = await teacherService.getById(teacherId).catch(() => null);
+                    if (!cached.teacher || !cached.teacher.fullName) {
+                        const rawT = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        cached.teacher = teacherDirectoryService.enrich(rawT);
                     }
                     if (cached.departmentId === undefined) {
                         cached.departmentId = cached.teacher?.department || 0;
@@ -414,7 +417,8 @@ class TeacherScheduleController {
                 } else {
                     // Кэш отсутствует или старше 30 минут — скачиваем с сайта
                     try {
-                        const teacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                        const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId);
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
                         teacher_text_cache[teacherId] = {
@@ -544,8 +548,10 @@ class TeacherScheduleController {
             let cached = teacher_table_cache[teacherId];
 
             let teacher = cached?.teacher;
-            if (!teacher) {
-                teacher = await teacherService.getById(teacherId).catch(() => null);
+            if (!teacher || !teacher.fullName) {
+                const rawT = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
+                teacher = teacherDirectoryService.enrich(rawT);
+                if (cached) cached.teacher = teacher;
             }
 
             // 1. Нажата кнопка «Обновить», но 20 минут еще НЕ прошло (0 запросов к API)

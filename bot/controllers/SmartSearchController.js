@@ -278,8 +278,7 @@ class SmartSearchController {
             inline_keyboard.push([{ text: teacherHeader, callback_data: 'nothing' }]);
             topTeachers.forEach(t => {
                 const label = t.fullName || t.name;
-                const star = t.isHead ? ' ⭐' : '';
-                inline_keyboard.push([{ text: `👨‍🏫 ${label}${star}`, callback_data: `TeacherSchedule|${t.id}|${day}` }]);
+                inline_keyboard.push([{ text: `👨‍🏫 ${label}`, callback_data: `TeacherSchedule|${t.id}|${day}` }]);
             });
 
             if (teachers.length > maxInline) {

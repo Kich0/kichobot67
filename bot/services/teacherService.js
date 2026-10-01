@@ -109,7 +109,7 @@ class teacherService {
                 if (seen.has(t.id)) return false;
                 seen.add(t.id);
                 return true;
-            });
+            }).map(t => teacherDirectoryService.enrich(t));
         } catch (e) {
             throw new Error("Ошибка при получении Teacher по DepartmentId: " + e.stack)
         }
@@ -127,7 +127,7 @@ class teacherService {
                 if (seen.has(t.id)) return false;
                 seen.add(t.id);
                 return true;
-            });
+            }).map(t => teacherDirectoryService.enrich(t));
         } catch (e) {
             throw new Error("Ошибка при получении всех Teacher: " + e.stack)
         }

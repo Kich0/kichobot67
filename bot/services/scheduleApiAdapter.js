@@ -1,3 +1,5 @@
+import teacherDirectoryService from "./teacherDirectoryService.js";
+
 class ScheduleApiAdapter {
     constructor() {
         this.daysRu = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
@@ -82,21 +84,45 @@ class ScheduleApiAdapter {
                 const time = this.normalizeTime(r.time || (r.slot ? `Пара ${r.slot}` : ''));
                 if (!time) continue;
 
-                const parts = [];
-                if (r.subject) parts.push(r.subject.trim());
-                if (r.type) parts.push(this.formatLessonType(r.type));
-                if (r.teacher) parts.push(r.teacher.trim());
-                const roomStr = this.formatRoom(r.room, r.building);
-                if (roomStr) parts.push(roomStr);
+                // 1. Предмет и тип занятия (например, "Управление данными (Big Data) /Лекция/")
+                let subjectLine = '';
+                if (r.subject) {
+                    const typeBadge = this.formatLessonType(r.type);
+                    subjectLine = `${r.subject.trim()} ${typeBadge}`.trim();
+                }
 
-                const subjectText = parts.join(' ');
+                // 2. Преподаватель (полное ФИО) и аудитория/корпус
+                let teacherFullName = '';
+                if (r.teacher) {
+                    teacherFullName = teacherDirectoryService.formatTeacherForStudent(r.teacher, language);
+                }
+                const roomStr = this.formatRoom(r.room, r.building);
+
+                let detailLine = '';
+                if (teacherFullName && roomStr) {
+                    // Если имя длинное (> 26 символов или суммарно > 35) — переносим аудиторию вниз
+                    if (teacherFullName.length > 26 || (teacherFullName.length + roomStr.length + 1 > 35)) {
+                        detailLine = `${teacherFullName}\n${roomStr}`;
+                    } else {
+                        detailLine = `${teacherFullName} ${roomStr}`;
+                    }
+                } else if (teacherFullName) {
+                    detailLine = teacherFullName;
+                } else if (roomStr) {
+                    detailLine = roomStr;
+                }
+
+                const itemLines = [];
+                if (subjectLine) itemLines.push(subjectLine);
+                if (detailLine) itemLines.push(detailLine);
+                const lessonBlock = itemLines.join('\n');
 
                 if (timeSlotMap.has(time)) {
                     // Если в это время уже есть пара (например, вторая подгруппа)
                     const existing = timeSlotMap.get(time);
-                    timeSlotMap.set(time, `${existing}\n${subjectText}`);
+                    timeSlotMap.set(time, `${existing}\n📚 ${lessonBlock}`);
                 } else {
-                    timeSlotMap.set(time, subjectText);
+                    timeSlotMap.set(time, lessonBlock);
                 }
             }
 

@@ -284,7 +284,9 @@ class ScheduleController {
                 schedule_text = `<b>${i18next.t('vacation', { lng: user_language })}</b>\n`
             } else {
                 const formattedItems = schedule.map(item => {
-                    return '⌚️ ' + item.time + '\n📚 ' + (item.subject || '').trim();
+                    const subj = (item.subject || '').trim();
+                    const cleanSubj = subj.startsWith('📚') ? subj : `📚 ${subj}`;
+                    return '⌚️ ' + item.time + '\n' + cleanSubj;
                 });
                 schedule_text = formattedItems.join('\n\n') + '\n';
             }

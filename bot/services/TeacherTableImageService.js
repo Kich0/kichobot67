@@ -463,9 +463,9 @@ class TeacherTableImageService {
             currentY += rowH + cellGap;
         });
 
-        const rawName = typeof teacher === 'string' ? teacher : (teacher?.name || 'Преподаватель');
-        const cleanName = rawName.replace(/^преп\.\s*/i, '');
-        const titlePrefix = lang === 'kz' ? 'Оқытушының жүктемесі' : 'Загруженность преп.';
+        const rawName = typeof teacher === 'string' ? teacher : (teacher?.fullName || teacher?.name || 'Преподаватель');
+        const cleanName = rawName.replace(/^(?:ст\.?\s*преп(?:одаватель)?\.?|преп(?:одаватель)?\.?|ст\.?\s*пр\.?|пр\.?|доц(?:ент)?\.?|проф(?:ессор)?\.?|асс(?:истент)?\.?|ассоц\.?\s*проф(?:ессор)?\.?|ассис\.?\s*проф(?:ессор)?\.?)\s+/iu, '');
+        const titlePrefix = lang === 'kz' ? 'Оқытушының жүктемесі:' : 'Загруженность:';
         const title = `${titlePrefix} ${cleanName}`;
 
         return `

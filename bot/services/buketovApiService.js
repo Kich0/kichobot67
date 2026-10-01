@@ -1,5 +1,6 @@
 import config from "../../config.js";
 import log from "../logging/logging.js";
+import { cleanTitles, normalizeCyrillic } from "./teacherDirectoryService.js";
 
 class BuketovApiService {
     constructor() {
@@ -9,13 +10,11 @@ class BuketovApiService {
 
     /**
      * Очистка звания преподавателя для точного совпадения в API
-     * Например: "аcсис.проф. Омаров М." -> "Омаров М."
+     * Например: "ст.преп. Попова Н. В." -> "Попова Н. В."
      */
     cleanTeacherName(rawName) {
         if (!rawName) return '';
-        return rawName
-            .replace(/^(аc?соц\.?\s*проф\.?|аc?сис\.?\s*проф\.?|ст\.?\s*пр\.?|пр\.?|проф\.?|доц\.?|преп\.?|м\.т\.ғ\.к\.?|п\.ғ\.к\.?)\s+/iu, '')
-            .trim();
+        return cleanTitles(rawName);
     }
 
     /**
@@ -145,20 +144,24 @@ class BuketovApiService {
 
     /**
      * Проверка соответствия записи расписания конкретному преподавателю
-     * Учитывает фамилию и первую букву инициала, независимо от пробелов и точек
+     * Учитывает фамилию и первую букву инициала, независимо от пробелов, точек и казахских букв
      */
     matchTeacherRecord(recordTeacher, targetName) {
         if (!recordTeacher || !targetName) return false;
-        const cleanTarget = this.cleanTeacherName(targetName);
-        const targetParts = cleanTarget.split(/[\s.]+/).filter(Boolean);
-        const targetSurname = targetParts[0]?.toLowerCase();
-        const targetInitial = targetParts[1]?.[0]?.toLowerCase();
+        const cleanTarget = normalizeCyrillic(this.cleanTeacherName(targetName));
+        const cleanRecord = normalizeCyrillic(this.cleanTeacherName(recordTeacher));
 
-        const recordParts = recordTeacher.split(/[\s.]+/).filter(Boolean);
-        const recordSurname = recordParts[0]?.toLowerCase();
-        const recordInitial = recordParts[1]?.[0]?.toLowerCase();
+        const targetParts = cleanTarget.split(' ').filter(Boolean);
+        const recordParts = cleanRecord.split(' ').filter(Boolean);
+
+        const targetSurname = targetParts[0];
+        const recordSurname = recordParts[0];
 
         if (targetSurname !== recordSurname) return false;
+
+        const targetInitial = targetParts[1]?.[0];
+        const recordInitial = recordParts[1]?.[0];
+
         if (targetInitial && recordInitial && targetInitial !== recordInitial) return false;
         return true;
     }

@@ -47,10 +47,36 @@ export function isKazakhText(str) {
     return /[әіңғүұқөһӘІҢҒҮҰҚӨҺ]/i.test(str);
 }
 
+/**
+ * Очистка академических званий и префиксов (например: "ст.преп. Попова Н. В." -> "Попова Н. В.")
+ */
+export function cleanTitles(str) {
+    if (!str) return '';
+    let s = String(str).trim();
+    let prev = '';
+    while (s !== prev) {
+        prev = s;
+        s = s.replace(/^(?:ст\.?\s*преп(?:одаватель)?\.?|преп(?:одаватель)?\.?|ст\.?\s*пр\.?|пр\.?|доц(?:ент)?\.?|проф(?:ессор)?\.?|асс(?:истент)?\.?|ассоц\.?\s*проф(?:ессор)?\.?|ассис\.?\s*проф(?:ессор)?\.?|аcсоц\.?\s*проф(?:ессор)?\.?|аcсис\.?\s*проф(?:ессор)?\.?|аға\s+оқытушы|оқытушы|м\.т\.ғ\.к\.?|п\.ғ\.к\.?|к\.[а-яё\-]+\.?[нм]?\.?|phd(?:\s*докторы)?)\s+/iu, '').trim();
+    }
+    return s;
+}
+
+/**
+ * Приведение ФИО к красивому регистру (Title Case)
+ * "КАСЫЛКАСОВА КАМИЛА НУРАЛИЕВНА" -> "Касылкасова Камила Нуралиевна"
+ */
+export function formatTitleCase(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .replace(/(?:^|\s|-)[а-яёa-zәіңғүұқөһ]/gu, c => c.toUpperCase());
+}
+
 class TeacherDirectoryService {
     constructor() {
         this.teachers = [];
         this.byInitialsMap = new Map();
+        this.bySingleInitialMap = new Map();
         this.bySurnameMap = new Map();
         this.byFullNameMap = new Map();
         this._loadDirectory();
@@ -63,7 +89,13 @@ class TeacherDirectoryService {
                 const raw = fs.readFileSync(dataPath, 'utf8');
                 const list = JSON.parse(raw);
                 if (Array.isArray(list)) {
-                    this.teachers = list;
+                    this.teachers = list.map(t => ({
+                        ...t,
+                        fullName: formatTitleCase(t.fullName),
+                        firstName: formatTitleCase(t.firstName),
+                        lastName: formatTitleCase(t.lastName),
+                        patronymic: formatTitleCase(t.patronymic)
+                    }));
                     this._buildIndexes();
                     log.info(`[TeacherDirectory] Успешно загружен справочник КарУ: ${this.teachers.length} преподавателей`);
                     return;
@@ -77,96 +109,182 @@ class TeacherDirectoryService {
 
     _buildIndexes() {
         this.byInitialsMap.clear();
+        this.bySingleInitialMap.clear();
         this.bySurnameMap.clear();
         this.byFullNameMap.clear();
 
         for (const t of this.teachers) {
             if (!t) continue;
 
-            // 1. Индекс по инициалам (например: "попова н в")
-            const normInitials = normalizeCyrillic(t.initials);
-            if (normInitials) {
-                if (!this.byInitialsMap.has(normInitials)) {
-                    this.byInitialsMap.set(normInitials, []);
-                }
-                this.byInitialsMap.get(normInitials).push(t);
+            // 1. Полное ФИО
+            const normFullName = normalizeCyrillic(t.fullName);
+            if (normFullName) {
+                this.byFullNameMap.set(normFullName, t);
             }
 
-            // 2. Индекс по фамилии (например: "попова")
+            // 2. Фамилия и инициалы
             const normLastName = normalizeCyrillic(t.lastName);
             if (normLastName) {
                 if (!this.bySurnameMap.has(normLastName)) {
                     this.bySurnameMap.set(normLastName, []);
                 }
                 this.bySurnameMap.get(normLastName).push(t);
+
+                const firstInit = normalizeCyrillic(t.firstName)?.[0];
+                if (firstInit) {
+                    // Индекс по 1 инициалу: "фамилия и"
+                    const singleKey = normLastName + ' ' + firstInit;
+                    if (!this.bySingleInitialMap.has(singleKey)) {
+                        this.bySingleInitialMap.set(singleKey, []);
+                    }
+                    this.bySingleInitialMap.get(singleKey).push(t);
+
+                    const patrInit = normalizeCyrillic(t.patronymic)?.[0];
+                    if (patrInit) {
+                        // Индекс по 2 инициалам: "фамилия и о"
+                        const doubleKey = normLastName + ' ' + firstInit + ' ' + patrInit;
+                        if (!this.byInitialsMap.has(doubleKey)) {
+                            this.byInitialsMap.set(doubleKey, []);
+                        }
+                        this.byInitialsMap.get(doubleKey).push(t);
+                    }
+                }
             }
 
-            // 3. Индекс по полному ФИО (например: "попова надежда викторовна")
-            const normFullName = normalizeCyrillic(t.fullName);
-            if (normFullName) {
-                this.byFullNameMap.set(normFullName, t);
+            // Дополнительный индекс по строке initials из справочника
+            if (t.initials) {
+                const normInitials = normalizeCyrillic(cleanTitles(t.initials));
+                if (normInitials && !this.byInitialsMap.has(normInitials)) {
+                    this.byInitialsMap.set(normInitials, [t]);
+                }
             }
         }
     }
 
     /**
-     * Обогащение объекта преподавателя (из базы расписания) полными данными с сайта КарУ
-     * @param {Object} teacher Объект из расписания ({ id, name, department, ... })
+     * Поиск преподавателя по любой строке (с академическими званиями, инициалами, без точек и пробелов)
+     * @param {string} rawStr - Строка (например: "ст.преп. Попова Н. В.", "Гельмле А.М.", "Адильбаев А.")
+     * @param {number|string} deptId - Опциональный ID кафедры для разрешения коллизий однофамильцев
+     * @returns {Object|null} Объект преподавателя из справочника
+     */
+    findMatch(rawStr, deptId = null) {
+        if (!rawStr) return null;
+        const clean = cleanTitles(rawStr);
+        const norm = normalizeCyrillic(clean);
+        if (!norm) return null;
+
+        // 1. По точному полному имени
+        if (this.byFullNameMap.has(norm)) {
+            return this.byFullNameMap.get(norm);
+        }
+
+        const words = norm.split(' ').filter(Boolean);
+        if (words.length === 0) return null;
+
+        let surname = '', inits = [];
+        if (words.length >= 2 && words[0].length === 1) {
+            // Формат: "И. О. Фамилия"
+            surname = words[words.length - 1];
+            inits = words.slice(0, words.length - 1).map(w => w[0]);
+        } else {
+            // Формат: "Фамилия И. О."
+            surname = words[0];
+            inits = words.slice(1).map(w => w[0]);
+        }
+
+        // 2. Ищем по двум инициалам: surname + inits[0] + inits[1]
+        if (inits.length >= 2) {
+            const key2 = surname + ' ' + inits[0] + ' ' + inits[1];
+            const found2 = this.byInitialsMap.get(key2);
+            if (found2 && found2.length > 0) {
+                if (found2.length === 1) return found2[0];
+                if (deptId) {
+                    const matchDept = found2.find(t => Number(t.departmentId) === Number(deptId));
+                    if (matchDept) return matchDept;
+                }
+                return found2[0];
+            }
+        }
+
+        // 3. Ищем по одному инициалу: surname + inits[0]
+        if (inits.length >= 1) {
+            const key1 = surname + ' ' + inits[0];
+            const found1 = this.bySingleInitialMap.get(key1);
+            if (found1 && found1.length > 0) {
+                if (found1.length === 1) return found1[0];
+                if (deptId) {
+                    const matchDept = found1.find(t => Number(t.departmentId) === Number(deptId));
+                    if (matchDept) return matchDept;
+                }
+                return found1[0];
+            }
+        }
+
+        // 4. Ищем только по фамилии
+        const foundSurname = this.bySurnameMap.get(surname);
+        if (foundSurname && foundSurname.length > 0) {
+            if (foundSurname.length === 1) return foundSurname[0];
+            if (deptId) {
+                const matchDept = foundSurname.find(t => Number(t.departmentId) === Number(deptId));
+                if (matchDept) return matchDept;
+            }
+            return foundSurname[0];
+        }
+
+        return null;
+    }
+
+    /**
+     * Обогащение объекта преподавателя полными данными со справочника КарУ
+     * @param {Object|string} teacher Объект из расписания ({ id, name, department, ... }) или строка с именем
      * @returns {Object} Обогащенный объект преподавателя
      */
     enrich(teacher) {
-        if (!teacher || !teacher.name) return teacher;
+        if (!teacher) return teacher;
+        const rawName = typeof teacher === 'string' ? teacher : teacher.name;
+        if (!rawName) return teacher;
 
-        const nameKey = normalizeCyrillic(teacher.name);
+        const deptId = typeof teacher === 'object' ? (teacher.department || teacher.departmentId) : null;
+        const matched = this.findMatch(rawName, deptId);
 
-        // 1. Поиск по точному совпадению инициалов ("попова н в")
-        let matches = this.byInitialsMap.get(nameKey);
-
-        // Если не найдено, пробуем вариацию без пробелов между инициалами
-        if (!matches || matches.length === 0) {
-            const compactKey = nameKey.replace(/\s+/g, '');
-            for (const [key, list] of this.byInitialsMap.entries()) {
-                if (key.replace(/\s+/g, '') === compactKey) {
-                    matches = list;
-                    break;
-                }
-            }
-        }
-
-        // Если инициалы не подошли, пробуем совпадение по полному ФИО
-        if (!matches || matches.length === 0) {
-            const exactFull = this.byFullNameMap.get(nameKey);
-            if (exactFull) {
-                matches = [exactFull];
-            }
-        }
-
-        if (matches && matches.length > 0) {
-            // Если нашлось несколько человек с одинаковыми инициалами (коллизия),
-            // пробуем сопоставить по названию или ID кафедры
-            let best = matches[0];
-            if (matches.length > 1 && teacher.department) {
-                const targetDept = Number(teacher.department);
-                const matchedByDept = matches.find(m => Number(m.departmentId) === targetDept);
-                if (matchedByDept) best = matchedByDept;
-            }
-
+        if (matched) {
+            const cleanFullName = formatTitleCase(matched.fullName);
             return {
-                ...teacher,
-                fullName: best.fullName,
-                firstName: best.firstName,
-                lastName: best.lastName,
-                patronymic: best.patronymic,
-                jobTitle: best.jobTitle,
-                photoUrl: best.photoUrl,
-                isHead: !!best.isHead,
-                departmentName: best.departmentName,
-                departmentIdOnSite: best.departmentId
+                ...(typeof teacher === 'object' ? teacher : { name: rawName }),
+                fullName: cleanFullName,
+                firstName: formatTitleCase(matched.firstName),
+                lastName: formatTitleCase(matched.lastName),
+                patronymic: formatTitleCase(matched.patronymic),
+                jobTitle: matched.jobTitle,
+                photoUrl: matched.photoUrl,
+                isHead: !!matched.isHead,
+                departmentName: matched.departmentName,
+                departmentIdOnSite: matched.departmentId
             };
         }
 
-        // Если в справочнике нет (например, новый совместитель) — возвращаем как есть
-        return teacher;
+        // Если в справочнике не найден — возвращаем очищенное от званий имя
+        const cleanRaw = cleanTitles(rawName);
+        if (typeof teacher === 'object') {
+            return {
+                ...teacher,
+                fullName: teacher.fullName || cleanRaw
+            };
+        }
+        return { name: cleanRaw, fullName: cleanRaw };
+    }
+
+    /**
+     * Форматирование строки преподавателя для расписания студента:
+     * Возвращает чистое полное ФИО: "Попова Надежда Викторовна"
+     */
+    formatTeacherForStudent(rawTeacherName) {
+        if (!rawTeacherName) return '';
+        const match = this.findMatch(rawTeacherName);
+        if (match) {
+            return formatTitleCase(match.fullName);
+        }
+        return cleanTitles(rawTeacherName);
     }
 
     /**
