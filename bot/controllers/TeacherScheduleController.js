@@ -81,9 +81,13 @@ class TeacherScheduleController {
         const day = ScheduleController.getCurrentDayNumber()
 
         return {
-            inline_keyboard: data.map((item) => [{
-                text: item.name, callback_data: `TeacherSchedule|${item.id}|${day}`
-            }])
+            inline_keyboard: data.map((item) => {
+                const label = item.fullName || item.name;
+                const star = item.isHead ? ' ⭐' : '';
+                return [{
+                    text: `${label}${star}`, callback_data: `TeacherSchedule|${item.id}|${day}`
+                }];
+            })
         }
     }
 
@@ -273,8 +277,17 @@ class TeacherScheduleController {
             }
 
             let schedule_text = ``
-            const teacherName = teacher?.name || `ID ${teacherId || ''}`
-            const headerText = `👥 <u>${teacherName}</u>\n📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`
+            const displayName = teacher?.fullName || teacher?.name || `ID ${teacherId || ''}`;
+            let infoLine = '';
+            if (teacher?.isHead) {
+                const job = teacher.jobTitle || (user_language === 'kz' ? 'Кафедра меңгерушісі' : 'Заведующий кафедрой');
+                const dept = teacher.departmentName ? ` • <i>${teacher.departmentName}</i>` : '';
+                infoLine = `⭐ <b>${job}</b>${dept}\n`;
+            } else if (teacher?.jobTitle) {
+                const dept = teacher.departmentName ? ` • <i>${teacher.departmentName}</i>` : '';
+                infoLine = `🎓 <i>${teacher.jobTitle}</i>${dept}\n`;
+            }
+            const headerText = `👥 <u>${displayName}</u>\n${infoLine}📆 ${i18next.t('schedule_by_day', { lng: user_language, dayName: schedule_day })}\n`;
 
             if (!deduplicated.length) {
                 schedule_text = `🥳 <b>${i18next.t('vacation', { lng: user_language })}</b>\n`
@@ -435,7 +448,7 @@ class TeacherScheduleController {
             // Логируем действие только при первом входе или принудительном обновлении
             if (!cached || isRefresh) {
                 const teacherObj = cached?.teacher || teacher_text_cache[teacherId]?.teacher;
-                const teacherName = teacherObj?.name || `ID ${teacherId}`;
+                const teacherName = teacherObj?.fullName || teacherObj?.name || `ID ${teacherId}`;
                 userActionService.logAction(
                     call.message.chat.id,
                     call.message.chat.username,
@@ -541,7 +554,7 @@ class TeacherScheduleController {
                 const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
                 const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
                 const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
-                const teacherName = teacher?.name || `ID ${teacherId}`;
+                const teacherName = teacher?.fullName || teacher?.name || `ID ${teacherId}`;
                 const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
                 const departmentId = teacher?.department || cached?.departmentId || 0;
                 const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
@@ -640,7 +653,7 @@ class TeacherScheduleController {
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
 
-            const teacherName = teacher?.name || `ID ${teacherId}`;
+            const teacherName = teacher?.fullName || teacher?.name || `ID ${teacherId}`;
             const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
             const departmentId = teacher?.department || cached?.departmentId || 0;
             const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);

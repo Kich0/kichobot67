@@ -11,6 +11,7 @@ import i18next from "i18next";
 import log from "../logging/logging.js";
 import { searchTeacherMenuCache } from "./commands/searchTeacherCommandController.js";
 import { searchGroupMenuCache } from "./commands/searchGroupCommandController.js";
+import { isKazakhText, normalizeCyrillic } from "../services/teacherDirectoryService.js";
 
 class SmartSearchController {
     /**
@@ -28,7 +29,11 @@ class SmartSearchController {
         if (!chatId || !text) return;
 
         try {
-            const user_language = await userService.getUserLanguage(chatId).catch(() => 'ru');
+            let user_language = await userService.getUserLanguage(chatId).catch(() => 'ru');
+            // Если студент написал с казахскими буквами (ә, і, ң, ғ, ү, ұ, қ, ө, һ) — отвечаем на казахском
+            if (isKazakhText(text)) {
+                user_language = 'kz';
+            }
 
             // 1. Валидация: если строка слишком короткая (меньше 2 символов) или состоит только из знаков препинания
             if (text.length < 2 || !/[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]/.test(text)) {
@@ -47,17 +52,19 @@ class SmartSearchController {
                 })
             ]);
 
-            const cleanTextLower = text.toLowerCase().trim();
-            const compactQuery = cleanTextLower.replace(/[\s-_.,]/g, '');
+            const normQ = normalizeCyrillic(text);
+            const compactQuery = normQ.replace(/\s+/g, '');
 
             const exactTeacher = teachers.find(t => {
-                const tComp = t.name.toLowerCase().replace(/[\s-_.,]/g, '');
-                return tComp === compactQuery || t.name.toLowerCase() === cleanTextLower;
+                const normName = normalizeCyrillic(t.name);
+                const normFull = normalizeCyrillic(t.fullName || t.name);
+                const normLast = normalizeCyrillic(t.lastName || '');
+                return normFull === normQ || normName === normQ || normFull.replace(/\s+/g, '') === compactQuery || (normLast && normLast === normQ);
             });
 
             const exactGroup = groups.find(g => {
-                const gComp = g.name.toLowerCase().replace(/[\s-_.,]/g, '');
-                return gComp === compactQuery || g.name.toLowerCase() === cleanTextLower;
+                const gNorm = normalizeCyrillic(g.name);
+                return gNorm.replace(/\s+/g, '') === compactQuery || gNorm === normQ;
             });
 
             // =========================================================================
@@ -249,51 +256,76 @@ class SmartSearchController {
         const day = ScheduleController.getCurrentDayNumber();
         const inline_keyboard = [];
 
-        // 1. Блок преподавателей
+        // Интеллектуальное определение приоритета:
+        // Если запрос содержит цифры ("ИС 21") или похож на аббревиатуру группы из 2-4 букв ("ИС", "ВТ", "ЮР")
+        // и найденные группы начинаются с этого запроса — ГРУППЫ ВЫВОДЯТСЯ ПЕРВЫМИ!
+        const normQ = normalizeCyrillic(query);
+        const compQ = normQ.replace(/\s+/g, '');
+        const hasDigits = /\d/.test(query);
+        const isGroupPattern = /^[a-zа-я]{2,4}$/i.test(compQ);
+        const groupStartsWithQ = groups.some(g => normalizeCyrillic(g.name).replace(/\s+/g, '').startsWith(compQ));
+        const preferGroupsFirst = hasDigits || (isGroupPattern && groupStartsWithQ);
+
         const maxInline = 5;
-        const topTeachers = teachers.slice(0, maxInline);
-        const teacherHeader = user_language === 'kz'
-            ? `👨‍🏫 Оқытушылар (${teachers.length}):`
-            : `👨‍🏫 Преподаватели (${teachers.length}):`;
 
-        inline_keyboard.push([{ text: teacherHeader, callback_data: 'nothing' }]);
-        topTeachers.forEach(t => {
-            inline_keyboard.push([{ text: `👨‍🏫 ${t.name}`, callback_data: `TeacherSchedule|${t.id}|${day}` }]);
-        });
+        // Блок формирования кнопок преподавателей
+        const buildTeachersBlock = () => {
+            const topTeachers = teachers.slice(0, maxInline);
+            const teacherHeader = user_language === 'kz'
+                ? `👨‍🏫 Оқытушылар (${teachers.length}):`
+                : `👨‍🏫 Преподаватели (${teachers.length}):`;
 
-        if (teachers.length > maxInline) {
-            const cacheKeyT = query.slice(0, 25).trim();
-            searchTeacherMenuCache[cacheKeyT] = { teachers, time: Date.now() };
-            const moreTeachersText = user_language === 'kz'
-                ? `Барлық оқытушылар (${teachers.length}) ➡️`
-                : `Все преподаватели (${teachers.length}) ➡️`;
-            inline_keyboard.push([{ text: moreTeachersText, callback_data: `searchTeacher|${cacheKeyT}|0` }]);
-        }
+            inline_keyboard.push([{ text: teacherHeader, callback_data: 'nothing' }]);
+            topTeachers.forEach(t => {
+                const label = t.fullName || t.name;
+                const star = t.isHead ? ' ⭐' : '';
+                inline_keyboard.push([{ text: `👨‍🏫 ${label}${star}`, callback_data: `TeacherSchedule|${t.id}|${day}` }]);
+            });
 
-        // 2. Блок групп
-        const topGroups = groups.slice(0, maxInline);
-        const groupHeader = user_language === 'kz'
-            ? `👥 Топтар (${groups.length}):`
-            : `👥 Группы (${groups.length}):`;
+            if (teachers.length > maxInline) {
+                const cacheKeyT = query.slice(0, 25).trim();
+                searchTeacherMenuCache[cacheKeyT] = { teachers, time: Date.now() };
+                const moreTeachersText = user_language === 'kz'
+                    ? `Барлық оқытушылар (${teachers.length}) ➡️`
+                    : `Все преподаватели (${teachers.length}) ➡️`;
+                inline_keyboard.push([{ text: moreTeachersText, callback_data: `searchTeacher|${cacheKeyT}|0` }]);
+            }
+        };
 
-        inline_keyboard.push([{ text: groupHeader, callback_data: 'nothing' }]);
-        topGroups.forEach(g => {
-            const groupLang = g.language || (user_language === 'kz' ? 'каз' : 'рус');
-            inline_keyboard.push([{ text: `👥 ${g.name}`, callback_data: `chooseScheduleLanguage|${groupLang}|${g.id}|${day}` }]);
-        });
+        // Блок формирования кнопок групп
+        const buildGroupsBlock = () => {
+            const topGroups = groups.slice(0, maxInline);
+            const groupHeader = user_language === 'kz'
+                ? `👥 Топтар (${groups.length}):`
+                : `👥 Группы (${groups.length}):`;
 
-        if (groups.length > maxInline) {
-            const cacheKeyG = query.slice(0, 25).trim();
-            searchGroupMenuCache[cacheKeyG] = { groups, time: Date.now() };
-            const moreGroupsText = user_language === 'kz'
-                ? `Барлық топтар (${groups.length}) ➡️`
-                : `Все группы (${groups.length}) ➡️`;
-            inline_keyboard.push([{ text: moreGroupsText, callback_data: `searchGroup|${cacheKeyG}|0` }]);
+            inline_keyboard.push([{ text: groupHeader, callback_data: 'nothing' }]);
+            topGroups.forEach(g => {
+                const groupLang = g.language || (user_language === 'kz' ? 'каз' : 'рус');
+                inline_keyboard.push([{ text: `👥 ${g.name}`, callback_data: `chooseScheduleLanguage|${groupLang}|${g.id}|${day}` }]);
+            });
+
+            if (groups.length > maxInline) {
+                const cacheKeyG = query.slice(0, 25).trim();
+                searchGroupMenuCache[cacheKeyG] = { groups, time: Date.now() };
+                const moreGroupsText = user_language === 'kz'
+                    ? `Барлық топтар (${groups.length}) ➡️`
+                    : `Все группы (${groups.length}) ➡️`;
+                inline_keyboard.push([{ text: moreGroupsText, callback_data: `searchGroup|${cacheKeyG}|0` }]);
+            }
+        };
+
+        if (preferGroupsFirst) {
+            buildGroupsBlock();
+            buildTeachersBlock();
+        } else {
+            buildTeachersBlock();
+            buildGroupsBlock();
         }
 
         const titleText = user_language === 'kz'
-            ? `🔍 «<b>${query}</b>» бойынша оқытушылар да, топтар да табылды:`
-            : `🔍 По запросу «<b>${query}</b>» найдены и преподаватели, и группы:`;
+            ? `🔍 «<b>${query}</b>» бойынша нәтижелер:`
+            : `🔍 Результаты по запросу «<b>${query}</b>»:`;
 
         await bot.sendMessage(chatId, titleText, {
             reply_markup: { inline_keyboard },

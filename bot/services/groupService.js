@@ -1,5 +1,6 @@
 import {Group} from "../models/group.js";
 import log from "../logging/logging.js";
+import { normalizeCyrillic } from "./teacherDirectoryService.js";
 
 class groupService {
     constructor() {
@@ -201,28 +202,29 @@ class groupService {
             await this._ensureCache();
 
             if (this._cache && this._cache.length > 0) {
-                const cleanQuery = String(name || '').toLowerCase().trim();
-                const tokens = cleanQuery.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
-                const compactQuery = cleanQuery.replace(/[\s-_.,]/g, '');
+                const normQuery = normalizeCyrillic(name);
+                const tokens = normQuery.split(' ').filter(Boolean);
+                const compactQuery = normQuery.replace(/\s+/g, '');
 
                 if (tokens.length === 0) return [...this._cache];
 
                 const results = this._cache.filter(g => {
                     if (!g || !g.name) return false;
-                    const lowerName = g.name.toLowerCase();
-                    // 1. Прямое вхождение
-                    if (lowerName.includes(cleanQuery)) return true;
+                    const normName = normalizeCyrillic(g.name);
+                    const compName = normName.replace(/\s+/g, '');
+
+                    // 1. Компактное начало ("ис" -> "ис211", "уис" -> "уис221")
+                    if (compName.startsWith(compactQuery)) return true;
 
                     // 2. Все токены запроса начинаются на слово в названии группы
-                    const normTokens = lowerName.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
+                    const normTokens = normName.split(' ').filter(Boolean);
                     if (tokens.length > 0 && tokens.every(qTok => normTokens.some(nTok => nTok === qTok || nTok.startsWith(qTok)))) {
                         return true;
                     }
 
-                    // 3. Компактное совпадение без пробелов и дефисов ("У ИС" -> "УИС", "ИС 21" -> "ИС-21")
-                    if (compactQuery.length >= 2) {
-                        const comp = lowerName.replace(/[\s-_.,]/g, '');
-                        if (comp.includes(compactQuery)) return true;
+                    // 3. Компактное вхождение от 2 символов
+                    if (compactQuery.length >= 2 && compName.includes(compactQuery)) {
+                        return true;
                     }
 
                     return false;
@@ -230,10 +232,10 @@ class groupService {
 
                 // Сортировка по релевантности: точные совпадения и начинающиеся с запроса идут первыми
                 return results.sort((a, b) => {
-                    const aLower = a.name.toLowerCase();
-                    const bLower = b.name.toLowerCase();
-                    const aComp = aLower.replace(/[\s-_.,]/g, '');
-                    const bComp = bLower.replace(/[\s-_.,]/g, '');
+                    const aNorm = normalizeCyrillic(a.name);
+                    const bNorm = normalizeCyrillic(b.name);
+                    const aComp = aNorm.replace(/\s+/g, '');
+                    const bComp = bNorm.replace(/\s+/g, '');
 
                     if (aComp === compactQuery && bComp !== compactQuery) return -1;
                     if (bComp === compactQuery && aComp !== compactQuery) return 1;

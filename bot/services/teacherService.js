@@ -1,5 +1,6 @@
 import {Teacher} from "../models/teacher.js";
 import log from "../logging/logging.js";
+import teacherDirectoryService, { normalizeCyrillic } from "./teacherDirectoryService.js";
 
 class teacherService {
     constructor() {
@@ -33,10 +34,11 @@ class teacherService {
                 for (const t of docs) {
                     if (!t || !t.id || seen.has(t.id)) continue;
                     seen.add(t.id);
-                    uniqueTeachers.push(t);
+                    const enriched = teacherDirectoryService.enrich(t);
+                    uniqueTeachers.push(enriched);
 
-                    idMap.set(Number(t.id), t);
-                    idMap.set(String(t.id), t);
+                    idMap.set(Number(t.id), enriched);
+                    idMap.set(String(t.id), enriched);
 
                     if (t.department !== undefined && t.department !== null) {
                         const deptKey = Number(t.department);
@@ -45,7 +47,7 @@ class teacherService {
                             list = [];
                             deptMap.set(deptKey, list);
                         }
-                        list.push(t);
+                        list.push(enriched);
                     }
                 }
 
@@ -87,7 +89,8 @@ class teacherService {
             if (recheck) return recheck;
 
             // 3. Fallback в MongoDB на случай редкого ID
-            return await Teacher.findOne({id}).lean();
+            const doc = await Teacher.findOne({id}).lean();
+            return doc ? teacherDirectoryService.enrich(doc) : null;
         } catch (e) {
             throw new Error("Ошибка при получении Teacher по айди: " + e.stack)
         }
@@ -140,7 +143,8 @@ class teacherService {
             for (const t of teachers) {
                 if (t && t.id && !seen.has(t.id)) {
                     seen.add(t.id);
-                    uniqueTeachers.push(t);
+                    const enriched = teacherDirectoryService.enrich(t);
+                    uniqueTeachers.push(enriched);
                 }
             }
 
@@ -168,50 +172,96 @@ class teacherService {
             await this._ensureCache();
 
             if (this._cache && this._cache.length > 0) {
-                const cleanQuery = String(name || '').replace(/[-_.,]/g, ' ').toLowerCase().trim();
-                const tokens = cleanQuery.split(/\s+/).filter(Boolean);
-                const compactQuery = cleanQuery.replace(/[\s-_.,]/g, '');
+                const normQuery = normalizeCyrillic(name);
+                if (!normQuery) return [...this._cache];
+
+                const tokens = normQuery.split(' ').filter(Boolean);
+                const compactQuery = normQuery.replace(/\s+/g, '');
 
                 if (tokens.length === 0) return [...this._cache];
 
-                const results = this._cache.filter(t => {
-                    if (!t || !t.name) return false;
-                    const lower = t.name.toLowerCase();
-                    // 1. Прямое вхождение
-                    if (lower.includes(cleanQuery)) return true;
+                const matches = [];
 
-                    // 2. Все токены запроса начинаются на слово в ФИО
-                    const nameTokens = lower.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
-                    if (tokens.length > 0 && tokens.every(qTok => nameTokens.some(nTok => nTok === qTok || nTok.startsWith(qTok)))) {
-                        return true;
+                for (const t of this._cache) {
+                    if (!t || !t.name) continue;
+
+                    const normName = normalizeCyrillic(t.name);
+                    const normFull = normalizeCyrillic(t.fullName || t.name);
+                    const normLast = normalizeCyrillic(t.lastName || t.name.split(' ')[0]);
+                    const normFirst = normalizeCyrillic(t.firstName || '');
+                    const normPatr = normalizeCyrillic(t.patronymic || '');
+                    const words = [normLast, normFirst, normPatr].filter(Boolean);
+                    const fullTokens = normFull.split(' ').filter(Boolean);
+
+                    // 1. Короткие запросы (<= 2 символов, например "на", "ис")
+                    // СТРОГО префикс фамилии или имени! Никаких случайных совпадений в отчествах!
+                    if (tokens.length === 1 && normQuery.length <= 2) {
+                        const lastStarts = normLast.startsWith(normQuery);
+                        const firstStarts = normFirst && normFirst.startsWith(normQuery);
+                        if (lastStarts || firstStarts) {
+                            matches.push({
+                                teacher: t,
+                                score: lastStarts ? 100 : 60
+                            });
+                        }
+                        continue;
                     }
 
-                    // 3. Компактное совпадение
-                    if (compactQuery.length >= 2) {
-                        const comp = lower.replace(/[\s-_.,]/g, '');
-                        if (comp.includes(compactQuery)) return true;
+                    // 2. Точное совпадение по фамилии
+                    if (normLast === normQuery) {
+                        matches.push({ teacher: t, score: 120 });
+                        continue;
                     }
 
-                    return false;
+                    // 3. Фамилия начинается с запроса (например: "попов" -> "Попова")
+                    if (normLast.startsWith(normQuery)) {
+                        matches.push({ teacher: t, score: 100 });
+                        continue;
+                    }
+
+                    // 4. Имя начинается с запроса (например: "салтанат", "айнур", "полина")
+                    if (normFirst && normFirst.startsWith(normQuery)) {
+                        matches.push({ teacher: t, score: 85 });
+                        continue;
+                    }
+
+                    // 5. Инициалы начинаются с запроса (например: "попова н" -> "Попова Н. В.")
+                    if (normName.startsWith(normQuery) || normName.replace(/\s+/g, '').startsWith(compactQuery)) {
+                        matches.push({ teacher: t, score: 90 });
+                        continue;
+                    }
+
+                    // 6. Многословный запрос (например: "Попова Надежда", "Танин Алибек", "Надежда Викторовна")
+                    // Каждый токен запроса должен быть префиксом хотя бы одного слова в ФИО
+                    if (tokens.length > 1) {
+                        const allTokensMatch = tokens.every(qTok => fullTokens.some(w => w.startsWith(qTok)));
+                        if (allTokensMatch) {
+                            matches.push({ teacher: t, score: 80 });
+                            continue;
+                        }
+                    }
+
+                    // 7. Компактное совпадение от 3 букв (без пробелов)
+                    if (compactQuery.length >= 3) {
+                        const compFull = normFull.replace(/\s+/g, '');
+                        if (compFull.startsWith(compactQuery)) {
+                            matches.push({ teacher: t, score: 70 });
+                            continue;
+                        }
+                    }
+                }
+
+                // Сортировка по релевантности:
+                // Наивысший балл -> Заведующие кафедрой -> Алфавит
+                matches.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.teacher.isHead !== a.teacher.isHead) return (b.teacher.isHead ? 1 : 0) - (a.teacher.isHead ? 1 : 0);
+                    const nameA = a.teacher.fullName || a.teacher.name;
+                    const nameB = b.teacher.fullName || b.teacher.name;
+                    return nameA.localeCompare(nameB, 'ru');
                 });
 
-                // Сортировка: фамилии, начинающиеся с запроса, идут первыми
-                return results.sort((a, b) => {
-                    const aLower = a.name.toLowerCase();
-                    const bLower = b.name.toLowerCase();
-                    const aComp = aLower.replace(/[\s-_.,]/g, '');
-                    const bComp = bLower.replace(/[\s-_.,]/g, '');
-
-                    if (aComp === compactQuery && bComp !== compactQuery) return -1;
-                    if (bComp === compactQuery && aComp !== compactQuery) return 1;
-
-                    const aStarts = aComp.startsWith(compactQuery);
-                    const bStarts = bComp.startsWith(compactQuery);
-                    if (aStarts && !bStarts) return -1;
-                    if (!aStarts && bStarts) return 1;
-
-                    return a.name.localeCompare(b.name, 'ru');
-                });
+                return matches.map(m => m.teacher);
             }
 
             // Fallback в MongoDB
@@ -223,7 +273,7 @@ class teacherService {
                 if (seen.has(t.id)) return false;
                 seen.add(t.id);
                 return true;
-            });
+            }).map(t => teacherDirectoryService.enrich(t));
         } catch (e) {
             throw new Error("Ошибка при поиске Teacher по имени: " + e.stack);
         }

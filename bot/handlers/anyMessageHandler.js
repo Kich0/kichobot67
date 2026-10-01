@@ -32,6 +32,12 @@ export function setupAnyMessageHandler() {
             }
 
             if (msg.chat.type === 'private' && msg.text) {
+                // Все сообщения со слешем '/' — это команды Telegram (пользовательские, админские или сервисные).
+                // Умный поиск НИКОГДА не должен обрабатывать слеш-команды!
+                if (msg.text.startsWith('/')) {
+                    return;
+                }
+
                 const isCommand = COMMAND_REGEXES.some(regex => regex.test(msg.text));
                 
                 if (!isCommand) {
