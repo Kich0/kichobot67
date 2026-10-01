@@ -499,17 +499,13 @@ class TeacherScheduleController {
     }
 
     getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language) {
-        const inline_keyboard = [];
-        const domain = config.WEBHOOK_DOMAIN ? config.WEBHOOK_DOMAIN.replace(/\/+$/, '') : '';
-        if (domain && domain.startsWith('https://')) {
-            const webAppUrl = `${domain}/bot/webapp/teacher?id=${teacherId}&lang=${user_language}`;
-            const webAppText = user_language === 'kz' ? '📱 Интерактивті кесте (толық экран)' : '📱 Интерактивная таблица (на весь экран)';
-            inline_keyboard.push([{ text: webAppText, web_app: { url: webAppUrl } }]);
-        }
-        inline_keyboard.push([{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }]);
-        inline_keyboard.push([{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }]);
-        inline_keyboard.push([{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]);
-        return { inline_keyboard };
+        return {
+            inline_keyboard: [
+                [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
+                [{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }],
+                [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
+            ]
+        };
     }
 
     async sendScheduleImage(call, forceRefresh = false) {

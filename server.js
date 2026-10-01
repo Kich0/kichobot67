@@ -114,9 +114,6 @@ app.use('/express/api', backendRouter);
 // === Bot routes (webhook, health, WebApp API) ===
 app.use('/bot', botRouter);
 
-// === Telegram WebApp static files ===
-app.use('/webapp', express.static(path.resolve(__dirname, 'webapp')));
-
 // === Health check для Render ===
 app.get('/', (req, res) => res.send('Kichobot is alive! 🤖'));
 
