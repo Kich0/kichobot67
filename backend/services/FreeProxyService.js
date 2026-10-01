@@ -4,7 +4,7 @@ import { HttpProxyAgent } from "http-proxy-agent";
 import log from "../logging/logging.js";
 
 const POOL_SIZE = 8;              // Сколько прокси держать в пуле
-const MAINTAIN_INTERVAL = 30 * 1000; // Проверка пула каждые 30 сек
+const MAINTAIN_INTERVAL = 180 * 1000; // Проверка пула каждые 3 минуты (вместо 30 сек)
 const PROXY_TEST_TIMEOUT = 2500;  // Жёсткий таймаут для теста — только быстрые прокси
 const BATCH_SIZE = 30;            // Параллельная проверка батчами
 
@@ -42,7 +42,7 @@ class FreeProxyService {
             this.isMaintaining = true;
 
             try {
-                log.info(`[ProxyPool Maintain] Проверяю здоровье пула (${this.proxyPool.length}/${POOL_SIZE})...`);
+                log.debug(`[ProxyPool Maintain] Проверяю здоровье пула (${this.proxyPool.length}/${POOL_SIZE})...`);
                 const healthChecks = await Promise.all(
                     this.proxyPool.map(async (proxy) => {
                         const alive = await this.testProxy(proxy);
@@ -66,7 +66,7 @@ class FreeProxyService {
                     await this._fillPool();
                 }
 
-                log.info(`[ProxyPool Maintain] Готово. Пул: ${this.proxyPool.length}/${POOL_SIZE}`);
+                log.debug(`[ProxyPool Maintain] Готово. Пул: ${this.proxyPool.length}/${POOL_SIZE}`);
             } catch (e) {
                 log.error(`[ProxyPool Maintain] Ошибка: ${e.message}`);
             } finally {

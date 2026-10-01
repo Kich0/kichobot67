@@ -41,6 +41,7 @@ import { setupUserDailyStatisticsLogging } from "./bot/cron/userDailyStatisticsL
 import { setupDailyDataUpdate } from "./bot/cron/dailyDataUpdate.js";
 import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/loggingPathUpdate.js";
 import { setupScheduleCacheWarmup } from "./bot/cron/scheduleCacheWarmup.js";
+import { setupLogArchiver } from "./bot/cron/logArchiver.js";
 import setupNewChatMemberHandler from "./bot/handlers/newChatMemberHandler.js";
 import { setupAnyMessageHandler } from "./bot/handlers/anyMessageHandler.js";
 import { i18nextInit } from "./bot/locales/init.js";
@@ -178,6 +179,7 @@ const appStart = async () => {
         await setupDailyDataUpdate();
         await setupBotLoggingPathUpdate();
         setupScheduleCacheWarmup();
+        setupLogArchiver();
 
         // [TurboPack] Прогрев In-Memory индексов преподавателей и групп в RAM (через 1 сек)
         setTimeout(async () => {

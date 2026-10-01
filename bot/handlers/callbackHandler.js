@@ -16,6 +16,9 @@ export default function setupCallbackHandlers() {
     bot.on('callback_query', async (call) => {
         log.silly(`User ${call.message.chat.id} clicked to btn ${call.data}`, {call, userId: call.message.chat.id})
         await callbackAntiSpamMiddleware(call, async () => {
+            // Мгновенный ответ Telegram (Fast Ack) — гасит крутящийся спиннер за 25-40 мс
+            bot.answerCallbackQuery(call.id).catch(() => {});
+
             if (call.data === "delete") {
                 await bot.deleteMessage(call.message.chat.id, call.message.message_id)
                     .catch((e) => log.warn(`User ${call.message.chat.id} получил ошибку при попытке удалить менюшку. Юзер никак не пострадал.` + e.message, {stack: e.stack}))
@@ -213,7 +216,7 @@ export default function setupCallbackHandlers() {
                 }
             }
 
-            await bot.answerCallbackQuery(call.id).catch(e => log.info("Ошибка с ответов на колбек" + e.message))
+            // Подтверждение нажатия уже отправлено на старте для максимальной скорости (Fast Ack)
         })
 
     })

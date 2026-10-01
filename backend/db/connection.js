@@ -8,8 +8,8 @@ class Database{
             await mongoose.connect(URI, {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
-                maxPoolSize: 10,
-                minPoolSize: 2,
+                maxPoolSize: 20,
+                minPoolSize: 5,
                 serverSelectionTimeoutMS: 5000,
             });
 

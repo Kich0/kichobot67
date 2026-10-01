@@ -4,6 +4,8 @@ import config from "../config.js";
 import KsuAuthService from "./KsuAuthService.js";
 import FreeProxyService from "./FreeProxyService.js";
 import axios from "axios";
+import https from "https";
+import http from "http";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import * as cheerio from "cheerio";
@@ -11,12 +13,28 @@ import BuketovApiService from "../../bot/services/buketovApiService.js";
 import ScheduleApiAdapter from "../../bot/services/scheduleApiAdapter.js";
 import { Group } from "../../bot/models/group.js";
 
-
 export function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 const SCHEDULE_TIMEOUT = 15000; // 15 сек на скачивание расписания
+
+// Глобальный Keep-Alive пул (экономия 200-350 мс на каждом TCP/TLS соединении к КарУ)
+export const keepAliveHttpsAgent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 60000,
+    maxSockets: 30,
+    maxFreeSockets: 10,
+    timeout: 30000
+});
+
+export const keepAliveHttpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 60000,
+    maxSockets: 30,
+    maxFreeSockets: 10,
+    timeout: 30000
+});
 
 class ScheduleService {
 
@@ -35,6 +53,8 @@ class ScheduleService {
                     timeout: SCHEDULE_TIMEOUT,
                     maxRedirects: 0,
                     validateStatus: () => true,
+                    httpsAgent: keepAliveHttpsAgent,
+                    httpAgent: keepAliveHttpAgent,
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                         'Cookie': cookie
@@ -473,6 +493,8 @@ class ScheduleService {
                                 'Cookie': cookie, 
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
                             },
+                            httpsAgent: keepAliveHttpsAgent,
+                            httpAgent: keepAliveHttpAgent,
                             timeout: 10000,
                             validateStatus: () => true
                         });

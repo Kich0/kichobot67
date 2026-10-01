@@ -20,6 +20,7 @@ import {getUserCommandController, getUserLogsCommandController} from "../control
 import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
 import axios from "axios";
+import { archiveAndBackupLogs } from "../cron/logArchiver.js";
 
 
 export function sleep(ms) {
@@ -296,6 +297,23 @@ export default function setupAdminCommandHandler() {
     }
   });
 
+  bot.onText(/^\/(backup_logs|archive_logs|export_logs)/i, async (msg) => {
+    try {
+      if (!await userService.isAdmin(msg.from.id)) {
+        return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!");
+      }
+      const statusMsg = await bot.sendMessage(msg.chat.id, "⏳ Начинаю архивацию логов и выгрузку на Google Диск / Telegram...");
+      await archiveAndBackupLogs();
+      await bot.editMessageText("✅ Архивация завершена! Логи выгружены в облако.", {
+        chat_id: statusMsg.chat.id,
+        message_id: statusMsg.message_id
+      });
+    } catch (e) {
+      log.error("Ошибка при /backup_logs: " + e.message, { stack: e.stack });
+      await bot.sendMessage(msg.chat.id, "❌ Ошибка при архивации: " + e.message);
+    }
+  });
+
 
   bot.onText(/^\/get_users_by_group/i, async (msg) => {
     try {
@@ -470,7 +488,8 @@ export default function setupAdminCommandHandler() {
       '/sms [ID/@ник] [текст] — <i>отправить личное сообщение пользователю</i>\n' +
       '/sms all [текст] — <i>разовое оповещение всем пользователям (1 раз)</i>\n\n' +
       '🛠 <b>Сервисные команды:</b>\n' +
-      '/get_logs — скачать лог-файл бота\n' +
+      '/backup_logs — архивировать и выгрузить логи на Google Диск / Telegram\n' +
+      '/get_logs — скачать текущий лог-файл бота\n' +
       '/ignoreLogs [userId] — добавить в игнор логов\n' +
       '/restart — перезапуск сессии браузера\n' +
       '/info — отладочная информация\n' +

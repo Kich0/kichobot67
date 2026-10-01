@@ -98,7 +98,15 @@ class SmartSearchController {
             }
 
             // =========================================================================
-            // СЦЕНАРИЙ 6: Ничего не найдено
+            // СЦЕНАРИЙ 6: Нечёткий поиск при опечатках ("Возможно, вы имели в виду...")
+            // =========================================================================
+            const fuzzySuggestions = await this.findFuzzySuggestions(text);
+            if (fuzzySuggestions && fuzzySuggestions.length > 0) {
+                return await this.showFuzzySuggestions(chatId, msg, fuzzySuggestions, text, user_language);
+            }
+
+            // =========================================================================
+            // СЦЕНАРИЙ 7: Ничего не найдено
             // =========================================================================
             return await this.showNotFound(chatId, text, user_language);
 
@@ -317,6 +325,99 @@ class SmartSearchController {
     }
 
     /**
+     * Поиск подсказок при опечатках (Fuzzy search)
+     */
+    async findFuzzySuggestions(rawQuery) {
+        try {
+            const clean = String(rawQuery || '').toLowerCase().trim();
+            const compact = clean.replace(/[\s-_.,]/g, '');
+            if (compact.length < 3) return [];
+
+            const compactNoSuffix = compact.replace(/(\d+)[ркkzru]+$/i, '$1');
+
+            const [allTeachers, allGroups] = await Promise.all([
+                TeacherService.getAll().catch(() => []),
+                GroupService.getAll().catch(() => [])
+            ]);
+
+            const suggestions = [];
+
+            // 1. Поиск среди групп
+            for (const g of allGroups) {
+                if (!g || !g.name) continue;
+                const gComp = g.name.toLowerCase().replace(/[\s-_.,]/g, '');
+                const sim1 = calculateSimilarity(compact, gComp);
+                const sim2 = calculateSimilarity(compactNoSuffix, gComp);
+                const bestSim = Math.max(sim1, sim2);
+
+                if (bestSim >= 0.60) {
+                    suggestions.push({ type: 'group', item: g, sim: bestSim });
+                }
+            }
+
+            // 2. Поиск среди преподавателей
+            for (const t of allTeachers) {
+                if (!t || !t.name) continue;
+                const parts = t.name.toLowerCase().split(/[\s.]+/).filter(Boolean);
+                const surname = parts[0] || '';
+                const simSurname = calculateSimilarity(compact, surname);
+                const simFull = calculateSimilarity(compact, t.name.toLowerCase().replace(/[\s-_.,]/g, ''));
+                const bestSim = Math.max(simSurname, simFull);
+
+                if (bestSim >= 0.60) {
+                    suggestions.push({ type: 'teacher', item: t, sim: bestSim });
+                }
+            }
+
+            return suggestions.sort((a, b) => b.sim - a.sim).slice(0, 3);
+        } catch (e) {
+            log.error(`[SmartSearch] Ошибка fuzzy search: ${e.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * Отображение подсказок "Возможно, вы имели в виду..."
+     */
+    async showFuzzySuggestions(chatId, msg, suggestions, query, user_language) {
+        userActionService.logAction(
+            chatId,
+            msg.from?.username,
+            'smart_search_fuzzy_suggest',
+            `Умный поиск: предложено ${suggestions.length} вариантов для опечатки "${query}"`
+        ).catch(() => {});
+
+        const day = ScheduleController.getCurrentDayNumber();
+        const inline_keyboard = [];
+
+        suggestions.forEach(s => {
+            if (s.type === 'group') {
+                const groupLang = s.item.language || (user_language === 'kz' ? 'каз' : 'рус');
+                const btnText = `👥 ${s.item.name} (${groupLang})`;
+                inline_keyboard.push([{
+                    text: btnText,
+                    callback_data: `chooseScheduleLanguage|${groupLang}|${s.item.id}|${day}`
+                }]);
+            } else if (s.type === 'teacher') {
+                const btnText = `👨‍🏫 ${s.item.name}`;
+                inline_keyboard.push([{
+                    text: btnText,
+                    callback_data: `TeacherSchedule|${s.item.id}|${day}`
+                }]);
+            }
+        });
+
+        const titleText = user_language === 'kz'
+            ? `🤔 <b>Мүмкін, сіз мынаны іздедіңіз бе?</b>\n\nСұраныс: «<i>${query}</i>»\nКеректісін таңдаңыз 👇`
+            : `🤔 <b>Возможно, вы имели в виду:</b>\n\nЗапрос: «<i>${query}</i>»\nНажмите на нужный вариант 👇`;
+
+        await bot.sendMessage(chatId, titleText, {
+            reply_markup: { inline_keyboard },
+            parse_mode: 'HTML'
+        });
+    }
+
+    /**
      * Стандартное приветствие, если введён 1 символ или знак препинания
      */
     async sendWelcomeFallback(chatId, user_language) {
@@ -331,6 +432,37 @@ class SmartSearchController {
         const msgText = i18next.t('welcome_page', { lng: user_language });
         await bot.sendMessage(chatId, msgText, { reply_markup: keyboard, parse_mode: 'HTML' });
     }
+}
+
+function levenshteinDistance(s1, s2) {
+    const a = s1.toLowerCase();
+    const b = s2.toLowerCase();
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+    return matrix[b.length][a.length];
+}
+
+function calculateSimilarity(s1, s2) {
+    const l1 = s1.length;
+    const l2 = s2.length;
+    if (l1 === 0 || l2 === 0) return 0;
+    const dist = levenshteinDistance(s1, s2);
+    return 1 - dist / Math.max(l1, l2);
 }
 
 export default new SmartSearchController();
