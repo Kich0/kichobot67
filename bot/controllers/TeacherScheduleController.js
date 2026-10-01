@@ -498,6 +498,20 @@ class TeacherScheduleController {
         }
     }
 
+    getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language) {
+        const inline_keyboard = [];
+        const domain = config.WEBHOOK_DOMAIN ? config.WEBHOOK_DOMAIN.replace(/\/+$/, '') : '';
+        if (domain && domain.startsWith('https://')) {
+            const webAppUrl = `${domain}/bot/webapp/teacher?id=${teacherId}&lang=${user_language}`;
+            const webAppText = user_language === 'kz' ? '📱 Интерактивті кесте (толық экран)' : '📱 Интерактивная таблица (на весь экран)';
+            inline_keyboard.push([{ text: webAppText, web_app: { url: webAppUrl } }]);
+        }
+        inline_keyboard.push([{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }]);
+        inline_keyboard.push([{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }]);
+        inline_keyboard.push([{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]);
+        return { inline_keyboard };
+    }
+
     async sendScheduleImage(call, forceRefresh = false) {
         const chatId = call.message?.chat?.id;
         if (!chatId) return;
@@ -534,13 +548,7 @@ class TeacherScheduleController {
                 const teacherName = teacher?.name || `ID ${teacherId}`;
                 const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
                 const departmentId = teacher?.department || cached?.departmentId || 0;
-                const markup = {
-                    inline_keyboard: [
-                        [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
-                        [{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }],
-                        [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
-                    ]
-                };
+                const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
 
                 if (call.message.photo) {
                     await bot.editMessageCaption(caption, {
@@ -565,6 +573,9 @@ class TeacherScheduleController {
                 await bot.answerCallbackQuery(call.id, { text: loadingText, show_alert: false }).catch(() => {});
 
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
+                if (cached) {
+                    delete cached.telegramFileId;
+                }
 
                 try {
                     const response = await downloadSchedule(teacherId);
@@ -623,6 +634,7 @@ class TeacherScheduleController {
                     cached._enriched = true;
                     teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
                     TeacherTableImageService.invalidateTeacherImage(teacherId);
+                    delete cached.telegramFileId;
                 }
             }
 
@@ -632,28 +644,40 @@ class TeacherScheduleController {
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
 
-            const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);
-
             const teacherName = teacher?.name || `ID ${teacherId}`;
             const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
             const departmentId = teacher?.department || cached?.departmentId || 0;
+            const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
 
-            const markup = {
-                inline_keyboard: [
-                    [{ text: `📝 ${i18next.t('schedule_text_view', { lng: user_language })}`, callback_data: `teacherText|${teacherId}|${dayNumber}` }],
-                    [{ text: `🔄`, callback_data: `refreshteacherImg|${teacherId}|${dayNumber}` }],
-                    [{ text: `🔙 ${i18next.t('go_prev_menu', { lng: user_language })}`, callback_data: `teacher|${departmentId}|0` }]
-                ]
-            };
+            let photoMsg = null;
 
-            const photoMsg = await bot.sendPhoto(chatId, pngBuffer, {
-                caption,
-                parse_mode: 'HTML',
-                reply_markup: markup
-            }, {
-                filename: 'teacher_schedule.png',
-                contentType: 'image/png'
-            });
+            // Попытка отправить через сохранённый file_id Telegram (0 байт трафика на Render!)
+            if (cached?.telegramFileId && !forceRefresh) {
+                photoMsg = await bot.sendPhoto(chatId, cached.telegramFileId, {
+                    caption,
+                    parse_mode: 'HTML',
+                    reply_markup: markup
+                }).catch(err => {
+                    log.warn(`[sendScheduleImage] Не удалось отправить через file_id (${err.message}), переключаюсь на буфер`);
+                    return null;
+                });
+            }
+
+            if (!photoMsg) {
+                const pngBuffer = await TeacherTableImageService.getTeacherTableImage(teacher, data, user_language);
+                photoMsg = await bot.sendPhoto(chatId, pngBuffer, {
+                    caption,
+                    parse_mode: 'HTML',
+                    reply_markup: markup
+                }, {
+                    filename: 'teacher_schedule.png',
+                    contentType: 'image/png'
+                });
+
+                if (photoMsg?.photo?.length > 0 && cached) {
+                    cached.telegramFileId = photoMsg.photo[photoMsg.photo.length - 1].file_id;
+                }
+            }
 
             if (photoMsg && call.message?.message_id) {
                 await bot.deleteMessage(chatId, call.message.message_id).catch(() => {});

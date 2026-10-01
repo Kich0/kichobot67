@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+    <title>Расписание преподавателя</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg-canvas: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border-color: #cbd5e1;
+            
+            /* Фирменные цвета КарУ */
+            --header-bg: #475569;
+            --header-text: #ffffff;
+            --header-sub: #cbd5e1;
+            --day-bg: #e2e8f0;
+            --day-text: #1e293b;
+            --busy-bg: #15803d;
+            --free-bg: #b91c1c;
+            --group-text: #ffffff;
+            --room-text: #fef08a;
+            --subject-text: #e2e8f0;
+            --type-text: #86efac;
+            --dash-text: #f8fafc;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-canvas);
+            color: var(--text-main);
+            padding: 12px;
+            padding-bottom: 40px;
+            user-select: none;
+        }
+
+        /* Верхняя панель */
+        .header {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        .header-univ {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+            line-height: 1.25;
+        }
+
+        .header-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .badge-live {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            background: #dcfce7;
+            color: #15803d;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-live::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #15803d;
+        }
+
+        /* Переключатель режимов */
+        .view-switch {
+            display: flex;
+            background: #e2e8f0;
+            border-radius: 10px;
+            padding: 3px;
+            margin-bottom: 12px;
+        }
+
+        .switch-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            font-size: 13px;
+            font-weight: 600;
+            color: #475569;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+        }
+
+        .switch-btn.active {
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        /* Контейнер таблицы с поддержкой нативного скролла и sticky-заголовков */
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: auto;
+            background: #ffffff;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+            max-height: calc(100vh - 160px);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        table.schedule-table {
+            border-collapse: separate;
+            border-spacing: 4px;
+            width: 100%;
+            min-width: 800px;
+        }
+
+        /* Липкие заголовки */
+        th.corner-cell {
+            position: sticky;
+            top: 0;
+            left: 0;
+            z-index: 30;
+            background: #334155;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 10px 8px;
+            text-align: center;
+            border-radius: 6px;
+            min-width: 100px;
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.08);
+        }
+
+        th.time-header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: var(--header-bg);
+            color: var(--header-text);
+            padding: 8px 6px;
+            text-align: center;
+            border-radius: 6px;
+            min-width: 140px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+        }
+
+        .time-header .pair-num {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--header-sub);
+        }
+
+        .time-header .pair-time {
+            font-size: 11px;
+            font-weight: 500;
+            margin-top: 2px;
+        }
+
+        th.day-header {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background: var(--day-bg);
+            color: var(--day-text);
+            font-size: 13px;
+            font-weight: 700;
+            padding: 10px 8px;
+            text-align: center;
+            border-radius: 6px;
+            min-width: 100px;
+            box-shadow: 2px 0 4px rgba(0,0,0,0.06);
+        }
+
+        /* Ячейки пар */
+        td.cell-busy {
+            background-color: var(--busy-bg);
+            color: #ffffff;
+            border-radius: 6px;
+            padding: 8px 6px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.1s ease, filter 0.1s ease;
+            vertical-align: middle;
+        }
+
+        td.cell-busy:active {
+            transform: scale(0.98);
+            filter: brightness(1.1);
+        }
+
+        .cell-groups {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--group-text);
+            line-height: 1.25;
+            margin-bottom: 3px;
+            word-break: break-word;
+        }
+
+        .cell-groups-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            font-size: 10.5px;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 4px;
+        }
+
+        .cell-room {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--room-text);
+            margin-bottom: 2px;
+        }
+
+        .cell-subject {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--subject-text);
+            line-height: 1.2;
+            margin-bottom: 2px;
+        }
+
+        .cell-type {
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--type-text);
+        }
+
+        td.cell-free {
+            background-color: var(--free-bg);
+            color: var(--dash-text);
+            border-radius: 6px;
+            text-align: center;
+            font-size: 20px;
+            font-weight: 700;
+            vertical-align: middle;
+        }
+
+        /* Дневной режим (карточки) */
+        .daily-view {
+            display: none;
+        }
+
+        .day-tabs {
+            display: flex;
+            gap: 6px;
+            overflow-x: auto;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            scrollbar-width: none;
+        }
+
+        .day-tabs::-webkit-scrollbar {
+            display: none;
+        }
+
+        .day-tab {
+            padding: 8px 14px;
+            background: #e2e8f0;
+            border: none;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .day-tab.active {
+            background: #15803d;
+            color: #ffffff;
+        }
+
+        .lesson-card {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            border-left: 5px solid #15803d;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border-top: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .lesson-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .lesson-card-time {
+            font-size: 13px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .lesson-card-type {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: #dcfce7;
+            color: #15803d;
+        }
+
+        .lesson-card-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 6px;
+        }
+
+        .lesson-card-meta {
+            font-size: 13px;
+            color: #475569;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .lesson-card-meta span strong {
+            color: #0f172a;
+        }
+
+        .empty-day-banner {
+            text-align: center;
+            padding: 40px 20px;
+            background: #ffffff;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            color: #64748b;
+        }
+
+        .empty-day-banner h3 {
+            font-size: 18px;
+            color: #1e293b;
+            margin-bottom: 6px;
+        }
+
+        /* Модальное окно (BottomSheet) подробностей пары */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: none;
+            align-items: flex-end;
+            z-index: 100;
+            backdrop-filter: blur(2px);
+            animation: fadeIn 0.2s ease;
+        }
+
+        .modal-sheet {
+            background: #ffffff;
+            width: 100%;
+            border-radius: 18px 18px 0 0;
+            padding: 20px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+            animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+
+        .sheet-handle {
+            width: 36px;
+            height: 4px;
+            background: #cbd5e1;
+            border-radius: 2px;
+            margin: 0 auto 16px auto;
+        }
+
+        .sheet-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 8px;
+        }
+
+        .sheet-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            background: #dcfce7;
+            color: #15803d;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 14px;
+        }
+
+        .sheet-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 14px;
+        }
+
+        .sheet-row .label {
+            color: #64748b;
+        }
+
+        .sheet-row .value {
+            font-weight: 600;
+            color: #0f172a;
+            text-align: right;
+            max-width: 65%;
+        }
+
+        .sheet-groups-taglist {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .sheet-group-tag {
+            background: #f1f5f9;
+            color: #1e293b;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .sheet-close-btn {
+            width: 100%;
+            margin-top: 18px;
+            padding: 12px;
+            background: #15803d;
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Шапка страницы -->
+    <header class="header">
+        <div class="header-univ" id="univTitle">КарУ им. академика Е.А. Букетова</div>
+        <h1 class="header-title" id="teacherTitle">Загруженность преподавателя</h1>
+        <div class="header-meta">
+            <span class="badge-live">Официальный API</span>
+            <span id="updateTime">Обновлено недавно</span>
+        </div>
+    </header>
+
+    <!-- Переключатель режима: Сетка / По дням -->
+    <div class="view-switch">
+        <button class="switch-btn active" id="btnViewGrid" onclick="switchView('grid')">📊 Сетка недели</button>
+        <button class="switch-btn" id="btnViewDaily" onclick="switchView('daily')">📱 По дням</button>
+    </div>
+
+    <!-- Режим 1: Сетка недели (Скролл + Sticky) -->
+    <div class="table-container" id="gridContainer">
+        <table class="schedule-table" id="scheduleTable">
+            <!-- Генерируется динамически через JS -->
+        </table>
+    </div>
+
+    <!-- Режим 2: По дням (Карточки) -->
+    <div class="daily-view" id="dailyContainer">
+        <div class="day-tabs" id="dayTabs">
+            <!-- Табы дней недели -->
+        </div>
+        <div id="dayLessonsList">
+            <!-- Список карточек выбранного дня -->
+        </div>
+    </div>
+
+    <!-- Модальное окно деталей пары (BottomSheet) -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+        <div class="modal-sheet" onclick="event.stopPropagation()">
+            <div class="sheet-handle"></div>
+            <div class="sheet-badge" id="modalTypeBadge">Лекция</div>
+            <h2 class="sheet-title" id="modalSubjectTitle">Название предмета</h2>
+            <div class="sheet-row">
+                <span class="label">Время:</span>
+                <span class="value" id="modalTimeVal">8.30 - 9.20</span>
+            </div>
+            <div class="sheet-row">
+                <span class="label">Аудитория / Корпус:</span>
+                <span class="value" id="modalRoomVal">Ауд. 510, Корпус 2</span>
+            </div>
+            <div class="sheet-row" style="border-bottom:none; flex-direction:column; gap:4px;">
+                <span class="label">Группы (поток):</span>
+                <div class="sheet-groups-taglist" id="modalGroupsTags"></div>
+            </div>
+            <button class="sheet-close-btn" onclick="closeModal()">Закрыть</button>
+        </div>
+    </div>
+
+    <script>
+        // Инициализация Telegram WebApp API
+        const tg = window.Telegram?.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
+        }
+
+        // Данные расписания (внедряются сервером в window.SCHEDULE_DATA или подгружаются)
+        const scheduleData = window.SCHEDULE_DATA || [];
+        const teacherInfo = window.TEACHER_INFO || { name: 'Преподаватель' };
+        const lang = window.SCHEDULE_LANG || 'ru';
+
+        const standardTimes = [
+            "8.30-9.20", "9.30-10.20", "10.40-11.30", "11.40-12.30",
+            "12.40-13.30", "13.40-14.30", "14.40-15.30", "15.50-16.40",
+            "16.50-17.40", "17.50-18.40"
+        ];
+
+        function normalizeTime(t) {
+            if (!t) return '';
+            return t.replace(/[:]/g, '.').replace(/[–—]/g, '-').replace(/(^|-)0(\d)/g, '$1$2').trim();
+        }
+
+        // Рендеринг интерфейса
+        function initApp() {
+            document.getElementById('teacherTitle').innerText = teacherInfo.name;
+            if (lang === 'kz') {
+                document.getElementById('univTitle').innerText = 'Е.А. Бөкетов атындағы ҚарУ';
+                document.getElementById('btnViewGrid').innerText = '📊 Апта кестесі';
+                document.getElementById('btnViewDaily').innerText = '📱 Күндер бойынша';
+            }
+
+            renderGrid();
+            renderDailyTabs();
+        }
+
+        function renderGrid() {
+            const table = document.getElementById('scheduleTable');
+            table.innerHTML = '';
+
+            // Определение активных пар недели
+            let minActive = -1;
+            let maxActive = -1;
+
+            standardTimes.forEach((t, idx) => {
+                const normT = normalizeTime(t);
+                const hasSlot = scheduleData.some(d => d.groups?.some(g => normalizeTime(g.time) === normT && g.group));
+                if (hasSlot) {
+                    if (minActive === -1) minActive = idx;
+                    maxActive = idx;
+                }
+            });
+
+            let activeTimes = standardTimes.slice(0, 6);
+            let startPairNumber = 1;
+
+            if (minActive !== -1) {
+                let start = Math.max(0, minActive);
+                let end = Math.min(standardTimes.length - 1, maxActive);
+                if (end - start + 1 < 5) {
+                    if (start > 0) start = Math.max(0, start - 1);
+                    if (end < standardTimes.length - 1) end = Math.min(standardTimes.length - 1, end + 1);
+                }
+                activeTimes = standardTimes.slice(start, end + 1);
+                startPairNumber = start + 1;
+            }
+
+            // Шапка таблицы
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            
+            const corner = document.createElement('th');
+            corner.className = 'corner-cell';
+            corner.innerText = lang === 'kz' ? 'Күн \\ Уақыт' : 'День \\ Время';
+            headerRow.appendChild(corner);
+
+            const pairWord = lang === 'kz' ? 'сабақ' : 'пара';
+            activeTimes.forEach((t, i) => {
+                const th = document.createElement('th');
+                th.className = 'time-header';
+                th.innerHTML = `
+                    <div class="pair-num">${startPairNumber + i} ${pairWord}</div>
+                    <div class="pair-time">${t}</div>
+                `;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            // Тело таблицы
+            const tbody = document.createElement('tbody');
+            scheduleData.forEach((dayObj, dayIdx) => {
+                const tr = document.createElement('tr');
+
+                // Название дня
+                const dayTh = document.createElement('th');
+                dayTh.className = 'day-header';
+                dayTh.innerText = dayObj.day;
+                tr.appendChild(dayTh);
+
+                // Слоты
+                activeTimes.forEach(t => {
+                    const normT = normalizeTime(t);
+                    const slot = dayObj.groups?.find(g => normalizeTime(g.time) === normT && g.group);
+                    const td = document.createElement('td');
+
+                    if (slot) {
+                        td.className = 'cell-busy';
+                        const groups = slot.groupsList || [slot.group.replace(/\s*\([^)]*\)/g, '').trim()];
+                        const roomStr = slot.room ? `${slot.room}${slot.building ? '/' + slot.building : ''}` : '';
+
+                        let groupsHtml = '';
+                        if (groups.length >= 6) {
+                            const mid = Math.ceil(groups.length / 2);
+                            const c1 = groups.slice(0, mid).join('<br>');
+                            const c2 = groups.slice(mid).join('<br>');
+                            groupsHtml = `<div class="cell-groups-2col"><div>${c1}</div><div>${c2}</div></div>`;
+                        } else {
+                            groupsHtml = `<div class="cell-groups">${groups.join(', ')}</div>`;
+                        }
+
+                        td.innerHTML = `
+                            ${groupsHtml}
+                            ${roomStr ? `<div class="cell-room">Ауд. ${roomStr}</div>` : ''}
+                            ${slot.subject ? `<div class="cell-subject">${slot.subject}</div>` : ''}
+                            ${slot.lessonType ? `<div class="cell-type">(${slot.lessonType})</div>` : ''}
+                        `;
+
+                        td.onclick = () => {
+                            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                            openModal(slot, dayObj.day);
+                        };
+                    } else {
+                        td.className = 'cell-free';
+                        td.innerText = '-';
+                    }
+
+                    tr.appendChild(td);
+                });
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+        }
+
+        // Режим по дням
+        let activeDayIndex = 0;
+        function renderDailyTabs() {
+            const tabsContainer = document.getElementById('dayTabs');
+            tabsContainer.innerHTML = '';
+
+            scheduleData.forEach((d, idx) => {
+                const btn = document.createElement('button');
+                btn.className = `day-tab ${idx === activeDayIndex ? 'active' : ''}`;
+                btn.innerText = d.day;
+                btn.onclick = () => {
+                    activeDayIndex = idx;
+                    renderDailyTabs();
+                    renderDailyLessons();
+                };
+                tabsContainer.appendChild(btn);
+            });
+
+            renderDailyLessons();
+        }
+
+        function renderDailyLessons() {
+            const container = document.getElementById('dayLessonsList');
+            container.innerHTML = '';
+
+            const dayObj = scheduleData[activeDayIndex];
+            if (!dayObj) return;
+
+            const activeLessons = (dayObj.groups || []).filter(g => g.group && g.group.trim());
+            if (activeLessons.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-day-banner">
+                        <h3>🥳 ${lang === 'kz' ? 'Сабақ жоқ' : 'В этот день занятий нет'}</h3>
+                        <p>${lang === 'kz' ? 'Оқытушының бұл күні сабақтары жоспарланбаған' : 'У преподавателя свободный от занятий день'}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            activeLessons.forEach(slot => {
+                const groups = slot.groupsList || [slot.group.replace(/\s*\([^)]*\)/g, '').trim()];
+                const roomStr = slot.room ? `${slot.room}${slot.building ? ' (' + slot.building + ' корпус)' : ''}` : '';
+
+                const card = document.createElement('div');
+                card.className = 'lesson-card';
+                card.innerHTML = `
+                    <div class="lesson-card-header">
+                        <span class="lesson-card-time">⌚️ ${slot.time}</span>
+                        ${slot.lessonType ? `<span class="lesson-card-type">${slot.lessonType}</span>` : ''}
+                    </div>
+                    <div class="lesson-card-title">${slot.subject || 'Занятие'}</div>
+                    <div class="lesson-card-meta">
+                        <span>👥 Группы: <strong>${groups.join(', ')}</strong></span>
+                        ${roomStr ? `<span>📍 Аудитория: <strong>${roomStr}</strong></span>` : ''}
+                    </div>
+                `;
+                card.onclick = () => {
+                    if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                    openModal(slot, dayObj.day);
+                };
+                container.appendChild(card);
+            });
+        }
+
+        function switchView(mode) {
+            if (tg?.HapticFeedback) tg.HapticFeedback.selectionChanged();
+            const btnGrid = document.getElementById('btnViewGrid');
+            const btnDaily = document.getElementById('btnViewDaily');
+            const gridCont = document.getElementById('gridContainer');
+            const dailyCont = document.getElementById('dailyContainer');
+
+            if (mode === 'grid') {
+                btnGrid.classList.add('active');
+                btnDaily.classList.remove('active');
+                gridCont.style.display = 'block';
+                dailyCont.style.display = 'none';
+            } else {
+                btnDaily.classList.add('active');
+                btnGrid.classList.remove('active');
+                gridCont.style.display = 'none';
+                dailyCont.style.display = 'block';
+            }
+        }
+
+        // Модальное окно
+        function openModal(slot, day) {
+            const overlay = document.getElementById('modalOverlay');
+            document.getElementById('modalTypeBadge').innerText = slot.lessonType || 'Занятие';
+            document.getElementById('modalSubjectTitle').innerText = slot.subject || 'Дисциплина';
+            document.getElementById('modalTimeVal').innerText = `${day}, ${slot.time}`;
+            
+            const roomText = slot.room ? `${slot.room}${slot.building ? ' (корпус ' + slot.building + ')' : ''}` : 'Не указана';
+            document.getElementById('modalRoomVal').innerText = roomText;
+
+            const groups = slot.groupsList || [slot.group.replace(/\s*\([^)]*\)/g, '').trim()];
+            const tagsCont = document.getElementById('modalGroupsTags');
+            tagsCont.innerHTML = groups.map(g => `<span class="sheet-group-tag">${g}</span>`).join('');
+
+            overlay.style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').style.display = 'none';
+        }
+
+        // Запуск
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>

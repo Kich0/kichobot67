@@ -14,6 +14,15 @@ import BackendScheduleService from "../backend/services/ScheduleService.js";
 import BackendTeacherScheduleService from "../backend/services/TeacherScheduleService.js";
 import { getWebhookSecretToken } from "./utils/webhookRetry.js";
 import authMiddleware from "../backend/middlewares/authMiddleware.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { teacher_table_cache } from "./controllers/TeacherScheduleController.js";
+import { enrichTeacherSchedule } from "./services/teacherScheduleEnricher.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const webappHtmlPath = path.resolve(__dirname, "../webapp/teacher_schedule.html");
 
 // Простой in-memory rate limiter для защиты публичных эндпоинтов от спама и DoS
 function createRateLimiter(maxRequests, windowMs) {
@@ -240,6 +249,70 @@ router.get('/get_user_activity_logs', authMiddleware, async (req, res) => {
         documents,
         desiredLogLevels
     });
-})
+});
+
+router.get('/webapp/teacher', scheduleRateLimiter, async (req, res) => {
+    try {
+        const rawTeacherId = req.query.id;
+        const lang = req.query.lang === 'kz' ? 'kz' : 'ru';
+        if (!rawTeacherId) {
+            return res.status(400).send("Не указан ID преподавателя");
+        }
+
+        const teacherId = String(rawTeacherId).trim();
+        let teacher = null;
+        let scheduleData = [];
+
+        // 1. Пробуем взять из кэша таблицы в памяти
+        const cached = teacher_table_cache[teacherId];
+        if (cached && Array.isArray(cached.data)) {
+            scheduleData = cached.data;
+            teacher = cached.teacher;
+        }
+
+        // 2. Если нет в кэше — подгружаем
+        if (!teacher) {
+            teacher = await teacherService.getById(teacherId).catch(() => null);
+        }
+
+        if (scheduleData.length === 0) {
+            try {
+                const rawSchedule = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
+                scheduleData = await enrichTeacherSchedule(rawSchedule, teacher);
+            } catch (err) {
+                log.warn(`[WebApp] Ошибка загрузки расписания преподавателя ${teacherId}: ${err.message}`);
+                const doc = await teacherScheduleService.getByTeacherId(teacherId).catch(() => null);
+                if (doc && Array.isArray(doc.data)) {
+                    scheduleData = doc.data;
+                }
+            }
+        }
+
+        // Читаем шаблон HTML
+        if (!fs.existsSync(webappHtmlPath)) {
+            return res.status(404).send("WebApp шаблон не найден на сервере");
+        }
+
+        let html = fs.readFileSync(webappHtmlPath, 'utf8');
+
+        // Внедряем данные прямо в HTML для мгновенной загрузки без лишних запросов
+        const injection = `
+        <script>
+            window.SCHEDULE_DATA = ${JSON.stringify(scheduleData || [])};
+            window.TEACHER_INFO = ${JSON.stringify(teacher || { name: 'Преподаватель' })};
+            window.SCHEDULE_LANG = "${lang}";
+        </script>
+        `;
+
+        html = html.replace('</head>', `${injection}\n</head>`);
+
+        // Браузерный кэш на 30 секунд для снижения нагрузки при частых открытиях
+        res.set('Cache-Control', 'public, max-age=30');
+        res.type('html').send(html);
+    } catch (e) {
+        log.error('[WebApp] Ошибка отдачи расписания преподавателя', { stack: e.stack });
+        res.status(500).send("Ошибка сервера при загрузке расписания");
+    }
+});
 
 export default router

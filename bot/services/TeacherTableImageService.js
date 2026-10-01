@@ -107,9 +107,9 @@ function wrapGroupsToLines(groups, maxChars = 20) {
 }
 
 /**
- * Рассчитывает структуру строк и высоту содержимого для ячейки пары
+ * Рассчитывает структуру строк и высоту содержимого для ячейки пары с поддержкой 2 колонок для 6+ групп
  */
-function layoutCellContent(slot) {
+function layoutCellContent(slot, colWidth = 200) {
     if (!slot || !slot.group || !slot.group.trim()) {
         return null;
     }
@@ -117,22 +117,42 @@ function layoutCellContent(slot) {
     const parsed = parseGroupSlot(slot.group);
     const groupsList = (slot.groupsList && slot.groupsList.length > 0) ? slot.groupsList : parsed.groups;
     const roomStr = parsed.roomStr || (slot.room ? `${slot.room}${slot.building ? '/' + slot.building : ''}` : '');
-    const subjectLines = slot.subject ? splitSubjectText(slot.subject, 21) : [];
+    const maxSubjChars = Math.max(18, Math.floor(colWidth / 9.5));
+    const subjectLines = slot.subject ? splitSubjectText(slot.subject, maxSubjChars) : [];
     const lessonType = slot.lessonType ? formatLessonTypeBadge(slot.lessonType) : '';
 
-    const groupLines = wrapGroupsToLines(groupsList, 20);
+    const isLargeStream = groupsList.length >= 6;
+    let groupLines = [];
+    let groupColumns = null;
 
-    let lineCount = groupLines.length;
+    if (isLargeStream && colWidth >= 200) {
+        // Двухколоночная верстка для групп потока (по 3-5 групп в каждой микро-колонке)
+        const mid = Math.ceil(groupsList.length / 2);
+        const col1 = groupsList.slice(0, mid);
+        const col2 = groupsList.slice(mid);
+        groupColumns = { col1, col2 };
+    } else {
+        const maxGroupChars = Math.max(16, Math.floor(colWidth / 9));
+        groupLines = wrapGroupsToLines(groupsList, maxGroupChars);
+    }
+
+    let lineCount = 0;
+    if (groupColumns) {
+        lineCount += Math.max(groupColumns.col1.length, groupColumns.col2.length);
+    } else {
+        lineCount += groupLines.length;
+    }
     if (roomStr) lineCount += 1;
     lineCount += subjectLines.length;
     if (lessonType) lineCount += 1;
 
-    // Базовая комфортная высота строки 16px + внутренние паддинги
-    const estimatedHeight = Math.max(90, 20 + lineCount * 16);
+    // Комфортная динамическая высота строки с запасом для крупных шрифтов
+    const estimatedHeight = Math.max(105, 28 + lineCount * 18);
 
     return {
         groupsList,
         groupLines,
+        groupColumns,
         roomStr,
         subjectLines,
         lessonType,
@@ -162,7 +182,10 @@ class TeacherTableImageService {
     }
 
     /**
-     * Построение адаптивного SVG с динамическим вертикальным растягиванием строк
+     * Построение адаптивного SVG с аутентичным стилем КарУ:
+     * - Умное отсечение пустых крайних пар (Active Slots Window)
+     * - Расширенные колонки с увеличенными читаемыми шрифтами
+     * - Динамические строки и двухколоночный поток для 6+ групп
      */
     buildSvg(teacher, scheduleData, lang = 'ru') {
         const colors = {
@@ -176,10 +199,10 @@ class TeacherTableImageService {
             dayText: '#1e293b',
             busyBg: '#15803d',       // насыщенный благородный темно-зеленый
             groupText: '#ffffff',
-            roomText: '#fef08a',      // яркий желтый акцент для аудитории
+            roomText: '#fef08a',      // яркий золотисто-желтый акцент для аудитории
             subjectText: '#e2e8f0',   // контрастный светлый для названия предмета
             lessonTypeText: '#86efac',// мягкий мятно-зеленый для типа пары
-            freeBg: '#b91c1c',        // приглушенный темно-красный
+            freeBg: '#b91c1c',        // приглушенный темно-красный для окон
             dashColor: '#f8fafc'
         };
 
@@ -197,22 +220,69 @@ class TeacherTableImageService {
             scheduleData = defaultDays;
         }
 
-        const activeTimes = standardTimes.filter(t => {
+        // 1. ОПРЕДЕЛЕНИЕ ДИАПАЗОНА АКТИВНЫХ ПАР (Active Slots Trimming)
+        let minActiveIndex = -1;
+        let maxActiveIndex = -1;
+
+        standardTimes.forEach((t, idx) => {
             const normT = normalizeTime(t);
-            return scheduleData.some(d => d.groups?.some(g => normalizeTime(g.time) === normT && g.group && g.group.trim()));
+            const hasSlot = scheduleData.some(d => d.groups?.some(g => normalizeTime(g.time) === normT && g.group && g.group.trim()));
+            if (hasSlot) {
+                if (minActiveIndex === -1) minActiveIndex = idx;
+                maxActiveIndex = idx;
+            }
         });
-        const times = activeTimes.length > 0 ? activeTimes : standardTimes.slice(0, 8);
 
-        const padX = 16;
-        const padY = 16;
-        const titleHeight = 52;
-        const colHeaderHeight = 44;
-        const dayColWidth = 105;
-        const colWidth = 158;
-        const cellGap = 4;
-        const minRowHeight = 90;
+        let activeTimes = [];
+        let startPairNumber = 1;
 
-        // 1. ДИНАМИЧЕСКИЙ РАСЧЕТ ВЫСОТЫ КАЖДОЙ СТРОКИ (ДНЯ НЕДЕЛИ)
+        if (minActiveIndex === -1) {
+            activeTimes = standardTimes.slice(0, 6);
+            startPairNumber = 1;
+        } else {
+            let start = Math.max(0, minActiveIndex);
+            let end = Math.min(standardTimes.length - 1, maxActiveIndex);
+
+            // Обеспечиваем минимум 5 пар для устойчивой сбалансированной сетки
+            if (end - start + 1 < 5) {
+                if (start > 0) start = Math.max(0, start - 1);
+                if (end < standardTimes.length - 1) end = Math.min(standardTimes.length - 1, end + 1);
+            }
+            if (end - start + 1 < 5 && end < standardTimes.length - 1) {
+                end = Math.min(standardTimes.length - 1, start + 4);
+            }
+
+            activeTimes = standardTimes.slice(start, end + 1);
+            startPairNumber = start + 1;
+        }
+
+        const times = activeTimes;
+        const numCols = times.length;
+
+        // 2. АДАПТИВНАЯ ГЕОМЕТРИЯ СЕТКИ
+        const padX = 18;
+        const padY = 18;
+        const titleHeight = 56;
+        const colHeaderHeight = 48;
+        const dayColWidth = 115;
+        const cellGap = 5;
+        const minRowHeight = 100;
+
+        // Расчет ширины колонок: просторные колонки с крупным шрифтом
+        let colWidth = 220;
+        if (numCols <= 5) {
+            colWidth = 265;
+        } else if (numCols === 6) {
+            colWidth = 240;
+        } else if (numCols === 7) {
+            colWidth = 215;
+        } else {
+            colWidth = 195;
+        }
+
+        const width = padX * 2 + dayColWidth + numCols * (colWidth + cellGap) - cellGap;
+
+        // 3. РАСЧЕТ ДИНАМИЧЕСКИХ ВЫСОТ СТРОК
         const rowLayouts = [];
         const rowHeights = [];
 
@@ -223,7 +293,7 @@ class TeacherTableImageService {
             times.forEach(t => {
                 const normT = normalizeTime(t);
                 const slot = day.groups?.find(g => normalizeTime(g.time) === normT);
-                const layout = layoutCellContent(slot);
+                const layout = layoutCellContent(slot, colWidth);
                 cellLayouts.push(layout);
                 if (layout && layout.estimatedHeight > maxRowH) {
                     maxRowH = layout.estimatedHeight;
@@ -234,8 +304,6 @@ class TeacherTableImageService {
             rowHeights.push(maxRowH);
         });
 
-        const numCols = times.length;
-        const width = padX * 2 + dayColWidth + numCols * (colWidth + cellGap) - cellGap;
         const totalRowsHeight = rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * cellGap;
         const height = padY * 2 + titleHeight + colHeaderHeight + cellGap + totalRowsHeight;
 
@@ -245,22 +313,23 @@ class TeacherTableImageService {
         // Шапка "День \ Время"
         const dayTimeLabel = lang === 'kz' ? 'Күн \\ Уақыт' : 'День \\ Время';
         tableElements.push(`
-            <rect x="${padX}" y="${startTableY}" width="${dayColWidth}" height="${colHeaderHeight}" rx="6" fill="${colors.headerBg}" />
-            <text x="${padX + dayColWidth / 2}" y="${startTableY + 27}" fill="${colors.headerText}" font-size="12" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${dayTimeLabel}</text>
+            <rect x="${padX}" y="${startTableY}" width="${dayColWidth}" height="${colHeaderHeight}" rx="7" fill="${colors.headerBg}" />
+            <text x="${padX + dayColWidth / 2}" y="${startTableY + 29}" fill="${colors.headerText}" font-size="13.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${dayTimeLabel}</text>
         `);
 
         // Шапка колонок времени пар
         const pairWord = lang === 'kz' ? 'сабақ' : 'пара';
         times.forEach((t, i) => {
+            const pairNum = startPairNumber + i;
             const x = padX + dayColWidth + cellGap + i * (colWidth + cellGap);
             tableElements.push(`
-                <rect x="${x}" y="${startTableY}" width="${colWidth}" height="${colHeaderHeight}" rx="6" fill="${colors.headerBg}" />
-                <text x="${x + colWidth / 2}" y="${startTableY + 18}" fill="${colors.headerSub}" font-size="11.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${i + 1} ${pairWord}</text>
-                <text x="${x + colWidth / 2}" y="${startTableY + 33}" fill="${colors.headerText}" font-size="10.5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${t}</text>
+                <rect x="${x}" y="${startTableY}" width="${colWidth}" height="${colHeaderHeight}" rx="7" fill="${colors.headerBg}" />
+                <text x="${x + colWidth / 2}" y="${startTableY + 20}" fill="${colors.headerSub}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${pairNum} ${pairWord}</text>
+                <text x="${x + colWidth / 2}" y="${startTableY + 37}" fill="${colors.headerText}" font-size="12" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${t}</text>
             `);
         });
 
-        // Строки расписания
+        // Строки дней недели
         let currentY = startTableY + colHeaderHeight + cellGap;
 
         scheduleData.forEach((day, rIdx) => {
@@ -269,8 +338,8 @@ class TeacherTableImageService {
 
             // Ячейка названия дня недели (вертикально центрирована)
             tableElements.push(`
-                <rect x="${padX}" y="${currentY}" width="${dayColWidth}" height="${rowH}" rx="6" fill="${colors.dayBg}" />
-                <text x="${padX + dayColWidth / 2}" y="${currentY + rowH / 2 + 5}" fill="${colors.dayText}" font-size="13" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
+                <rect x="${padX}" y="${currentY}" width="${dayColWidth}" height="${rowH}" rx="7" fill="${colors.dayBg}" />
+                <text x="${padX + dayColWidth / 2}" y="${currentY + rowH / 2 + 5}" fill="${colors.dayText}" font-size="14.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(day.day)}</text>
             `);
 
             // Ячейки времени
@@ -282,53 +351,102 @@ class TeacherTableImageService {
                 if (layout) {
                     // Занятая пара
                     const textElements = [];
-                    // Вертикальное центрирование текстового блока внутри ячейки
-                    const contentLinesCount = layout.groupLines.length 
-                        + (layout.roomStr ? 1 : 0) 
-                        + layout.subjectLines.length 
-                        + (layout.lessonType ? 1 : 0);
-                    
-                    const lineHeight = 15.5;
-                    const totalTextBlockHeight = (contentLinesCount - 1) * lineHeight;
-                    let curLineY = currentY + (rowH - totalTextBlockHeight) / 2 + 3;
 
-                    // 1. Группы
-                    for (const gLine of layout.groupLines) {
-                        const fSize = layout.groupLines.length > 2 ? 10 : 11;
-                        textElements.push(`
-                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.groupText}" font-size="${fSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(gLine)}</text>
-                        `);
-                        curLineY += lineHeight;
-                    }
+                    if (layout.groupColumns) {
+                        // Двухколоночный режим для больших потоков (6-10 групп)
+                        const { col1, col2 } = layout.groupColumns;
+                        const groupRows = Math.max(col1.length, col2.length);
+                        const groupLineH = 15;
+                        const groupBlockH = groupRows * groupLineH;
 
-                    // 2. Аудитория
-                    if (layout.roomStr) {
-                        textElements.push(`
-                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.roomText}" font-size="10.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Ауд. ${escapeXml(layout.roomStr)}</text>
-                        `);
-                        curLineY += lineHeight;
-                    }
+                        const extraLines = (layout.roomStr ? 1 : 0) + layout.subjectLines.length + (layout.lessonType ? 1 : 0);
+                        const extraLineH = 17;
+                        const totalH = groupBlockH + extraLines * extraLineH + 6;
 
-                    // 3. Предмет
-                    for (const sLine of layout.subjectLines) {
-                        textElements.push(`
-                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.subjectText}" font-size="10.5" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(sLine)}</text>
-                        `);
-                        curLineY += lineHeight;
-                    }
+                        let curY = currentY + (rowH - totalH) / 2 + 12;
 
-                    // 4. Тип занятия
-                    if (layout.lessonType) {
-                        textElements.push(`
-                            <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.lessonTypeText}" font-size="10" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(layout.lessonType)}</text>
-                        `);
+                        const col1X = x + colWidth * 0.28;
+                        const col2X = x + colWidth * 0.72;
+
+                        for (let gIdx = 0; gIdx < groupRows; gIdx++) {
+                            const g1 = col1[gIdx] || '';
+                            const g2 = col2[gIdx] || '';
+                            if (g1) {
+                                textElements.push(`<text x="${col1X.toFixed(1)}" y="${curY.toFixed(1)}" fill="${colors.groupText}" font-size="11.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(g1)}</text>`);
+                            }
+                            if (g2) {
+                                textElements.push(`<text x="${col2X.toFixed(1)}" y="${curY.toFixed(1)}" fill="${colors.groupText}" font-size="11.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(g2)}</text>`);
+                            }
+                            curY += groupLineH;
+                        }
+
+                        curY += 4;
+
+                        // Аудитория
+                        if (layout.roomStr) {
+                            textElements.push(`<text x="${x + colWidth / 2}" y="${curY.toFixed(1)}" fill="${colors.roomText}" font-size="12.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Ауд. ${escapeXml(layout.roomStr)}</text>`);
+                            curY += extraLineH;
+                        }
+
+                        // Предмет
+                        for (const sLine of layout.subjectLines) {
+                            textElements.push(`<text x="${x + colWidth / 2}" y="${curY.toFixed(1)}" fill="${colors.subjectText}" font-size="12" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(sLine)}</text>`);
+                            curY += extraLineH;
+                        }
+
+                        // Тип пары
+                        if (layout.lessonType) {
+                            textElements.push(`<text x="${x + colWidth / 2}" y="${curY.toFixed(1)}" fill="${colors.lessonTypeText}" font-size="11.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(layout.lessonType)}</text>`);
+                        }
+                    } else {
+                        // Обычный центрированный режим (1-5 групп) с крупным шрифтом
+                        const contentLinesCount = layout.groupLines.length 
+                            + (layout.roomStr ? 1 : 0) 
+                            + layout.subjectLines.length 
+                            + (layout.lessonType ? 1 : 0);
+
+                        const lineH = 18;
+                        const totalH = (contentLinesCount - 1) * lineH;
+                        let curLineY = currentY + (rowH - totalH) / 2 + 4;
+
+                        // 1. Группы (13.5px)
+                        for (const gLine of layout.groupLines) {
+                            const fSize = layout.groupLines.length > 2 ? 12 : 13.5;
+                            textElements.push(`
+                                <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.groupText}" font-size="${fSize}" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(gLine)}</text>
+                            `);
+                            curLineY += lineH;
+                        }
+
+                        // 2. Аудитория (12.5px)
+                        if (layout.roomStr) {
+                            textElements.push(`
+                                <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.roomText}" font-size="12.5" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Ауд. ${escapeXml(layout.roomStr)}</text>
+                            `);
+                            curLineY += lineH;
+                        }
+
+                        // 3. Предмет (12px)
+                        for (const sLine of layout.subjectLines) {
+                            textElements.push(`
+                                <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.subjectText}" font-size="12" font-weight="600" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(sLine)}</text>
+                            `);
+                            curLineY += lineH;
+                        }
+
+                        // 4. Тип занятия (11.5px)
+                        if (layout.lessonType) {
+                            textElements.push(`
+                                <text x="${x + colWidth / 2}" y="${curLineY.toFixed(1)}" fill="${colors.lessonTypeText}" font-size="11.5" font-weight="500" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(layout.lessonType)}</text>
+                            `);
+                        }
                     }
 
                     tableElements.push(`
                         <clipPath id="${clipId}">
-                            <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" />
+                            <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="7" />
                         </clipPath>
-                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" fill="${colors.busyBg}" />
+                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="7" fill="${colors.busyBg}" />
                         <g clip-path="url(#${clipId})">
                             ${textElements.join('\n')}
                         </g>
@@ -336,8 +454,8 @@ class TeacherTableImageService {
                 } else {
                     // Свободное окно
                     tableElements.push(`
-                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="6" fill="${colors.freeBg}" />
-                        <text x="${x + colWidth / 2}" y="${currentY + rowH / 2 + 7}" fill="${colors.dashColor}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
+                        <rect x="${x}" y="${currentY}" width="${colWidth}" height="${rowH}" rx="7" fill="${colors.freeBg}" />
+                        <text x="${x + colWidth / 2}" y="${currentY + rowH / 2 + 7}" fill="${colors.dashColor}" font-size="24" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">-</text>
                     `);
                 }
             });
@@ -353,7 +471,7 @@ class TeacherTableImageService {
         return `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     <rect width="${width}" height="${height}" rx="10" fill="${colors.canvasBg}" stroke="${colors.border}" stroke-width="1" />
-    <text x="${width / 2}" y="${padY + 30}" fill="${colors.titleText}" font-size="20" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(title)}</text>
+    <text x="${width / 2}" y="${padY + 34}" fill="${colors.titleText}" font-size="22" font-weight="bold" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${escapeXml(title)}</text>
     ${tableElements.join('\n')}
 </svg>
         `.trim();

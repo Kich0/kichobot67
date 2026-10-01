@@ -13,6 +13,11 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
 import bodyParser from "body-parser";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import config from "./config.js";
 
@@ -108,6 +113,9 @@ app.use('/express/api', backendRouter);
 
 // === Bot routes (webhook, health, WebApp API) ===
 app.use('/bot', botRouter);
+
+// === Telegram WebApp static files ===
+app.use('/webapp', express.static(path.resolve(__dirname, 'webapp')));
 
 // === Health check для Render ===
 app.get('/', (req, res) => res.send('Kichobot is alive! 🤖'));
