@@ -170,19 +170,53 @@ class teacherService {
             if (this._cache && this._cache.length > 0) {
                 const cleanQuery = String(name || '').replace(/[-_.,]/g, ' ').toLowerCase().trim();
                 const tokens = cleanQuery.split(/\s+/).filter(Boolean);
+                const compactQuery = cleanQuery.replace(/[\s-_.,]/g, '');
 
                 if (tokens.length === 0) return [...this._cache];
 
                 const results = this._cache.filter(t => {
                     if (!t || !t.name) return false;
                     const lower = t.name.toLowerCase();
-                    return tokens.every(tok => lower.includes(tok));
+                    // 1. Прямое вхождение
+                    if (lower.includes(cleanQuery)) return true;
+
+                    // 2. Все токены запроса начинаются на слово в ФИО
+                    const nameTokens = lower.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
+                    if (tokens.length > 0 && tokens.every(qTok => nameTokens.some(nTok => nTok === qTok || nTok.startsWith(qTok)))) {
+                        return true;
+                    }
+
+                    // 3. Компактное совпадение
+                    if (compactQuery.length >= 2) {
+                        const comp = lower.replace(/[\s-_.,]/g, '');
+                        if (comp.includes(compactQuery)) return true;
+                    }
+
+                    return false;
                 });
-                return results;
+
+                // Сортировка: фамилии, начинающиеся с запроса, идут первыми
+                return results.sort((a, b) => {
+                    const aLower = a.name.toLowerCase();
+                    const bLower = b.name.toLowerCase();
+                    const aComp = aLower.replace(/[\s-_.,]/g, '');
+                    const bComp = bLower.replace(/[\s-_.,]/g, '');
+
+                    if (aComp === compactQuery && bComp !== compactQuery) return -1;
+                    if (bComp === compactQuery && aComp !== compactQuery) return 1;
+
+                    const aStarts = aComp.startsWith(compactQuery);
+                    const bStarts = bComp.startsWith(compactQuery);
+                    if (aStarts && !bStarts) return -1;
+                    if (!aStarts && bStarts) return 1;
+
+                    return a.name.localeCompare(b.name, 'ru');
+                });
             }
 
             // Fallback в MongoDB
-            const regExp = new RegExp(name, "i");
+            const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regExp = new RegExp(escaped, "i");
             const docs = await Teacher.find({name: {$regex: regExp}}).sort('name').lean();
             const seen = new Set();
             return docs.filter(t => {

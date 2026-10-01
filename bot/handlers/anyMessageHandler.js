@@ -2,9 +2,8 @@ import blackListService from "../services/blackListService.js";
 import log from "../logging/logging.js";
 import {bot} from "../app.js";
 import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddleware.js";
-import userService from "../services/userService.js";
-import i18next from "i18next";
 import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
+import smartSearchController from "../controllers/SmartSearchController.js";
 
 const COMMAND_REGEXES = [
     /^\/start/i, /^🗒 Новое расписание/i, /^🗒 Жаңа кесте/i, /^\/new$/i, /^\/new (.+)/i,
@@ -37,21 +36,7 @@ export function setupAnyMessageHandler() {
                 
                 if (!isCommand) {
                     await commandAntiSpamMiddleware(msg, async () => {
-                        try {
-                            const user_language = await userService.getUserLanguage(msg.chat.id);
-                            const keyboard = {
-                                keyboard: [
-                                    [{text: `${i18next.t('new_schedule', {lng:user_language})}`}, {text: `${i18next.t('help', {lng:user_language})}`}],
-                                    [{text: `${i18next.t('teacher_schedule', {lng:user_language})}`}, {text: `${i18next.t('student_schedule', {lng:user_language})}`}],
-                                ],
-                                one_time_keyboard: false,
-                                resize_keyboard: true
-                            };
-                            const msgText = i18next.t('welcome_page', {lng: user_language});
-                            await bot.sendMessage(msg.chat.id, msgText, {reply_markup: keyboard, parse_mode: "HTML"});
-                        } catch (e) {
-                            log.error(`User ${msg.chat.id} error in text fallback: ${e.message}`, {stack: e.stack});
-                        }
+                        await smartSearchController.handleTextSearch(msg);
                     });
                 }
             }

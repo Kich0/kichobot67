@@ -203,22 +203,53 @@ class groupService {
             if (this._cache && this._cache.length > 0) {
                 const cleanQuery = String(name || '').toLowerCase().trim();
                 const tokens = cleanQuery.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
+                const compactQuery = cleanQuery.replace(/[\s-_.,]/g, '');
 
                 if (tokens.length === 0) return [...this._cache];
 
                 const results = this._cache.filter(g => {
                     if (!g || !g.name) return false;
                     const lowerName = g.name.toLowerCase();
-                    // Проверяем прямое вхождение либо вхождение всех токенов
+                    // 1. Прямое вхождение
                     if (lowerName.includes(cleanQuery)) return true;
-                    const normName = lowerName.replace(/[-_.,]/g, ' ');
-                    return tokens.every(tok => normName.includes(tok));
+
+                    // 2. Все токены запроса начинаются на слово в названии группы
+                    const normTokens = lowerName.replace(/[-_.,]/g, ' ').split(/\s+/).filter(Boolean);
+                    if (tokens.length > 0 && tokens.every(qTok => normTokens.some(nTok => nTok === qTok || nTok.startsWith(qTok)))) {
+                        return true;
+                    }
+
+                    // 3. Компактное совпадение без пробелов и дефисов ("У ИС" -> "УИС", "ИС 21" -> "ИС-21")
+                    if (compactQuery.length >= 2) {
+                        const comp = lowerName.replace(/[\s-_.,]/g, '');
+                        if (comp.includes(compactQuery)) return true;
+                    }
+
+                    return false;
                 });
-                return results;
+
+                // Сортировка по релевантности: точные совпадения и начинающиеся с запроса идут первыми
+                return results.sort((a, b) => {
+                    const aLower = a.name.toLowerCase();
+                    const bLower = b.name.toLowerCase();
+                    const aComp = aLower.replace(/[\s-_.,]/g, '');
+                    const bComp = bLower.replace(/[\s-_.,]/g, '');
+
+                    if (aComp === compactQuery && bComp !== compactQuery) return -1;
+                    if (bComp === compactQuery && aComp !== compactQuery) return 1;
+
+                    const aStarts = aComp.startsWith(compactQuery);
+                    const bStarts = bComp.startsWith(compactQuery);
+                    if (aStarts && !bStarts) return -1;
+                    if (!aStarts && bStarts) return 1;
+
+                    return a.name.localeCompare(b.name, 'ru', { numeric: true });
+                });
             }
 
             // Fallback в MongoDB
-            const regExp = new RegExp(name, "i");
+            const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regExp = new RegExp(escaped, "i");
             const docs = await Group.find({name:{$regex:regExp}}).sort('name').lean();
             const seen = new Set();
             return docs.filter(g => {
