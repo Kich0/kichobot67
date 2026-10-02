@@ -8,8 +8,9 @@
     "node": "20.x"
   },
   "scripts": {
-    "start": "node --max-old-space-size=384 --expose-gc server.js",
-    "dev": "node --max-old-space-size=384 server.js"
+    "start": "node --max-old-space-size=350 --expose-gc server.js",
+    "dev": "node --max-old-space-size=350 --expose-gc server.js",
+    "test": "node --test tests/**/*.test.js"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

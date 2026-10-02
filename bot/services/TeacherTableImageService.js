@@ -68,10 +68,10 @@ function splitSubjectText(text, maxLine = 22) {
 function normalizeTime(t) {
     if (!t) return '';
     return t
+        .replace(/\s+/g, '')
         .replace(/[:]/g, '.')
-        .replace(/[–—]/g, '-')
-        .replace(/(^|-)0(\d)/g, '$1$2')
-        .trim();
+        .replace(/[-–—]/g, '-')
+        .replace(/(^|-)0(\d)/g, '$1$2');
 }
 
 function formatLessonTypeBadge(type) {
@@ -167,7 +167,7 @@ class TeacherTableImageService {
         // Key: teacherId_lang (String)
         // Value: { buffer: Buffer, expiresAt: number }
         this.cache = new Map();
-        this.MAX_ENTRIES = 80; // ~14 MB максимум в RAM (защита от Render 512MB OOM)
+        this.MAX_ENTRIES = 160; // до 160 изображений таблиц в RAM (~15-20 МБ)
         this.TTL = 20 * 60 * 1000; // 20 минут (согласно настройке таблицы недели)
 
         // Фоновая очистка протухших буферов изображений раз в 10 минут

@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     buildCommand: npm install
-    startCommand: node --max-old-space-size=300 --expose-gc server.js
+    startCommand: node --max-old-space-size=350 --expose-gc server.js
     envVars:
       - key: NODE_ENV
         value: production

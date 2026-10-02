@@ -10,6 +10,8 @@ const scheduleDaySchema = new mongoose.Schema({
     subjects: [subjectSchema]
 });
 
+// ВНИМАНИЕ: TTL-индекс ОТСУТСТВУЕТ намеренно!
+// Данная коллекция хранит последнее актуальное расписание как несгораемый аварийный резерв.
 const scheduleSchema = new mongoose.Schema({
     groupId: { type: Number, unique: true },
     data: [scheduleDaySchema]

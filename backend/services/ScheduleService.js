@@ -23,16 +23,16 @@ const SCHEDULE_TIMEOUT = 15000; // 15 сек на скачивание расп�
 export const keepAliveHttpsAgent = new https.Agent({
     keepAlive: true,
     keepAliveMsecs: 60000,
-    maxSockets: 30,
-    maxFreeSockets: 10,
+    maxSockets: 50,
+    maxFreeSockets: 20,
     timeout: 30000
 });
 
 export const keepAliveHttpAgent = new http.Agent({
     keepAlive: true,
     keepAliveMsecs: 60000,
-    maxSockets: 30,
-    maxFreeSockets: 10,
+    maxSockets: 50,
+    maxFreeSockets: 20,
     timeout: 30000
 });
 

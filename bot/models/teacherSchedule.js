@@ -12,6 +12,8 @@ const teacherScheduleDaySchema = new mongoose.Schema({
     groups: [groupSchema]
 });
 
+// ВНИМАНИЕ: TTL-индекс ОТСУТСТВУЕТ намеренно!
+// Данная коллекция хранит последнее актуальное расписание преподавателя как несгораемый аварийный резерв.
 const teacherScheduleSchema = new mongoose.Schema({
     teacherId: { type: Number, ref: "teacher", field: 'id', required: true, unique: true, index: true },
     data: [teacherScheduleDaySchema]

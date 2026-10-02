@@ -26,10 +26,10 @@ class ScheduleApiAdapter {
     normalizeTime(t) {
         if (!t) return '';
         return t
+            .replace(/\s+/g, '')
             .replace(/[:]/g, '.')
-            .replace(/[–—]/g, '-')
-            .replace(/(^|-)0(\d)/g, '$1$2')
-            .trim();
+            .replace(/[-–—]/g, '-')
+            .replace(/(^|-)0(\d)/g, '$1$2');
     }
 
     formatLessonType(type) {
