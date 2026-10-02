@@ -122,13 +122,8 @@ export async function archiveAndBackupLogs() {
 }
 
 /**
- * Инициализация ночного расписания архивации (03:00 по времени Казахстана)
+ * Инициализация ночного расписания архивации (отключено)
  */
 export function setupLogArchiver() {
-    cron.schedule('0 3 * * *', async () => {
-        await archiveAndBackupLogs();
-    }, {
-        timezone: "Asia/Almaty"
-    });
-    log.info("[LogArchiver] Ночная архивация логов настроена на 03:00 KZ (Asia/Almaty).");
+    // Автоматическая ночная отправка логов в 03:00 отключена для экономии трафика
 }
