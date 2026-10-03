@@ -586,7 +586,6 @@ class TeacherScheduleController {
                 const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
                 const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
                 const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
-                const teacherName = teacher?.fullName || teacher?.name || `ID ${teacherId}`;
                 const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
                 const departmentId = teacher?.department || cached?.departmentId || 0;
                 const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
@@ -685,7 +684,6 @@ class TeacherScheduleController {
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
 
-            const teacherName = teacher?.fullName || teacher?.name || `ID ${teacherId}`;
             const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
             const departmentId = teacher?.department || cached?.departmentId || 0;
             const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
