@@ -1,4 +1,24 @@
 import log from "../../logging/logging.js";
+import userActionService from "../../services/userActionService.js";
+
+export function getMediaDescription(msg) {
+    if (!msg) return { action: 'media_other', label: '[Медиа]' };
+    if (msg.photo) return { action: 'media_photo', label: '[Медиа: фото]' };
+    if (msg.video) return { action: 'media_video', label: '[Медиа: видео]' };
+    if (msg.animation) return { action: 'media_gif', label: '[Медиа: GIF / анимация]' };
+    if (msg.sticker) {
+        const emoji = msg.sticker.emoji ? ` ${msg.sticker.emoji}` : '';
+        return { action: 'media_sticker', label: `[Медиа: стикер${emoji}]` };
+    }
+    if (msg.voice) return { action: 'media_voice', label: '[Медиа: голосовое сообщение]' };
+    if (msg.video_note) return { action: 'media_video_note', label: '[Медиа: видеосообщение / кружочек]' };
+    if (msg.audio) return { action: 'media_audio', label: '[Медиа: аудиофайл]' };
+    if (msg.document) {
+        const name = msg.document.file_name ? ` ${msg.document.file_name}` : '';
+        return { action: 'media_document', label: `[Медиа: документ${name}]` };
+    }
+    return { action: 'media_other', label: '[Медиа: файл]' };
+}
 
 const MAX_TEXT_LENGTH = 250;
 const RATE_LIMIT_MS = 500;
@@ -28,7 +48,7 @@ setInterval(() => {
         if (now - userGateTimestamps[uid] > 60000) delete userGateTimestamps[uid];
     }
     blockedMessages.clear();
-}, 3 * 60 * 1000);
+}, 3 * 60 * 1000).unref();
 
 const KNOWN_PREFIXES = [
     '🗒', '🗓', '💡',
@@ -106,6 +126,16 @@ export function processMessageGate(msg, bot) {
     // --- Не-текст: стикеры, фото, видео, файлы, голосовые и т.д. ---
     if (!msg.text) {
         blockedMessages.add(key);
+
+        const mediaInfo = getMediaDescription(msg);
+        const caption = msg.caption ? ` "${msg.caption}"` : '';
+        userActionService.logAction(
+            userId,
+            msg.from?.username,
+            mediaInfo.action,
+            `${mediaInfo.label}${caption}`
+        ).catch(() => {});
+
         bot.sendMessage(userId,
             `⛔ <b>Бот принимает только текст</b>\n\n` +
             `Стикеры, фото, видео, файлы и голосовые\nне поддерживаются.\n\n` +

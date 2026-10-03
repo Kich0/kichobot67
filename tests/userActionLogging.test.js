@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { UserActionService, formatCappedText, deduplicateActions } from '../bot/services/userActionService.js';
 import { UserAction } from '../bot/models/userAction.js';
 import { styleHeaderRow } from '../scratch/export_database_to_drive.js';
+import { getMediaDescription } from '../bot/middlewares/bot/messageGateMiddleware.js';
 
 test('formatCappedText: safely handles null, undefined, empty text', () => {
     assert.equal(formatCappedText(null), '');
@@ -257,3 +258,43 @@ test('styleHeaderRow: applies frozen view and autoFilter across columns in Excel
     assert.equal(headerRow.font.bold, true);
     assert.equal(headerRow.height, 25);
 });
+
+test('getMediaDescription: properly categorizes photo, video, animation, sticker, voice without raw binary', () => {
+    assert.deepEqual(getMediaDescription({ photo: [{ file_id: '123' }] }), {
+        action: 'media_photo',
+        label: '[Медиа: фото]'
+    });
+    assert.deepEqual(getMediaDescription({ video: { file_id: '456' } }), {
+        action: 'media_video',
+        label: '[Медиа: видео]'
+    });
+    assert.deepEqual(getMediaDescription({ animation: { file_id: '789' } }), {
+        action: 'media_gif',
+        label: '[Медиа: GIF / анимация]'
+    });
+    assert.deepEqual(getMediaDescription({ sticker: { emoji: '👍' } }), {
+        action: 'media_sticker',
+        label: '[Медиа: стикер 👍]'
+    });
+    assert.deepEqual(getMediaDescription({ voice: { duration: 5 } }), {
+        action: 'media_voice',
+        label: '[Медиа: голосовое сообщение]'
+    });
+    assert.deepEqual(getMediaDescription({ video_note: { duration: 5 } }), {
+        action: 'media_video_note',
+        label: '[Медиа: видеосообщение / кружочек]'
+    });
+    assert.deepEqual(getMediaDescription({ document: { file_name: 'test.pdf' } }), {
+        action: 'media_document',
+        label: '[Медиа: документ test.pdf]'
+    });
+    assert.deepEqual(getMediaDescription({ audio: { duration: 10 } }), {
+        action: 'media_audio',
+        label: '[Медиа: аудиофайл]'
+    });
+    assert.deepEqual(getMediaDescription({}), {
+        action: 'media_other',
+        label: '[Медиа: файл]'
+    });
+});
+
