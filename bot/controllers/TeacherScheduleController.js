@@ -361,7 +361,7 @@ class TeacherScheduleController {
                 call.data = call.data.replace('refresh', '');
             }
             const data_array = call.data.split('|');
-            let [, teacherId] = data_array;
+            let [, teacherId, rawDay] = data_array;
 
             const cached = teacher_text_cache[teacherId];
             const now = Date.now();
@@ -449,18 +449,30 @@ class TeacherScheduleController {
                 scheduleType: 'teacher'
             }).catch((e) => log.error("Ошибка при обновлении данных о пользователе: " + e.message));
 
-            // Логируем действие только при первом входе или принудительном обновлении
-            if (!cached || isRefresh) {
-                const teacherObj = cached?.teacher || teacher_text_cache[teacherId]?.teacher;
-                const teacherName = teacherObj?.fullName || teacherObj?.name || `ID ${teacherId}`;
-                userActionService.logAction(
-                    call.message.chat.id,
-                    call.message.chat.username,
-                    'view_teacher',
-                    `Открыл расписание преподавателя "${teacherName}"`,
-                    { entityId: Number(teacherId), entityName: teacherName }
-                ).catch(() => {});
+            let dayNumber = parseInt(rawDay, 10);
+            if (isNaN(dayNumber) || dayNumber > 5 || dayNumber < 0) {
+                dayNumber = 0;
             }
+
+            const teacherObj = cached?.teacher || teacher_text_cache[teacherId]?.teacher;
+            const teacherName = teacherObj?.fullName || teacherObj?.name || `ID ${teacherId}`;
+            const teacherData = cached?.data || teacher_text_cache[teacherId]?.data;
+            const dayNamesRu = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+            const dayName = teacherData?.[dayNumber]?.day || dayNamesRu[dayNumber] || '';
+            const daySuffix = dayName ? ` (${dayName})` : '';
+
+            const actionCode = isRefresh ? 'refresh_teacher' : 'view_teacher';
+            const actionDesc = isRefresh
+                ? `Обновил расписание преподавателя "${teacherName}"${daySuffix}`
+                : `Открыл расписание преподавателя "${teacherName}"${daySuffix}`;
+
+            userActionService.logAction(
+                call.message?.chat?.id || call.from?.id,
+                call.from?.username || call.message?.chat?.username,
+                actionCode,
+                actionDesc,
+                { entityId: Number(teacherId), entityName: teacherName }
+            ).catch(() => {});
 
         } catch (e) {
             return await unexpectedCallbackErrorController(e, call.message, call.data);
@@ -553,6 +565,20 @@ class TeacherScheduleController {
                 teacher = teacherDirectoryService.enrich(rawT);
                 if (cached) cached.teacher = teacher;
             }
+
+            const teacherName = teacher?.fullName || teacher?.name || `ID ${teacherId}`;
+            const actionCode = forceRefresh ? 'refresh_teacher_image' : 'view_teacher_image';
+            const actionDesc = forceRefresh
+                ? `Обновил таблицу недели преподавателя "${teacherName}"`
+                : `Открыл таблицу недели преподавателя "${teacherName}"`;
+
+            userActionService.logAction(
+                chatId,
+                call.from?.username || call.message?.chat?.username,
+                actionCode,
+                actionDesc,
+                { entityId: Number(teacherId), entityName: teacherName }
+            ).catch(() => {});
 
             // 1. Нажата кнопка «Обновить», но 20 минут еще НЕ прошло (0 запросов к API)
             if (forceRefresh && cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
@@ -728,6 +754,17 @@ class TeacherScheduleController {
             const now = Date.now();
             const CACHE_MAX_AGE = 30 * 60 * 1000;
             let cached = teacher_text_cache[teacherId];
+
+            const teacherObj = cached?.teacher;
+            const teacherName = teacherObj?.fullName || teacherObj?.name || `ID ${teacherId}`;
+
+            userActionService.logAction(
+                chatId,
+                call.from?.username || call.message?.chat?.username,
+                'view_teacher_text',
+                `Переключился на текстовый вид преподавателя "${teacherName}"`,
+                { entityId: Number(teacherId), entityName: teacherName }
+            ).catch(() => {});
 
             if (cached && (now - cached.timestamp < CACHE_MAX_AGE)) {
                 const hasMissingSubjects = cached.data?.some(d => d.groups?.some(g => g.group && !g.subject));

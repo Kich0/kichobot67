@@ -136,7 +136,7 @@ class SmartSearchController {
             // =========================================================================
             // СЦЕНАРИЙ 7: Ничего не найдено
             // =========================================================================
-            return await this.showNotFound(chatId, text, user_language);
+            return await this.showNotFound(chatId, text, user_language, msg);
 
         } catch (e) {
             log.error(`[SmartSearch] Непредвиденная ошибка поиска: ${e.message}`, {
@@ -356,7 +356,14 @@ class SmartSearchController {
     /**
      * Сообщение, если ничего не найдено по запросу
      */
-    async showNotFound(chatId, query, user_language) {
+    async showNotFound(chatId, query, user_language, msg = null) {
+        userActionService.logAction(
+            chatId,
+            msg?.from?.username,
+            'smart_search_not_found',
+            `Умный поиск: ничего не найдено по запросу "${query}"`
+        ).catch(() => {});
+
         const notFoundText = user_language === 'kz'
             ? `🔍 «<b>${query}</b>» бойынша ештеңе табылмады.\n\n✍️ Оқытушының тегін (мысалы: <i>Жунусова</i>) немесе топ атауын (мысалы: <i>ИС</i>, <i>МАТО</i>) жазып көріңіз.`
             : `🔍 По запросу «<b>${query}</b>» ничего не найдено.\n\n✍️ Попробуйте написать фамилию преподавателя (например: <i>Жунусова</i>) или название группы (например: <i>ИС</i>, <i>МАТО</i>).`;

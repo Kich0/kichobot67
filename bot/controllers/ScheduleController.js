@@ -439,7 +439,7 @@ class ScheduleController {
                 call.data = call.data.replace('refresh', '');
             }
             const data_array = call.data.split('|');
-            let [, language, groupId] = data_array;
+            let [, language, groupId, rawDay] = data_array;
             const groupIdent = `${groupId}|${language}`;
             const cached = schedule_cache[groupIdent];
             const now = Date.now();
@@ -524,18 +524,30 @@ class ScheduleController {
                 }
             }).catch((e) => log.error("Ошибка при обновлении данных о пользователе: " + e.message));
 
-            // Логируем действие пользователя только при первом входе или принудительном обновлении
-            if (!cached || isRefresh) {
-                const groupObj = cached?.group || schedule_cache[groupIdent]?.group;
-                const groupName = groupObj?.name ? `"${groupObj.name}"` : `ID ${groupId}`;
-                userActionService.logAction(
-                    call.message.chat.id,
-                    call.message.chat.username,
-                    'view_group',
-                    `Открыл расписание группы ${groupName}`,
-                    { entityId: Number(groupId), entityName: groupObj?.name }
-                ).catch(() => {});
+            let dayNumber = parseInt(rawDay, 10);
+            if (isNaN(dayNumber) || dayNumber > 5 || dayNumber < 0) {
+                dayNumber = 0;
             }
+
+            const groupObj = cached?.group || schedule_cache[groupIdent]?.group;
+            const groupName = groupObj?.name ? `"${groupObj.name}"` : `ID ${groupId}`;
+            const groupData = cached?.data || schedule_cache[groupIdent]?.data;
+            const dayNamesRu = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+            const dayName = groupData?.[dayNumber]?.day || dayNamesRu[dayNumber] || '';
+            const daySuffix = dayName ? ` (${dayName})` : '';
+
+            const actionCode = isRefresh ? 'refresh_group' : 'view_group';
+            const actionDesc = isRefresh
+                ? `Обновил расписание группы ${groupName}${daySuffix}`
+                : `Открыл расписание группы ${groupName}${daySuffix}`;
+
+            userActionService.logAction(
+                call.message?.chat?.id || call.from?.id,
+                call.from?.username || call.message?.chat?.username,
+                actionCode,
+                actionDesc,
+                { entityId: Number(groupId), entityName: groupObj?.name }
+            ).catch(() => {});
         } catch (e) {
             return await unexpectedCallbackErrorController(e, call.message, call.data);
         }

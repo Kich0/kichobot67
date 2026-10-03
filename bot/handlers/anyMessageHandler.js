@@ -4,6 +4,7 @@ import {bot} from "../app.js";
 import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddleware.js";
 import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
 import smartSearchController from "../controllers/SmartSearchController.js";
+import userActionService from "../services/userActionService.js";
 
 const COMMAND_REGEXES = [
     /^\/start/i, /^🗒 Новое расписание/i, /^🗒 Жаңа кесте/i, /^\/new$/i, /^\/new (.+)/i,
@@ -20,15 +21,32 @@ const COMMAND_REGEXES = [
 export function setupAnyMessageHandler() {
     bot.on('message', async (msg) => {
         if (isMessageBlocked(msg)) return;
-        const isBlackListed = await blackListService.isBlackListed(msg.chat.id)
+        const isBlackListed = await blackListService.isBlackListed(msg.chat.id);
         if (!isBlackListed) {
             if (msg.chat.type !== 'private') {
                 log.silly(`User ${msg.chat.id} || ${msg.from?.id} написал в чат: ${msg.text}`, {
                     msg,
                     userId: msg.chat.id
-                })
+                });
             } else {
-                log.silly(`User ${msg.chat.id} написал в чат: ${msg.text}`, {msg, userId: msg.chat.id})
+                log.silly(`User ${msg.chat.id} написал в чат: ${msg.text}`, {msg, userId: msg.chat.id});
+            }
+
+            // Логируем только текстовые сообщения (медиа-файлы, стикеры, аудио отфильтровываются)
+            if (msg.text) {
+                let category = 'chat_input';
+                if (msg.text.startsWith('/')) {
+                    category = 'command';
+                } else if (COMMAND_REGEXES.some(regex => regex.test(msg.text))) {
+                    category = 'menu_button';
+                }
+
+                userActionService.logAction(
+                    msg.chat.id,
+                    msg.from?.username,
+                    category,
+                    msg.text
+                ).catch(() => {});
             }
 
             if (msg.chat.type === 'private' && msg.text) {

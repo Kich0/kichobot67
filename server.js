@@ -47,6 +47,7 @@ import { i18nextInit } from "./bot/locales/init.js";
 import botHealthMonitor from "./bot/utils/botHealthMonitor.js";
 import WebhookRetryManager from "./bot/utils/webhookRetry.js";
 import { processMessageGate } from "./bot/middlewares/bot/messageGateMiddleware.js";
+import userActionService from "./bot/services/userActionService.js";
 
 // =============================================
 // 1. TELEGRAM BOT SETUP (из shared модуля)
@@ -252,6 +253,13 @@ const appStart = async () => {
                 } else {
                     await bot.stopPolling();
                     backendLog.info('Polling stopped');
+                }
+
+                await userActionService.flush().catch(err => {
+                    backendLog.error('Error flushing user actions during shutdown: ' + err.message);
+                });
+                if (typeof userActionService.stop === 'function') {
+                    userActionService.stop();
                 }
 
                 if (mongoose.connection.readyState !== 0) {
