@@ -23,7 +23,7 @@ async function downloadSchedule(teacherId, attemption = 1) {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
         // Возвращаем объект с .data для совместимости с остальным кодом
         const data = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
-        return { data, status: 200 };
+        return { data, status: 200, isFromDb: Boolean(data?._fromDb) };
     } catch (e) {
         if (attemption < 2) {
             await sleep(1000);
@@ -155,8 +155,8 @@ class TeacherScheduleController {
         return cleanSubject.trim();
     }
 
-    formatElapsedTime(timestamp, user_language) {
-        return ScheduleController.formatElapsedTime(timestamp, user_language);
+    formatElapsedTime(timestamp, user_language, isFromDb = false) {
+        return ScheduleController.formatElapsedTime(timestamp, user_language, isFromDb);
     }
 
     formatTimestamp(timestamp) {
@@ -255,8 +255,9 @@ class TeacherScheduleController {
                 }
             }
 
-            const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language)
-            const scheduleDateTime = ScheduleController.formatTimestamp(timestamp)
+            const isFromDb = Boolean(schedule_cache.isFromDb);
+            const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language, isFromDb);
+            const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
 
             const schedule_day = data[dayNumber]['day']
             const preSchedule = data[dayNumber]['groups']
@@ -381,16 +382,22 @@ class TeacherScheduleController {
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId);
+                        const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
+                        const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                        enrichedData._fromDb = isFromDb;
                         teacher_text_cache[teacherId] = {
                             data: enrichedData,
-                            timestamp: Date.now(),
+                            timestamp,
                             teacher,
                             _enriched: true,
-                            departmentId: teacher?.department || 0
+                            departmentId: teacher?.department || 0,
+                            isFromDb
                         };
                         await this.sendSchedule(call, teacher_text_cache[teacherId]);
-                        teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, { stack: e.stack }));
+                        if (!isFromDb) {
+                            teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка при сохранении резервного teacher расписания. teacherId:${teacherId}`, { stack: e.stack }));
+                        }
                     } catch (e) {
                         await this.handleTeacherScheduleError(e, call, teacherId);
                     }
@@ -420,17 +427,23 @@ class TeacherScheduleController {
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId);
+                        const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
+                        const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                        enrichedData._fromDb = isFromDb;
                         teacher_text_cache[teacherId] = {
                             data: enrichedData,
-                            timestamp: Date.now(),
+                            timestamp,
                             teacher,
                             _enriched: true,
-                            departmentId: teacher?.department || 0
+                            departmentId: teacher?.department || 0,
+                            isFromDb
                         };
                         bot.answerCallbackQuery(call.id).catch(() => {});
                         await this.sendSchedule(call, teacher_text_cache[teacherId]);
-                        teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка сохранения в бд. teacherId:${teacherId}`, { stack: e.stack }));
+                        if (!isFromDb) {
+                            teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => log.error(`Ошибка сохранения в бд. teacherId:${teacherId}`, { stack: e.stack }));
+                        }
                     } catch (e) {
                         await this.handleTeacherScheduleError(e, call, teacherId);
                     }
@@ -514,7 +527,7 @@ class TeacherScheduleController {
                 data = await enrichTeacherSchedule(data, teacher);
                 teacherScheduleService.updateByTeacherId(teacherId, data).catch(() => {});
             }
-            teacher_text_cache[teacherId] = {data, timestamp, teacher, _enriched: true};
+            teacher_text_cache[teacherId] = {data, timestamp, teacher, _enriched: true, departmentId: teacher?.department || 0, isFromDb: true};
             await this.sendSchedule(call, teacher_text_cache[teacherId], `<b>${error_text} \n` +
                 `${i18next.t('reserved_schedule_header', {lng:user_language})}\n\n</b>`)
         } else {
@@ -583,7 +596,7 @@ class TeacherScheduleController {
             // 1. Нажата кнопка «Обновить», но 20 минут еще НЕ прошло (0 запросов к API)
             if (forceRefresh && cached && (now - cached.timestamp < REFRESH_COOLDOWN)) {
                 const timestamp = cached.timestamp;
-                const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
+                const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language, Boolean(cached?.isFromDb));
                 const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
                 const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
                 const caption = `${i18next.t('teacher_grid_caption', { lng: user_language, teacherName })}\n\n🕒 <i><b>${timeString}</b></i>`;
@@ -619,18 +632,24 @@ class TeacherScheduleController {
 
                 try {
                     const response = await downloadSchedule(teacherId);
+                    const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
+                    const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                     const enrichedData = await enrichTeacherSchedule(response.data, teacher);
+                    enrichedData._fromDb = isFromDb;
                     cached = {
                         data: enrichedData,
-                        timestamp: Date.now(),
+                        timestamp,
                         teacher,
                         _enriched: true,
-                        departmentId: teacher?.department || 0
+                        departmentId: teacher?.department || 0,
+                        isFromDb
                     };
                     teacher_table_cache[teacherId] = cached;
-                    teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => {
-                        log.error(`Ошибка при сохранении teacher расписания. teacherId:${teacherId}`, { stack: e.stack });
-                    });
+                    if (!isFromDb) {
+                        teacherScheduleService.updateByTeacherId(teacherId, enrichedData).catch(e => {
+                            log.error(`Ошибка при сохранении teacher расписания. teacherId:${teacherId}`, { stack: e.stack });
+                        });
+                    }
                 } catch (downloadErr) {
                     log.warn(`[sendScheduleImage] Не удалось загрузить расписание для преподавателя ${teacherId}: ${downloadErr.message}`);
                     if (!cached?.data) {
@@ -647,7 +666,8 @@ class TeacherScheduleController {
                                 timestamp: new Date(doc.updatedAt).getTime(),
                                 teacher,
                                 _enriched: true,
-                                departmentId: teacher?.department || 0
+                                departmentId: teacher?.department || 0,
+                                isFromDb: true
                             };
                             teacher_table_cache[teacherId] = cached;
                         } else {
@@ -656,7 +676,8 @@ class TeacherScheduleController {
                                 timestamp: Date.now(),
                                 teacher,
                                 _enriched: true,
-                                departmentId: teacher?.department || 0
+                                departmentId: teacher?.department || 0,
+                                isFromDb: false
                             };
                             teacher_table_cache[teacherId] = cached;
                         }
@@ -680,7 +701,8 @@ class TeacherScheduleController {
 
             const data = cached.data;
             const timestamp = cached.timestamp || Date.now();
-            const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language);
+            const isFromDb = Boolean(cached?.isFromDb);
+            const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language, isFromDb);
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
             const timeString = `${scheduleLifeTime} || ${scheduleDateTime}`;
 

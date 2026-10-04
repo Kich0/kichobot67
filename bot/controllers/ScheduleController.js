@@ -32,7 +32,7 @@ async function downloadSchedule(groupId, language, attemption = 1) {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
         // Возвращаем объект с .data для совместимости с остальным кодом
         const data = await BackendScheduleService.get_schedule_by_groupId(groupId, language);
-        return { data, status: 200 };
+        return { data, status: 200, isFromDb: Boolean(data?._fromDb) };
     } catch (e) {
         if (e.code === 'NO_SCHEDULE') {
             throw e;
@@ -84,16 +84,19 @@ class ScheduleController {
         }
     }
 
-    formatElapsedTime(timestamp, user_language) {
+    formatElapsedTime(timestamp, user_language, isFromDb = false) {
         const now = new Date();
-        const diffInSeconds = Math.floor((now - timestamp) / 1000);
+        const diffInSeconds = Math.max(0, Math.floor((now - timestamp) / 1000));
         const diffInHours = Math.floor(diffInSeconds / 3600);
 
-        let statusEmoji = '🟢';
-        if (diffInHours >= 24) {
-            statusEmoji = '🔴';
-        } else if (diffInHours >= 5) {
-            statusEmoji = '🟡';
+        // 🟢 — официальный сайт API КарУ; 🔵 — резервная база данных MongoDB
+        let statusEmoji = isFromDb ? '🔵' : '🟢';
+        if (!isFromDb) {
+            if (diffInHours >= 24) {
+                statusEmoji = '🔴';
+            } else if (diffInHours >= 5) {
+                statusEmoji = '🟡';
+            }
         }
 
         if (diffInSeconds < 60) {
@@ -265,7 +268,8 @@ class ScheduleController {
                 return await this.handleNoSchedule(call, groupId, group?.name);
             }
 
-            const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language)
+            const isFromDb = Boolean(schedule_cache.isFromDb);
+            const scheduleLifeTime = this.formatElapsedTime(timestamp, user_language, isFromDb)
             const scheduleDateTime = this.formatTimestamp(timestamp)
 
             const schedule_day = data[dayNumber]['day']
@@ -352,7 +356,7 @@ class ScheduleController {
             const timestamp = updatedAt.getTime();
 
             const group = await groupService.getById(Number(groupId)).catch(() => null)
-            schedule_cache[groupId] = { data: response.data, timestamp, group }
+            schedule_cache[groupId] = { data: response.data, timestamp, group, isFromDb: true }
             await this.sendSchedule(call, schedule_cache[groupId], `<b>${error_text} \n` +
                 `${i18next.t('reserved_schedule_header', {lng:user_language})}\n\n</b>`)
         } else {
@@ -461,9 +465,13 @@ class ScheduleController {
                         if (facultyId === undefined && group) {
                             facultyId = await facultyService.getIdByGroup(group).catch(() => 0) || 0;
                         }
-                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group, facultyId };
+                        const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
+                        const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
+                        schedule_cache[groupIdent] = { data: response.data, timestamp, group, facultyId, isFromDb };
                         await this.sendSchedule(call, schedule_cache[groupIdent]);
-                        scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, { stack: e.stack }));
+                        if (!isFromDb) {
+                            scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении резервного расписания. groupId:${groupId}`, { stack: e.stack }));
+                        }
                     } catch (e) {
                         if (e.code === 'NO_SCHEDULE') {
                             await this.handleNoSchedule(call, groupId, e.groupName);
@@ -493,10 +501,14 @@ class ScheduleController {
                         if (facultyId === undefined && group) {
                             facultyId = await facultyService.getIdByGroup(group).catch(() => 0) || 0;
                         }
-                        schedule_cache[groupIdent] = { data: response.data, timestamp: Date.now(), group, facultyId };
+                        const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
+                        const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
+                        schedule_cache[groupIdent] = { data: response.data, timestamp, group, facultyId, isFromDb };
                         bot.answerCallbackQuery(call.id).catch(() => {});
                         await this.sendSchedule(call, schedule_cache[groupIdent]);
-                        scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении расписания в бд. groupId:${groupId}`, { stack: e.stack }));
+                        if (!isFromDb) {
+                            scheduleService.updateByGroupId(groupId, response.data).catch(e => log.error(`Ошибка при сохранении расписания в бд. groupId:${groupId}`, { stack: e.stack }));
+                        }
                     } catch (e) {
                         if (e.code === 'NO_SCHEDULE') {
                             await this.handleNoSchedule(call, groupId, e.groupName);

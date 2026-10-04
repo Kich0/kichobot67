@@ -163,7 +163,9 @@ class TeacherScheduleService {
                 const apiData = await BuketovApiService.getTeacherSchedule(teacher.name);
                 if (apiData && Array.isArray(apiData.records)) {
                     // Возвращаем расписание даже если records пуст (0 пар = 6 дней каникул/свободно)
-                    return ScheduleApiAdapter.adaptTeacherSchedule(apiData.records);
+                    const schedule = ScheduleApiAdapter.adaptTeacherSchedule(apiData.records);
+                    schedule._fromDb = false;
+                    return schedule;
                 }
             }
         } catch (apiErr) {
@@ -176,7 +178,12 @@ class TeacherScheduleService {
             const dbDoc = await TeacherSchedule.findOne({ teacherId: numId }).lean().catch(() => null);
             if (dbDoc && Array.isArray(dbDoc.data) && dbDoc.data.length > 0) {
                 log.info(`[TeacherSchedule] Использован кэш MongoDB для преподавателя id=${id}`);
-                return dbDoc.data;
+                const schedule = dbDoc.data;
+                schedule._fromDb = true;
+                if (dbDoc.updatedAt) {
+                    schedule._updatedAt = dbDoc.updatedAt;
+                }
+                return schedule;
             }
         } catch (dbErr) {
             log.warn(`[TeacherSchedule] Ошибка чтения кэша MongoDB: ${dbErr.message}`);

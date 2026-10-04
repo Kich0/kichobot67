@@ -168,7 +168,9 @@ class ScheduleService {
                 const apiData = await BuketovApiService.getGroupSchedule(currentGroup.name);
                 if (apiData && Array.isArray(apiData.records)) {
                     if (apiData.records.length > 0) {
-                        return ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
+                        const schedule = ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
+                        schedule._fromDb = false;
+                        return schedule;
                     } else {
                         // Официальный API успешно ответил (200 OK), но записей расписания для этой группы нет
                         const err = new Error(`У группы ${currentGroup.name} нет расписания`);
@@ -194,6 +196,10 @@ class ScheduleService {
                 const hasSubjects = scheduleData.some(day => Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== ''));
                 if (hasSubjects) {
                     log.info(`[Schedule] Использован кэш MongoDB для группы id=${id}`);
+                    scheduleData._fromDb = true;
+                    if (dbDoc.updatedAt) {
+                        scheduleData._updatedAt = dbDoc.updatedAt;
+                    }
                     return scheduleData;
                 }
             }

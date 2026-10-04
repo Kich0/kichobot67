@@ -17,7 +17,11 @@ import TelegramBot from "node-telegram-bot-api";
 import config from "./config.js";
 
 let botOptions = {};
-if (config.BOT_MODE === 'webhook') {
+const isTestMode = process.env.NODE_ENV === 'test' ||
+    process.execArgv.includes('--test') ||
+    process.argv.some(arg => typeof arg === 'string' && arg.includes('test'));
+
+if (config.BOT_MODE === 'webhook' || isTestMode) {
     botOptions = { polling: false, webHook: false };
 } else {
     botOptions = { polling: { autoStart: true } };
