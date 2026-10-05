@@ -21,6 +21,7 @@ import {syncNewDataController} from "../controllers/commands/adminCommands/syncN
 import config from "../config.js";
 import axios from "axios";
 import { archiveAndBackupLogs } from "../cron/logArchiver.js";
+import { testTargetChannel } from "../services/mediaCollectorService.js";
 
 
 export function sleep(ms) {
@@ -462,6 +463,23 @@ export default function setupAdminCommandHandler() {
       log.error({stack: e.stack})
     }
   })
+
+  bot.onText(/^\/test_media/i, async (msg) => {
+    try {
+      if (!await userService.isAdmin(msg.from.id)) {
+        return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
+      }
+      await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестового сообщения в закрытый канал...");
+      const res = await testTargetChannel(bot);
+      if (res.success) {
+        await bot.sendMessage(msg.chat.id, `✅ <b>Тест успешен!</b> Тестовое сообщение отправлено в канал <code>${res.targetId}</code>. Бот имеет права на публикацию!`, { parse_mode: 'HTML' });
+      } else {
+        await bot.sendMessage(msg.chat.id, `❌ <b>Ошибка отправки в канал <code>${res.targetId}</code>:</b>\n<code>${res.error}</code>\n\n<b>Что делать:</b>\n1. Проверьте, добавлен ли бот в этот канал.\n2. Убедитесь, что бот назначен <b>Администратором</b> с правом «Публикация сообщений»!`, { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      await bot.sendMessage(msg.chat.id, `Ошибка: ${e.message}`);
+    }
+  });
 
   bot.onText(/^\/ahelp/i, async (msg) => {
     const msg_text = '⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n' +

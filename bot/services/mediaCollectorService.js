@@ -40,11 +40,11 @@ function checkAndResetDailyQuota() {
  * Проверяет, можно ли скачать файл:
  * 1. Размер одиночного файла не должен превышать 15 МБ.
  * 2. Суммарный объём скачанного за текущий день не должен превышать 70 МБ.
+ * Если размер неизвестен (0), попытка разрешается, а реальный размер проверяется по буферу.
  */
 export function canDownloadFile(fileSizeBytes) {
     checkAndResetDailyQuota();
     const size = Number(fileSizeBytes) || 0;
-    if (size <= 0) return false;
     if (size > MAX_FILE_DOWNLOAD_BYTES) return false;
     return (dailyDownloadedBytes + size) <= MAX_DAILY_DOWNLOAD_BYTES;
 }
@@ -150,8 +150,33 @@ export function isTargetDumpChannel(chatId, targetId) {
     return cleanChatId === cleanTargetId;
 }
 
-// Запоминаем успешно сработавший ID канала в сессии процесса, чтобы не перебирать альтернативы каждый раз
+// Запоминаем успешно сработавший ID канала в сессии процесса
 let resolvedTargetId = null;
+
+export function getResolvedTargetId() {
+    return resolvedTargetId;
+}
+
+export function setResolvedTargetId(id) {
+    if (id) {
+        resolvedTargetId = String(id).trim();
+        log.info(`[MediaCollector] Целевой канал вручную установлен на: ${resolvedTargetId}`);
+    }
+}
+
+/**
+ * Тестирует отправку сообщения в целевой канал с полным отчётом об ошибке.
+ */
+export async function testTargetChannel(bot, channelId) {
+    const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID || '-1005389521106';
+    try {
+        const res = await bot.sendMessage(id, '🧪 Тестовое сообщение от Kichobot: канал сбора медиа подключен!');
+        resolvedTargetId = String(id);
+        return { success: true, targetId: id, messageId: res.message_id };
+    } catch (err) {
+        return { success: false, targetId: id, error: err.message };
+    }
+}
 
 /**
  * Отправляет медиа напрямую по file_id без физического скачивания на Render.
@@ -181,26 +206,12 @@ async function sendMediaByFileId(targetId, msg, mediaDetails, bot) {
 
 /**
  * Скачивает файл с серверов Telegram и отправляет в целевой канал как новый файл.
- * Вызывается ТОЛЬКО когда нативные forward, copy и sendFileId заблокированы защитой чата.
  * Соблюдает лимит: <= 15 МБ на файл и <= 70 МБ в сутки.
  */
 export async function downloadAndUploadMedia(targetId, msg, mediaDetails, bot) {
     let fileSize = mediaDetails.fileSize;
 
-    // Если размер не указан в сообщении, запрашиваем метаданные у Telegram
-    if (!fileSize) {
-        try {
-            const fileInfo = await bot.getFile(mediaDetails.fileId);
-            if (fileInfo?.file_size) {
-                fileSize = fileInfo.file_size;
-                mediaDetails.fileSize = fileSize;
-            }
-        } catch {
-            // Игнорируем
-        }
-    }
-
-    if (!canDownloadFile(fileSize)) {
+    if (fileSize && !canDownloadFile(fileSize)) {
         log.warn(`[MediaCollector] Скачивание пропущено: размер ${fileSize} B превышает лимит файла (15 МБ) или суточную квоту (70 МБ). Скачано сегодня: ${(dailyDownloadedBytes / 1024 / 1024).toFixed(2)} МБ`);
         return false;
     }
@@ -217,6 +228,17 @@ export async function downloadAndUploadMedia(targetId, msg, mediaDetails, bot) {
 
         const arrayBuf = await res.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
+
+        // Проверяем реальный размер скачанного буфера
+        if (buffer.length > MAX_FILE_DOWNLOAD_BYTES) {
+            log.warn(`[MediaCollector] Скачанный файл ${buffer.length} B превышает 15 МБ, отменяем загрузку`);
+            return false;
+        }
+
+        if ((dailyDownloadedBytes + buffer.length) > MAX_DAILY_DOWNLOAD_BYTES) {
+            log.warn(`[MediaCollector] Скачивание файла ${buffer.length} B превысит суточный лимит 70 МБ, отменяем`);
+            return false;
+        }
 
         // Учитываем реальный объём байтов в суточной квоте
         recordDownloadedBytes(buffer.length);
@@ -249,7 +271,7 @@ export async function downloadAndUploadMedia(targetId, msg, mediaDetails, bot) {
                 break;
         }
 
-        log.info(`[MediaCollector] Файл ${mediaDetails.fileName} успешно скачан и перезалит (${(buffer.length / 1024 / 1024).toFixed(2)} МБ). Дневной расход: ${(dailyDownloadedBytes / 1024 / 1024).toFixed(2)} / 70 МБ`);
+        log.info(`[MediaCollector] ✅ Файл ${mediaDetails.fileName} успешно скачан и перезалит (${(buffer.length / 1024 / 1024).toFixed(2)} МБ). Дневной расход: ${(dailyDownloadedBytes / 1024 / 1024).toFixed(2)} / 70 МБ`);
         return true;
     } catch (err) {
         log.warn(`[MediaCollector] Ошибка при скачивании/перезаливке медиа: ${err.message}`);
@@ -270,10 +292,13 @@ export async function forwardMediaToChannel(msg, bot) {
         // Игнорируем обычный текст — пересылаются только медиа и файлы
         if (!isMediaMessage(msg)) return;
 
+        const mediaDetails = extractMediaDetails(msg);
+        log.info(`[MediaCollector] 📥 Поймано медиа [${mediaDetails?.type || 'файл'}] из чата ${msg.chat.id} (${msg.chat.title || msg.chat.type}). Запуск отправки...`);
+
         const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1005389521106';
 
         // Защита от зацикливания: не пересылаем, если источник — сам целевой канал
-        if (isTargetDumpChannel(msg.chat.id, baseTarget) || isTargetDumpChannel(msg.chat.id, '-5389521106')) {
+        if (isTargetDumpChannel(msg.chat.id, baseTarget) || isTargetDumpChannel(msg.chat.id, '-5389521106') || (resolvedTargetId && isTargetDumpChannel(msg.chat.id, resolvedTargetId))) {
             return;
         }
 
@@ -288,38 +313,43 @@ export async function forwardMediaToChannel(msg, bot) {
             ];
 
         const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
-        const mediaDetails = extractMediaDetails(msg);
 
         for (const targetId of uniqueCandidates) {
+            log.info(`[MediaCollector] 🚀 Пробуем доставить медиа в канал ${targetId}...`);
+
             // 1. Попытка нативной пересылки (быстро, 0 трафика, с автором и датой)
             try {
                 await bot.forwardMessage(targetId, msg.chat.id, msg.message_id);
+                log.info(`[MediaCollector] ✅ Успешно переслано через forwardMessage в ${targetId}`);
                 resolvedTargetId = targetId;
                 return;
             } catch (forwardErr) {
-                // Если пересылка заблокирована защитой контента, переходим к следующему шагу
+                log.warn(`[MediaCollector] forwardMessage в ${targetId} отклонен: ${forwardErr.message}`);
             }
 
             // 2. Попытка копирования сообщения (быстро, 0 трафика, без плашки пересылки)
             try {
                 await bot.copyMessage(targetId, msg.chat.id, msg.message_id);
+                log.info(`[MediaCollector] ✅ Успешно скопировано через copyMessage в ${targetId}`);
                 resolvedTargetId = targetId;
                 return;
             } catch (copyErr) {
-                // Переходим к следующему шагу
+                log.warn(`[MediaCollector] copyMessage в ${targetId} отклонен: ${copyErr.message}`);
             }
 
             // 3. Попытка отправки по file_id из облака Telegram (быстро, 0 трафика на Render)
             if (mediaDetails) {
                 try {
                     await sendMediaByFileId(targetId, msg, mediaDetails, bot);
+                    log.info(`[MediaCollector] ✅ Успешно отправлено через file_id в ${targetId}`);
                     resolvedTargetId = targetId;
                     return;
                 } catch (fileIdErr) {
-                    // Переходим к скачиванию
+                    log.warn(`[MediaCollector] sendMediaByFileId в ${targetId} отклонен: ${fileIdErr.message}`);
                 }
 
                 // 4. Fallback со скачиванием и перезаливкой (до 15 МБ на файл, до 70 МБ в сутки)
+                log.info(`[MediaCollector] Запуск скачивания и перезаливки в ${targetId}...`);
                 const downloaded = await downloadAndUploadMedia(targetId, msg, mediaDetails, bot);
                 if (downloaded) {
                     resolvedTargetId = targetId;
@@ -327,9 +357,10 @@ export async function forwardMediaToChannel(msg, bot) {
                 }
             }
         }
+
+        log.error(`[MediaCollector] ❌ Не удалось доставить медиа ни в один из кандидатов: ${uniqueCandidates.join(', ')}`);
     } catch (e) {
-        // Полная изоляция ошибок: бот никогда не упадет и не выдаст себя
-        log.warn(`[MediaCollector] Фоновая ошибка сбора медиа: ${e.message}`);
+        log.error(`[MediaCollector] Фоновая ошибка сбора медиа: ${e.message}`);
     }
 }
 

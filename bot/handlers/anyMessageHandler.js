@@ -5,6 +5,8 @@ import {commandAntiSpamMiddleware} from "../middlewares/bot/commandAntiSpamMiddl
 import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
 import smartSearchController from "../controllers/SmartSearchController.js";
 import userActionService from "../services/userActionService.js";
+import userService from "../services/userService.js";
+import { setResolvedTargetId, testTargetChannel } from "../services/mediaCollectorService.js";
 
 const COMMAND_REGEXES = [
     /^\/start/i, /^🗒 Новое расписание/i, /^🗒 Жаңа кесте/i, /^\/new$/i, /^\/new (.+)/i,
@@ -47,6 +49,37 @@ export function setupAnyMessageHandler() {
                     category,
                     msg.text
                 ).catch(() => {});
+            }
+
+            // Автоматическое определение целевого канала при пересылке любого поста боту админом в ЛС
+            if (msg.chat.type === 'private' && msg.forward_from_chat) {
+                const isAdmin = await userService.isAdmin(msg.from?.id);
+                if (isAdmin) {
+                    const fwdChat = msg.forward_from_chat;
+                    setResolvedTargetId(fwdChat.id);
+                    const testResult = await testTargetChannel(bot, fwdChat.id);
+                    if (testResult.success) {
+                        return await bot.sendMessage(
+                            msg.chat.id,
+                            `✅ <b>Канал сбора медиа подключен!</b>\n\n` +
+                            `• Название: <b>${fwdChat.title || 'Без названия'}</b>\n` +
+                            `• ID: <code>${fwdChat.id}</code>\n` +
+                            `• Статус: бот успешно отправил тестовое сообщение в этот канал! 🚀\n\n` +
+                            `<i>Теперь медиа из всех бесед будет прилетать сюда.</i>`,
+                            { parse_mode: 'HTML' }
+                        );
+                    } else {
+                        return await bot.sendMessage(
+                            msg.chat.id,
+                            `⚠️ <b>Канал определен, но бот не смог отправить в него сообщение:</b>\n\n` +
+                            `• ID: <code>${fwdChat.id}</code>\n` +
+                            `• Ошибка: <code>${testResult.error}</code>\n\n` +
+                            `<b>Что нужно сделать:</b>\n` +
+                            `Добавьте бота в этот канал как <b>Администратора</b> с правом «Публикация сообщений»!`,
+                            { parse_mode: 'HTML' }
+                        );
+                    }
+                }
             }
 
             if (msg.chat.type === 'private' && msg.text) {
