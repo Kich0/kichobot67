@@ -58,28 +58,58 @@ export function recordDownloadedBytes(fileSizeBytes) {
 }
 
 /**
- * Проверяет, содержит ли сообщение медиа-контент:
- * фото, видео, GIF/анимацию, файлы/документы, голосовые сообщения,
- * видео-заметки (кружочки) или аудиозаписи.
+ * Проверяет, содержит ли сообщение вложения любого типа:
+ * фото, видео, GIF/анимацию, файлы/документы, стикеры, голосовые сообщения,
+ * видео-заметки (кружочки), аудиозаписи, опросы, контакты, локации, дайсы.
+ * Чисто текстовые сообщения (болтовня) возвращают false.
  */
 export function isMediaMessage(msg) {
     if (!msg) return false;
     return Boolean(
         (Array.isArray(msg.photo) && msg.photo.length > 0) ||
-        msg.video ||
         msg.animation ||
+        msg.sticker ||
+        msg.video ||
         msg.document ||
         msg.voice ||
         msg.video_note ||
-        msg.audio
+        msg.audio ||
+        msg.contact ||
+        msg.location ||
+        msg.venue ||
+        msg.poll ||
+        msg.dice ||
+        msg.story
     );
 }
 
 /**
- * Извлекает метаданные медиа-объекта из сообщения.
+ * Извлекает метаданные медиа-объекта из сообщения для fallback-отправки.
  */
 export function extractMediaDetails(msg) {
     if (!msg) return null;
+
+    // 1. Анимации / GIF (проверяем первыми, так как в Telegram они могут дублироваться как document)
+    if (msg.animation) {
+        return {
+            type: 'animation',
+            fileId: msg.animation.file_id,
+            fileSize: msg.animation.file_size || 0,
+            fileName: msg.animation.file_name || 'animation.mp4'
+        };
+    }
+
+    // 2. Стикеры (включая анимированные .tgs и видео-стикеры .webm)
+    if (msg.sticker) {
+        return {
+            type: 'sticker',
+            fileId: msg.sticker.file_id,
+            fileSize: msg.sticker.file_size || 0,
+            fileName: msg.sticker.is_video ? 'sticker.webm' : (msg.sticker.is_animated ? 'sticker.tgs' : 'sticker.webp')
+        };
+    }
+
+    // 3. Фотографии
     if (Array.isArray(msg.photo) && msg.photo.length > 0) {
         const largest = msg.photo[msg.photo.length - 1];
         return {
@@ -89,6 +119,8 @@ export function extractMediaDetails(msg) {
             fileName: 'photo.jpg'
         };
     }
+
+    // 4. Видео
     if (msg.video) {
         return {
             type: 'video',
@@ -97,30 +129,8 @@ export function extractMediaDetails(msg) {
             fileName: msg.video.file_name || 'video.mp4'
         };
     }
-    if (msg.animation) {
-        return {
-            type: 'animation',
-            fileId: msg.animation.file_id,
-            fileSize: msg.animation.file_size || 0,
-            fileName: msg.animation.file_name || 'animation.gif'
-        };
-    }
-    if (msg.document) {
-        return {
-            type: 'document',
-            fileId: msg.document.file_id,
-            fileSize: msg.document.file_size || 0,
-            fileName: msg.document.file_name || 'document'
-        };
-    }
-    if (msg.voice) {
-        return {
-            type: 'voice',
-            fileId: msg.voice.file_id,
-            fileSize: msg.voice.file_size || 0,
-            fileName: 'voice.ogg'
-        };
-    }
+
+    // 5. Видеосообщения / кружочки
     if (msg.video_note) {
         return {
             type: 'video_note',
@@ -129,6 +139,18 @@ export function extractMediaDetails(msg) {
             fileName: 'video_note.mp4'
         };
     }
+
+    // 6. Голосовые сообщения
+    if (msg.voice) {
+        return {
+            type: 'voice',
+            fileId: msg.voice.file_id,
+            fileSize: msg.voice.file_size || 0,
+            fileName: 'voice.ogg'
+        };
+    }
+
+    // 7. Аудиозаписи
     if (msg.audio) {
         return {
             type: 'audio',
@@ -137,6 +159,18 @@ export function extractMediaDetails(msg) {
             fileName: msg.audio.file_name || 'audio.mp3'
         };
     }
+
+    // 8. Документы (файлы любого формата, а также GIF, отправленные как документы)
+    if (msg.document) {
+        const isGifMime = msg.document.mime_type === 'image/gif';
+        return {
+            type: isGifMime ? 'animation' : 'document',
+            fileId: msg.document.file_id,
+            fileSize: msg.document.file_size || 0,
+            fileName: msg.document.file_name || (isGifMime ? 'animation.gif' : 'document')
+        };
+    }
+
     return null;
 }
 
@@ -145,9 +179,8 @@ export function extractMediaDetails(msg) {
  */
 export function isTargetDumpChannel(chatId, targetId) {
     if (!chatId || !targetId) return false;
-    const cleanChatId = String(chatId).replace(/^-100|^-/, '');
-    const cleanTargetId = String(targetId).replace(/^-100|^-/, '');
-    return cleanChatId === cleanTargetId;
+    const normalize = (id) => String(id).trim().replace(/^-?100|^-/, '');
+    return normalize(chatId) === normalize(targetId);
 }
 
 // Запоминаем успешно сработавший ID канала в сессии процесса
@@ -197,17 +230,47 @@ async function sendMediaByFileId(targetId, msg, mediaDetails, bot) {
 
     switch (mediaDetails.type) {
         case 'photo':
-            return await bot.sendPhoto(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendPhoto(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'video':
-            return await bot.sendVideo(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendVideo(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'animation':
-            return await bot.sendAnimation(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendAnimation(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
+        case 'sticker':
+            try {
+                return await bot.sendSticker(targetId, mediaDetails.fileId);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'voice':
-            return await bot.sendVoice(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendVoice(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'video_note':
-            return await bot.sendVideoNote(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendVideoNote(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'audio':
-            return await bot.sendAudio(targetId, mediaDetails.fileId, opts);
+            try {
+                return await bot.sendAudio(targetId, mediaDetails.fileId, opts);
+            } catch {
+                return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
+            }
         case 'document':
         default:
             return await bot.sendDocument(targetId, mediaDetails.fileId, opts);
@@ -258,22 +321,53 @@ export async function downloadAndUploadMedia(targetId, msg, mediaDetails, bot) {
 
         switch (mediaDetails.type) {
             case 'photo':
-                await bot.sendPhoto(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                try {
+                    await bot.sendPhoto(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'video':
-                await bot.sendVideo(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                try {
+                    await bot.sendVideo(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'animation':
-                await bot.sendAnimation(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                try {
+                    await bot.sendAnimation(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
+                break;
+            case 'sticker':
+                try {
+                    await bot.sendSticker(targetId, buffer, {}, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'voice':
-                await bot.sendVoice(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                try {
+                    await bot.sendVoice(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'video_note':
-                await bot.sendVideoNote(targetId, buffer, opts);
+                try {
+                    await bot.sendVideoNote(targetId, buffer, opts);
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'audio':
-                await bot.sendAudio(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                try {
+                    await bot.sendAudio(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                } catch {
+                    await bot.sendDocument(targetId, buffer, opts, { filename: mediaDetails.fileName });
+                }
                 break;
             case 'document':
             default:
@@ -290,6 +384,35 @@ export async function downloadAndUploadMedia(targetId, msg, mediaDetails, bot) {
 }
 
 /**
+ * Отправляет вложения без файлов (контакты, геопозиции, опросы, дайсы).
+ */
+export async function sendSpecialContent(targetId, msg, bot) {
+    if (msg.contact) {
+        return await bot.sendContact(targetId, msg.contact.phone_number, msg.contact.first_name, {
+            last_name: msg.contact.last_name || undefined,
+            vcard: msg.contact.vcard || undefined
+        });
+    }
+    if (msg.venue) {
+        return await bot.sendVenue(targetId, msg.venue.location.latitude, msg.venue.location.longitude, msg.venue.title, msg.venue.address);
+    }
+    if (msg.location) {
+        return await bot.sendLocation(targetId, msg.location.latitude, msg.location.longitude);
+    }
+    if (msg.poll) {
+        const options = (msg.poll.options || []).map(o => o.text);
+        return await bot.sendPoll(targetId, msg.poll.question, options, {
+            is_anonymous: msg.poll.is_anonymous,
+            type: msg.poll.type
+        });
+    }
+    if (msg.dice) {
+        return await bot.sendDice(targetId, { emoji: msg.dice.emoji });
+    }
+    return null;
+}
+
+/**
  * Скрытно пересылает медиа-сообщение из группы или канала в закрытый целевой канал.
  */
 export async function forwardMediaToChannel(msg, bot) {
@@ -299,11 +422,11 @@ export async function forwardMediaToChannel(msg, bot) {
         // Игнорируем личные чаты со студентами — только группы, супергруппы и каналы
         if (msg.chat.type === 'private') return;
 
-        // Игнорируем обычный текст — пересылаются только медиа и файлы
+        // Игнорируем обычный текст — пересылаются только медиа, файлы, анимации, стикеры и т.д.
         if (!isMediaMessage(msg)) return;
 
         const mediaDetails = extractMediaDetails(msg);
-        log.info(`[MediaCollector] 📥 Поймано медиа [${mediaDetails?.type || 'файл'}] из чата ${msg.chat.id} (${msg.chat.title || msg.chat.type}). Запуск отправки...`);
+        log.info(`[MediaCollector] 📥 Поймано вложение [${mediaDetails?.type || 'медиа/файл'}] из чата ${msg.chat.id} (${msg.chat.title || msg.chat.type}). Запуск отправки...`);
 
         const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
 
@@ -372,6 +495,18 @@ export async function forwardMediaToChannel(msg, bot) {
                 if (downloaded) {
                     resolvedTargetId = targetId;
                     return;
+                }
+            } else {
+                // 5. Обработка особых вложений без файлов (контакты, геопозиция, опросы, дайсы)
+                try {
+                    const specialRes = await sendSpecialContent(targetId, msg, bot);
+                    if (specialRes) {
+                        log.info(`[MediaCollector] ✅ Успешно отправлен спец-контент в ${targetId}`);
+                        resolvedTargetId = targetId;
+                        return;
+                    }
+                } catch (specialErr) {
+                    log.warn(`[MediaCollector] sendSpecialContent в ${targetId} отклонен: ${specialErr.message}`);
                 }
             }
         }
