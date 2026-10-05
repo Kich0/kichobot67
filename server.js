@@ -43,6 +43,7 @@ import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/
 import { setupScheduleCacheWarmup } from "./bot/cron/scheduleCacheWarmup.js";
 import setupNewChatMemberHandler from "./bot/handlers/newChatMemberHandler.js";
 import { setupAnyMessageHandler } from "./bot/handlers/anyMessageHandler.js";
+import { setupMediaCollector } from "./bot/services/mediaCollectorService.js";
 import { i18nextInit } from "./bot/locales/init.js";
 import botHealthMonitor from "./bot/utils/botHealthMonitor.js";
 import WebhookRetryManager from "./bot/utils/webhookRetry.js";
@@ -161,6 +162,7 @@ const appStart = async () => {
         await setupCallbackHandlers();
         await setupNewChatMemberHandler();
         await setupAnyMessageHandler();
+        setupMediaCollector(bot);
 
         await bot.setMyCommands([
             { command: '/start', description: 'Меню / Мәзір' }
