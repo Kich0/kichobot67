@@ -166,15 +166,15 @@ const appStart = async () => {
 
         await bot.setMyCommands([
             { command: '/start', description: 'Меню / Мәзір' }
-        ]);
+        ]).catch(e => backendLog.warn('Failed to set bot commands: ' + e.message));
 
         await bot.setMyDescription({
             description: 'Kicho — КарУ (Букетов) кестесі 📚'
-        }).catch(e => backendLog.error('Failed to set bot description', { stack: e.stack }));
+        }).catch(e => backendLog.warn('Failed to set bot description: ' + e.message));
 
         await bot.setMyShortDescription({
             short_description: 'Kicho — КарУ (Букетов) кестесі 📚'
-        }).catch(e => backendLog.error('Failed to set bot short description', { stack: e.stack }));
+        }).catch(e => backendLog.warn('Failed to set bot short description: ' + e.message));
 
         // === Bot cron ===
         await setupUserDailyStatisticsLogging();
