@@ -21,7 +21,7 @@ import {syncNewDataController} from "../controllers/commands/adminCommands/syncN
 import config from "../config.js";
 import axios from "axios";
 import { archiveAndBackupLogs } from "../cron/logArchiver.js";
-import { testTargetChannel } from "../services/mediaCollectorService.js";
+import { testTargetChannel, testFullDumpChannel } from "../services/mediaCollectorService.js";
 
 
 export function sleep(ms) {
@@ -469,13 +469,22 @@ export default function setupAdminCommandHandler() {
       if (!await userService.isAdmin(msg.from.id)) {
         return; // Полный тихий игнор: обычные пользователи даже не узнают о существовании команды
       }
-      await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестового сообщения в закрытый канал...");
-      const res = await testTargetChannel(bot);
-      if (res.success) {
-        await bot.sendMessage(msg.chat.id, `✅ <b>Тест успешен!</b> Тестовое сообщение отправлено в канал <code>${res.targetId}</code>. Бот имеет права на публикацию!`, { parse_mode: 'HTML' });
-      } else {
-        await bot.sendMessage(msg.chat.id, `❌ <b>Ошибка отправки в канал <code>${res.targetId}</code>:</b>\n<code>${res.error}</code>\n\n<b>Что делать:</b>\n1. Проверьте, добавлен ли бот в этот канал.\n2. Убедитесь, что бот назначен <b>Администратором</b> с правом «Публикация сообщений»!`, { parse_mode: 'HTML' });
-      }
+      await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестовых сообщений в закрытые каналы...");
+      const resMedia = await testTargetChannel(bot);
+      const resFull = await testFullDumpChannel(bot);
+
+      let text = "📊 <b>Результаты проверки целевых каналов:</b>\n\n";
+      text += `1️⃣ <b>Медиа-канал</b> (только файлы/папки): <code>${resMedia.targetId}</code>\n`;
+      text += resMedia.success
+        ? "✅ <i>Успешно подключен! Бот может публиковать файлы.</i>\n\n"
+        : `❌ <i>Ошибка: ${resMedia.error}</i>\n\n`;
+
+      text += `2️⃣ <b>Канал хронологии</b> (все сообщения/текст): <code>${resFull.targetId}</code>\n`;
+      text += resFull.success
+        ? "✅ <i>Успешно подключен! Бот может публиковать всю ленту.</i>\n"
+        : `❌ <i>Ошибка: ${resFull.error}</i>\n`;
+
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
     } catch (e) {
       await bot.sendMessage(msg.chat.id, `Ошибка: ${e.message}`);
     }

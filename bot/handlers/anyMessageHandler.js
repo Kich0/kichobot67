@@ -16,7 +16,6 @@ const COMMAND_REGEXES = [
     /^\/remove/i, /^Г (.+)/i, /^Т (.+)/i, /^Г$/i, /^Т$/i,
     /^Группа/i, /^Тобы/i, /^П (.+)/i, /^О (.+)/i, /^П$/i, /^О$/i, /^Преподаватель/i, /^Оқытушы/i,
     /^\/search/i, /^Поиск/i,
-    /^(сикс|север|севен|six|seven|67|шестьдесят семь)/i,
     /^\/(sync|pull_new|stat|users|sms|test|info|get_user|group_stat|update|clean|user_logs|stat_all|delete_user)/i
 ];
 

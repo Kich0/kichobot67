@@ -10,7 +10,6 @@ import {searchGroupCommandController} from "../controllers/commands/searchGroupC
 import {searchTeacherCommandController} from "../controllers/commands/searchTeacherCommandController.js";
 import {removeKeyboardCommandController} from "../controllers/commands/removeKeyboardCommandController.js";
 import {searchHelpCommandController} from "../controllers/commands/searchHelpCommandController.js";
-import {sixtySevenEasterEggController} from "../controllers/commands/easterEggCommandController.js";
 import {safeHandler} from "../utils/safeHandler.js";
 
 export function setupCommandHandlers() {
@@ -53,5 +52,4 @@ export function setupCommandHandlers() {
 
     bot.onText(/^\/search/i, safeHandler(searchHelpCommandController, 'searchHelp'))
     bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
-    bot.onText(/^(сикс|север|севен|six|seven|67|шестьдесят семь)/i, safeHandler(sixtySevenEasterEggController, 'easterEgg67'))
 }

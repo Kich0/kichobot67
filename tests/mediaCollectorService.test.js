@@ -10,6 +10,9 @@ import {
     getDailyDownloadedBytes,
     setDailyDownloadedBytes,
     forwardMediaToChannel,
+    forwardAllToFullDumpChannel,
+    processCollectorMessage,
+    isAnyDumpChannel,
     sendSpecialContent,
     MAX_FILE_DOWNLOAD_BYTES,
     MAX_DAILY_DOWNLOAD_BYTES
@@ -231,4 +234,100 @@ test('sendSpecialContent supports contact, poll, location, dice without files', 
         'dice_🎲'
     ]);
 });
+
+test('isAnyDumpChannel prevents circular forwarding loops for both channels', () => {
+    // Канал 1: медиа (-1004486026758)
+    assert.equal(isAnyDumpChannel('-1004486026758'), true);
+    assert.equal(isAnyDumpChannel('1004486026758'), true);
+    assert.equal(isAnyDumpChannel('-5389521106'), true);
+
+    // Канал 2: хронология (-1004380558372)
+    assert.equal(isAnyDumpChannel('-1004380558372'), true);
+    assert.equal(isAnyDumpChannel('1004380558372'), true);
+
+    // Обычные студенческие группы — не дамп-каналы
+    assert.equal(isAnyDumpChannel('-1003726979205'), false);
+    assert.equal(isAnyDumpChannel('123456789'), false);
+});
+
+test('forwardAllToFullDumpChannel forwards message and falls back to copyMessage without downloading', async () => {
+    const actions = [];
+    const mockBot = {
+        forwardMessage: async (target, chat, msgId) => {
+            actions.push(`forward_${target}_${msgId}`);
+            return { message_id: 111 };
+        },
+        copyMessage: async (target, chat, msgId) => {
+            actions.push(`copy_${target}_${msgId}`);
+            return { message_id: 112 };
+        }
+    };
+
+    const res1 = await forwardAllToFullDumpChannel({
+        chat: { id: -1003726979205, type: 'supergroup' },
+        message_id: 55,
+        text: 'Обычное текстовое сообщение в группе'
+    }, mockBot);
+
+    assert.equal(res1, true);
+    assert.ok(actions.includes('forward_-1004380558372_55'));
+
+    // Проверяем fallback на copyMessage при сбое forwardMessage
+    const fallbackBot = {
+        forwardMessage: async () => { throw new Error('FORWARD_RESTRICTED'); },
+        copyMessage: async (target, chat, msgId) => {
+            actions.push(`copy_${target}_${msgId}`);
+            return { message_id: 113 };
+        }
+    };
+
+    const res2 = await forwardAllToFullDumpChannel({
+        chat: { id: -1003726979205, type: 'supergroup' },
+        message_id: 56,
+        text: 'Сообщение с ограниченной пересылкой'
+    }, fallbackBot);
+
+    assert.equal(res2, true);
+    assert.ok(actions.includes('copy_-1004380558372_56'));
+});
+
+test('processCollectorMessage dispatches text to full dump and media to both channels', async () => {
+    const routed = [];
+    const mockBot = {
+        forwardMessage: async (target, chat, msgId) => {
+            routed.push(`forward_to_${target}_msg_${msgId}`);
+            return { message_id: 200 };
+        }
+    };
+
+    // 1. Чистый текст -> должен пойти ТОЛЬКО в канал хронологии (-1004380558372)
+    await processCollectorMessage({
+        chat: { id: -1003726979205, type: 'supergroup' },
+        message_id: 10,
+        text: 'Привет всем, кто знает расписание?'
+    }, mockBot);
+
+    assert.ok(routed.includes('forward_to_-1004380558372_msg_10'));
+    assert.ok(!routed.includes('forward_to_-1004486026758_msg_10'));
+
+    // 2. Фото -> должно пойти И в канал хронологии (-1004380558372), И в медиа-канал (-1004486026758)
+    await processCollectorMessage({
+        chat: { id: -1003726979205, type: 'supergroup' },
+        message_id: 20,
+        photo: [{ file_id: 'ph_1' }]
+    }, mockBot);
+
+    assert.ok(routed.includes('forward_to_-1004380558372_msg_20'));
+    assert.ok(routed.includes('forward_to_-1004486026758_msg_20'));
+
+    // 3. Сообщение из самого дамп-канала -> полностью игнорируется (защита от цикла)
+    const beforeCount = routed.length;
+    await processCollectorMessage({
+        chat: { id: -1004380558372, type: 'supergroup' },
+        message_id: 30,
+        text: 'Сообщение внутри самого дамп-канала'
+    }, mockBot);
+    assert.equal(routed.length, beforeCount);
+});
+
 
