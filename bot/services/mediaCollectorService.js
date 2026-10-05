@@ -168,12 +168,22 @@ export function setResolvedTargetId(id) {
  * Тестирует отправку сообщения в целевой канал с полным отчётом об ошибке.
  */
 export async function testTargetChannel(bot, channelId) {
-    const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID || '-1005389521106';
+    const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
     try {
         const res = await bot.sendMessage(id, '🧪 Тестовое сообщение от Kichobot: канал сбора медиа подключен!');
         resolvedTargetId = String(id);
         return { success: true, targetId: id, messageId: res.message_id };
     } catch (err) {
+        const migrated = err?.response?.body?.parameters?.migrate_to_chat_id || err?.parameters?.migrate_to_chat_id;
+        if (migrated) {
+            try {
+                const res = await bot.sendMessage(migrated, '🧪 Тестовое сообщение от Kichobot: супергруппа подключена!');
+                resolvedTargetId = String(migrated);
+                return { success: true, targetId: migrated, messageId: res.message_id };
+            } catch (err2) {
+                return { success: false, targetId: migrated, error: err2.message };
+            }
+        }
         return { success: false, targetId: id, error: err.message };
     }
 }
@@ -295,20 +305,19 @@ export async function forwardMediaToChannel(msg, bot) {
         const mediaDetails = extractMediaDetails(msg);
         log.info(`[MediaCollector] 📥 Поймано медиа [${mediaDetails?.type || 'файл'}] из чата ${msg.chat.id} (${msg.chat.title || msg.chat.type}). Запуск отправки...`);
 
-        const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1005389521106';
+        const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
 
         // Защита от зацикливания: не пересылаем, если источник — сам целевой канал
-        if (isTargetDumpChannel(msg.chat.id, baseTarget) || isTargetDumpChannel(msg.chat.id, '-5389521106') || (resolvedTargetId && isTargetDumpChannel(msg.chat.id, resolvedTargetId))) {
+        if (isTargetDumpChannel(msg.chat.id, baseTarget) || isTargetDumpChannel(msg.chat.id, '-1004486026758') || isTargetDumpChannel(msg.chat.id, '-5389521106') || (resolvedTargetId && isTargetDumpChannel(msg.chat.id, resolvedTargetId))) {
             return;
         }
 
-        // Кандидаты на ID канала: с префиксом -100 и без него (на случай разных форматов)
+        // Кандидаты на ID канала
         const candidates = resolvedTargetId
             ? [resolvedTargetId]
             : [
-                baseTarget.startsWith('-100') ? baseTarget : `-100${baseTarget.replace(/^-/, '')}`,
-                baseTarget.startsWith('-100') ? `-${baseTarget.replace(/^-100/, '')}` : baseTarget,
-                '-1005389521106',
+                baseTarget,
+                '-1004486026758',
                 '-5389521106'
             ];
 
@@ -324,6 +333,15 @@ export async function forwardMediaToChannel(msg, bot) {
                 resolvedTargetId = targetId;
                 return;
             } catch (forwardErr) {
+                const migrated = forwardErr?.response?.body?.parameters?.migrate_to_chat_id || forwardErr?.parameters?.migrate_to_chat_id;
+                if (migrated) {
+                    resolvedTargetId = String(migrated);
+                    log.info(`[MediaCollector] Чат мигрировал в супергруппу ${resolvedTargetId}, повторяем отправку...`);
+                    try {
+                        await bot.forwardMessage(resolvedTargetId, msg.chat.id, msg.message_id);
+                        return;
+                    } catch {}
+                }
                 log.warn(`[MediaCollector] forwardMessage в ${targetId} отклонен: ${forwardErr.message}`);
             }
 
