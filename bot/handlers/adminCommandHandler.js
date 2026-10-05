@@ -467,7 +467,7 @@ export default function setupAdminCommandHandler() {
   bot.onText(/^\/test_media/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
-        return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
+        return; // Полный тихий игнор: обычные пользователи даже не узнают о существовании команды
       }
       await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестового сообщения в закрытый канал...");
       const res = await testTargetChannel(bot);
