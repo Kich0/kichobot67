@@ -94,11 +94,13 @@ class UserTollService {
 
     async enableToll(userId, { starPrice = 9000, username = null, addedBy = null } = {}) {
         const numId = Number(userId);
+        const existing = this.tolledUsers.get(numId);
         const data = {
             starPrice: Number(starPrice) || 9000,
-            username: username ? String(username).replace(/^@/, '') : null,
-            addedBy: addedBy ? Number(addedBy) : null,
-            createdAt: new Date(),
+            username: username ? String(username).replace(/^@/, '') : (existing?.username || null),
+            paidCredits: existing?.paidCredits || 0,
+            addedBy: addedBy ? Number(addedBy) : (existing?.addedBy || null),
+            createdAt: existing?.createdAt || new Date(),
         };
 
         this.tolledUsers.set(numId, data);

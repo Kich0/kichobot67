@@ -25,14 +25,15 @@ export async function handlePaywallCommand(msg) {
         if (parts.length === 0) {
             return await bot.sendMessage(
                 msg.chat.id,
-                "⭐ <b>Управление платным режимом (9 000 ⭐ звёзд за кнопку):</b>\n\n" +
-                "• <code>/paywall [ID|@ник]</code> — включить платные кнопки для пользователя (9 000 ⭐ за кнопку)\n" +
+                "⭐ <b>Управление платным режимом кнопок:</b>\n\n" +
+                "• <code>/paywall [ID|@ник] [звёзды]</code> — включить платные кнопки (любое число звёзд от 1, по умолч. 9 000)\n" +
                 "• <code>/paywall [ID|@ник] off</code> (или <code>/unpaywall [ID|@ник]</code>) — выключить платный режим\n" +
                 "• <code>/paywalls</code> — список всех пользователей на платном режиме\n\n" +
                 "<i>Примеры:</i>\n" +
-                "• <code>/paywall @username</code>\n" +
-                "• <code>/paywall 123456789</code>\n" +
-                "• <code>/paywall @username off</code>\n\n" +
+                "• <code>/paywall @username 50</code> — каждая кнопка стоит 50 звёзд\n" +
+                "• <code>/paywall 123456789 1</code> — каждая кнопка стоит 1 звезду\n" +
+                "• <code>/paywall @username 9000</code> — 9 000 звёзд\n" +
+                "• <code>/paywall @username off</code> — отключить\n\n" +
                 "<i>Команда также доступна по алиасу:</i> <code>/toll</code>, <code>/stars</code>",
                 { parse_mode: "HTML" }
             );
@@ -43,10 +44,23 @@ export async function handlePaywallCommand(msg) {
         }
 
         const target = parts[0];
-        const action = parts[1]?.toLowerCase();
+        const actionOrPrice = parts[1]?.toLowerCase();
 
-        if (action === 'off') {
+        if (actionOrPrice === 'off') {
             return await handleUnpaywallUser(msg, target);
+        }
+
+        let starPrice = 9000;
+        if (parts[1]) {
+            const parsed = parseInt(parts[1], 10);
+            if (isNaN(parsed) || parsed < 1) {
+                return await bot.sendMessage(
+                    msg.chat.id,
+                    "❌ Количество звёзд должно быть целым числом от 1 и выше.\n\n<i>Пример:</i> <code>/paywall @username 50</code>",
+                    { parse_mode: "HTML" }
+                );
+            }
+            starPrice = parsed;
         }
 
         // Включение платного режима
@@ -79,7 +93,6 @@ export async function handlePaywallCommand(msg) {
             );
         }
 
-        const starPrice = 9000;
         await userTollService.enableToll(userId, {
             starPrice,
             username,

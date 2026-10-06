@@ -94,15 +94,30 @@ test('userTollService enables, disables, and checks 9000 stars toll', async () =
     assert.equal(userTollService.isUserTolled(normalId), false);
     assert.equal(userTollService.isUserTolled(tolledId), false);
 
-    // Enable toll for targeted user
-    await userTollService.enableToll(tolledId, { username: 'victim_user', addedBy: 12345 });
+    // Enable toll for targeted user with custom stars amount (e.g., 50 stars, 1 star)
+    await userTollService.enableToll(tolledId, { starPrice: 50, username: 'victim_user', addedBy: 12345 });
     assert.equal(userTollService.isUserTolled(tolledId), true);
     assert.equal(userTollService.isUserTolled(normalId), false); // other users completely unaffected
-    assert.equal(userTollService.getTollPrice(tolledId), 9000);
+    assert.equal(userTollService.getTollPrice(tolledId), 50);
+
+    // Update with 1 star
+    await userTollService.enableToll(tolledId, { starPrice: 1 });
+    assert.equal(userTollService.getTollPrice(tolledId), 1);
+
+    // Update with 100000 stars
+    await userTollService.enableToll(tolledId, { starPrice: 100000 });
+    assert.equal(userTollService.getTollPrice(tolledId), 100000);
 
     const info = userTollService.getTollInfo(tolledId);
-    assert.equal(info.starPrice, 9000);
+    assert.equal(info.starPrice, 100000);
     assert.equal(info.username, 'victim_user');
+
+    // Test paid credits
+    assert.equal(userTollService.hasPaidCredit(tolledId), false);
+    await userTollService.addPaidCredit(tolledId, 1);
+    assert.equal(userTollService.hasPaidCredit(tolledId), true);
+    assert.equal(userTollService.consumePaidCredit(tolledId), true);
+    assert.equal(userTollService.hasPaidCredit(tolledId), false);
 
     const all = userTollService.getAllTolled();
     assert.ok(all.some(u => u.userId === tolledId));
