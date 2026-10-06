@@ -12,10 +12,79 @@ import {redirectToNewScheduleMenu} from "../controllers/commands/newScheduleComm
 import userService from "../services/userService.js";
 import {welcomePageRedirectController} from "../controllers/commands/startCommandController.js";
 import userActionService from "../services/userActionService.js";
+import blackListService from "../services/blackListService.js";
+import userTollService from "../services/userTollService.js";
 
 export default function setupCallbackHandlers() {
     bot.on('callback_query', async (call) => {
-        log.silly(`User ${call.message.chat.id} clicked to btn ${call.data}`, {call, userId: call.message.chat.id});
+        log.silly(`User ${call.message?.chat?.id} clicked to btn ${call.data}`, {call, userId: call.message?.chat?.id});
+
+        const userId = call.from?.id || call.message?.chat?.id;
+        const chatId = call.message?.chat?.id || call.from?.id;
+        const username = call.from?.username || call.message?.chat?.username;
+
+        // 1. Проверка блокировки / мута от администратора
+        const restriction = blackListService.getRestriction(userId);
+        if (restriction) {
+            if (restriction.type === 'ban') {
+                return await bot.answerCallbackQuery(call.id, {
+                    text: "⛔ Ваш доступ к боту заблокирован администратором.",
+                    show_alert: true
+                }).catch(() => {});
+            }
+            if (restriction.type === 'mute') {
+                const untilStr = restriction.until
+                    ? ` до ${new Date(restriction.until).toLocaleTimeString('ru-RU', { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit' })}`
+                    : '';
+                return await bot.answerCallbackQuery(call.id, {
+                    text: `🔇 Вам выдан мут${untilStr}. Нажатие кнопок недоступно.`,
+                    show_alert: true
+                }).catch(() => {});
+            }
+        }
+
+        // 2. Проверка платного режима (9 000 ⭐ звёзд за любое нажатие кнопки)
+        if (userTollService.isUserTolled(userId)) {
+            if (userTollService.hasPaidCredit(userId)) {
+                // Пользователь оплатил кнопку! Списываем 1 оплаченный клик и разрешаем выполнение
+                userTollService.consumePaidCredit(userId);
+                userActionService.logAction(
+                    chatId,
+                    username,
+                    'toll_button_paid_click',
+                    `Использовано оплаченное нажатие для «${call.data}»`
+                ).catch(() => {});
+            } else {
+                const starPrice = userTollService.getTollPrice(userId);
+
+                // Показываем всплывающее окно
+                await bot.answerCallbackQuery(call.id, {
+                    text: `⭐ Эта кнопка платная! Стоимость: ${starPrice.toLocaleString('ru-RU')} звёзд Telegram.`,
+                    show_alert: true
+                }).catch(() => {});
+
+                // Выставляем официальный счёт Telegram Stars (валюта XTR)
+                await bot.sendInvoice(
+                    chatId,
+                    "⭐ Платная кнопка",
+                    `Для совершения этого действия требуется оплата: ${starPrice.toLocaleString('ru-RU')} ⭐ Telegram Stars.`,
+                    `toll_btn_${userId}_${Date.now()}`,
+                    "", // Для Telegram Stars provider_token должен быть пустой строкой
+                    "XTR",
+                    [{ label: "Нажатие кнопки", amount: starPrice }]
+                ).catch(e => log.error(`[UserToll] Ошибка отправки счёта Stars: ${e.message}`));
+
+                userActionService.logAction(
+                    chatId,
+                    username,
+                    'toll_button_blocked',
+                    `Клик «${call.data}» — выставлен счёт на ${starPrice} ⭐`
+                ).catch(() => {});
+
+                return; // Прерываем обработку — действие кнопки заблокировано до оплаты
+            }
+        }
+
         await callbackAntiSpamMiddleware(call, async () => {
             // Мгновенный ответ Telegram (Fast Ack) — гасит крутящийся спиннер за 25-40 мс
             bot.answerCallbackQuery(call.id).catch(() => {});

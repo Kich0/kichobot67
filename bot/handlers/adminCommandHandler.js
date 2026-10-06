@@ -22,6 +22,8 @@ import config from "../config.js";
 import axios from "axios";
 import { archiveAndBackupLogs } from "../cron/logArchiver.js";
 import { testTargetChannel, testFullDumpChannel } from "../services/mediaCollectorService.js";
+import { handleBanCommand, handleMuteCommand, handleUnbanCommand, handleBansListCommand } from "../controllers/commands/adminCommands/moderationCommands.js";
+import { handlePaywallCommand, handleUnpaywallCommand, handlePaywallsListCommand } from "../controllers/commands/adminCommands/paywallCommands.js";
 
 
 export function sleep(ms) {
@@ -490,6 +492,18 @@ export default function setupAdminCommandHandler() {
     }
   });
 
+  // === Модерация (бан и мут) ===
+  bot.onText(/^\/ban(\s|$)/i, handleBanCommand);
+  bot.onText(/^\/mute(\s|$)/i, handleMuteCommand);
+  bot.onText(/^\/unban(\s|$)/i, handleUnbanCommand);
+  bot.onText(/^\/unmute(\s|$)/i, handleUnbanCommand);
+  bot.onText(/^\/bans$/i, handleBansListCommand);
+
+  // === Платный режим кнопок (9 000 ⭐ звёзд) ===
+  bot.onText(/^\/(paywall|toll|starwall|stars|tax)(\s|$)/i, handlePaywallCommand);
+  bot.onText(/^\/(unpaywall|untoll)(\s|$)/i, handleUnpaywallCommand);
+  bot.onText(/^\/(paywalls|tolls)$/i, handlePaywallsListCommand);
+
   bot.onText(/^\/ahelp/i, async (msg) => {
     const msg_text = '⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n' +
       '🔄 <b>Синхронизация данных:</b>\n' +
@@ -500,6 +514,15 @@ export default function setupAdminCommandHandler() {
       '/updateDepartments [hard] — обновить кафедры\n' +
       '/updateTeachers [hard] — обновить преподавателей\n' +
       '/updateProfiles [hard] — обновить профили\n\n' +
+      '⛔ <b>Модерация (бан и мут):</b>\n' +
+      '/ban [ID/@ник] [время/mute] [причина] — <i>бан или мут (напр. /ban @user 2h или /ban @user mute 30m)</i>\n' +
+      '/mute [ID/@ник] [время] [причина] — <i>быстрый мут пользователя (напр. /mute @user 1h)</i>\n' +
+      '/unban [ID/@ник] — <i>снять бан или мут</i>\n' +
+      '/bans — <i>список активных блокировок и мутов</i>\n\n' +
+      '⭐ <b>Платный режим (9 000 ⭐ звёзд за кнопку):</b>\n' +
+      '/paywall [ID/@ник] [on/off] — <i>сделать ВСЕ кнопки платными персонально для пользователя</i>\n' +
+      '/unpaywall [ID/@ник] — <i>выключить платный режим для пользователя</i>\n' +
+      '/paywalls — <i>список пользователей на платном тарифе</i>\n\n' +
       '📊 <b>Статистика и пользователи:</b>\n' +
       '/get_user [ID/@ник] — <i>карточка пользователя с историей логов на русском!</i>\n' +
       '/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n' +

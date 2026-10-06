@@ -43,6 +43,7 @@ import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/
 import { setupScheduleCacheWarmup } from "./bot/cron/scheduleCacheWarmup.js";
 import setupNewChatMemberHandler from "./bot/handlers/newChatMemberHandler.js";
 import { setupAnyMessageHandler } from "./bot/handlers/anyMessageHandler.js";
+import setupPaymentHandlers from "./bot/handlers/paymentHandler.js";
 import { setupMediaCollector } from "./bot/services/mediaCollectorService.js";
 import { i18nextInit } from "./bot/locales/init.js";
 import botHealthMonitor from "./bot/utils/botHealthMonitor.js";
@@ -160,6 +161,7 @@ const appStart = async () => {
         await setupCommandHandlers();
         await setupAdminCommandHandler();
         await setupCallbackHandlers();
+        setupPaymentHandlers();
         await setupNewChatMemberHandler();
         await setupAnyMessageHandler();
         setupMediaCollector(bot);

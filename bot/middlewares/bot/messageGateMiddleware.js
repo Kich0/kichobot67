@@ -1,5 +1,6 @@
 import log from "../../logging/logging.js";
 import userActionService from "../../services/userActionService.js";
+import blackListService from "../../services/blackListService.js";
 
 export function getMediaDescription(msg) {
     if (!msg) return { action: 'media_other', label: '[Медиа]' };
@@ -65,7 +66,14 @@ function isKnownCommand(text) {
 }
 
 export function isUserBanned(userId) {
-    return !!(bannedUsers[userId] && Date.now() < bannedUsers[userId]);
+    if (!userId) return false;
+    if (bannedUsers[userId] && Date.now() < bannedUsers[userId]) return true;
+    return blackListService.isBanned(userId);
+}
+
+export function isUserMuted(userId) {
+    if (!userId) return false;
+    return blackListService.isMuted(userId);
 }
 
 export function isMessageBlocked(msg) {
@@ -83,8 +91,43 @@ export function processMessageGate(msg, bot) {
 
     if (msg.chat.type !== 'private') return;
 
-    // --- Бан: полная тишина, предупреждение отправлено при бане ---
-    if (isUserBanned(userId)) {
+    // --- Проверка перманентного/временного бана или мута от администратора ---
+    const adminRestriction = blackListService.getRestriction(userId);
+    if (adminRestriction) {
+        blockedMessages.add(key);
+        if (adminRestriction.type === 'ban') {
+            if (!banWarningSent[userId]) {
+                banWarningSent[userId] = true;
+                const untilStr = adminRestriction.until
+                    ? ` до ${new Date(adminRestriction.until).toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}`
+                    : ' навсегда';
+                const reasonStr = adminRestriction.reason ? `\n\nПричина: <i>${adminRestriction.reason}</i>` : '';
+                bot.sendMessage(userId,
+                    `⛔ <b>Ваш доступ к боту заблокирован администратором${untilStr}</b>${reasonStr}`,
+                    { parse_mode: "HTML" }
+                ).catch(() => {});
+            }
+            return;
+        }
+
+        if (adminRestriction.type === 'mute') {
+            if (!banWarningSent[userId] || (now - (banWarningSent[userId] || 0) > 10000)) {
+                banWarningSent[userId] = now;
+                const untilStr = adminRestriction.until
+                    ? ` до ${new Date(adminRestriction.until).toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}`
+                    : '';
+                const reasonStr = adminRestriction.reason ? `\n\nПричина: <i>${adminRestriction.reason}</i>` : '';
+                bot.sendMessage(userId,
+                    `🔇 <b>Вам выдан мут администратором${untilStr}</b>${reasonStr}\n\n<i>Отправка сообщений и команд временно ограничена.</i>`,
+                    { parse_mode: "HTML" }
+                ).catch(() => {});
+            }
+            return;
+        }
+    }
+
+    // --- Временный спам-бан (скользящее окно) ---
+    if (bannedUsers[userId] && now < bannedUsers[userId]) {
         blockedMessages.add(key);
         return;
     }

@@ -2,12 +2,55 @@ import log from "../logging/logging.js";
 import config from "../config.js";
 import {bot} from "../app.js";
 import {isMessageBlocked} from "../middlewares/bot/messageGateMiddleware.js";
+import userTollService from "../services/userTollService.js";
+import userActionService from "../services/userActionService.js";
 
 
 export function safeHandler(handler, handlerName = 'unknown') {
     return async (...args) => {
         const msg = args[0];
         if (msg && isMessageBlocked(msg)) return;
+
+        const userId = msg?.chat?.id || msg?.from?.id;
+        if (userId && handlerName !== 'start' && userTollService.isUserTolled(userId)) {
+            if (userTollService.hasPaidCredit(userId)) {
+                userTollService.consumePaidCredit(userId);
+                userActionService.logAction(
+                    userId,
+                    msg?.from?.username,
+                    'toll_menu_paid_click',
+                    `Оплаченная кнопка «${msg.text}» (${handlerName})`
+                ).catch(() => {});
+            } else {
+                const price = userTollService.getTollPrice(userId);
+                await bot.sendMessage(
+                    userId,
+                    `⭐ <b>Платное действие</b>\n\n` +
+                    `Использование этой кнопки стоит <b>${price.toLocaleString('ru-RU')} ⭐ звёзд Telegram</b>.\n` +
+                    `Для продолжения оплатите счёт ниже 👇`,
+                    { parse_mode: 'HTML' }
+                ).catch(() => {});
+
+                await bot.sendInvoice(
+                    userId,
+                    "⭐ Платная кнопка",
+                    `Действие: ${msg.text || handlerName} (${price.toLocaleString('ru-RU')} ⭐)`,
+                    `toll_msg_${userId}_${Date.now()}`,
+                    "",
+                    "XTR",
+                    [{ label: "Действие в боте", amount: price }]
+                ).catch(e => log.error(`[UserToll] Ошибка отправки счёта: ${e.message}`));
+
+                userActionService.logAction(
+                    userId,
+                    msg?.from?.username,
+                    'toll_menu_blocked',
+                    `Кнопка «${msg.text}» (${handlerName}) — счёт ${price} ⭐`
+                ).catch(() => {});
+
+                return;
+            }
+        }
         try {
             await handler(...args);
         } catch (error) {

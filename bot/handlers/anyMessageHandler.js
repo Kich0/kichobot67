@@ -15,8 +15,7 @@ const COMMAND_REGEXES = [
     /^(?:[💡❓⚠️\u26A0\uFE0F\s])*(Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)/iu,
     /^\/remove/i, /^Г (.+)/i, /^Т (.+)/i, /^Г$/i, /^Т$/i,
     /^Группа/i, /^Тобы/i, /^П (.+)/i, /^О (.+)/i, /^П$/i, /^О$/i, /^Преподаватель/i, /^Оқытушы/i,
-    /^\/search/i, /^Поиск/i,
-    /^\/(sync|pull_new|stat|users|sms|test|info|get_user|group_stat|update|clean|user_logs|stat_all|delete_user)/i
+    /^\/(sync|pull_new|stat|users|sms|test|info|get_user|group_stat|update|clean|user_logs|stat_all|delete_user|ban|mute|unban|unmute|bans|paywall|toll|starwall|stars|tax|unpaywall|untoll|paywalls|tolls)/i
 ];
 
 export function setupAnyMessageHandler() {
