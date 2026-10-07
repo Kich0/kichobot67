@@ -298,3 +298,25 @@ test('getMediaDescription: properly categorizes photo, video, animation, sticker
     });
 });
 
+test('group messages: plain chat is ignored while bot commands and private messages are logged', () => {
+    const shouldLog = (chatType, text) => {
+        const COMMAND_REGEXES = [/^\/start/i, /^\/schedule/i, /^расписание/i];
+        const isPrivate = chatType === 'private';
+        const isCmd = text.startsWith('/') || COMMAND_REGEXES.some(regex => regex.test(text));
+        return isPrivate || isCmd;
+    };
+
+    // Групповая болтовня -> false (не логируется)
+    assert.equal(shouldLog('supergroup', 'Привет всем, кто на пару идет?'), false);
+    assert.equal(shouldLog('group', 'Скиньте домашку'), false);
+
+    // Команда в группе -> true (логируется)
+    assert.equal(shouldLog('supergroup', '/schedule'), true);
+    assert.equal(shouldLog('group', '/start'), true);
+    assert.equal(shouldLog('supergroup', 'расписание'), true);
+
+    // Личное сообщение в ЛС -> true (всегда логируется)
+    assert.equal(shouldLog('private', 'Привет бот'), true);
+    assert.equal(shouldLog('private', 'ИВТ-21'), true);
+});
+

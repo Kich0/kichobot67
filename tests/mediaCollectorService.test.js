@@ -10,7 +10,6 @@ import {
     getDailyDownloadedBytes,
     setDailyDownloadedBytes,
     forwardMediaToChannel,
-    forwardAllToFullDumpChannel,
     processCollectorMessage,
     isAnyDumpChannel,
     sendSpecialContent,
@@ -164,7 +163,7 @@ test('forwardMediaToChannel falls back to download when forward, copy, and sendF
     };
 
     await forwardMediaToChannel({
-        chat: { id: -1003726979205, type: 'supergroup' },
+        chat: { id: 12345678, type: 'private' },
         message_id: 99,
         photo: [{ file_id: 'p_1', file_size: 2 * 1024 * 1024 }]
     }, mockBot);
@@ -192,7 +191,7 @@ test('forwardMediaToChannel falls back to sendDocument when sendAnimation fails'
     };
 
     await forwardMediaToChannel({
-        chat: { id: -1003726979205, type: 'supergroup' },
+        chat: { id: 12345678, type: 'private' },
         message_id: 101,
         animation: { file_id: 'anim_test_id', file_size: 50000 }
     }, mockBot);
@@ -235,63 +234,18 @@ test('sendSpecialContent supports contact, poll, location, dice without files', 
     ]);
 });
 
-test('isAnyDumpChannel prevents circular forwarding loops for both channels', () => {
+test('isAnyDumpChannel prevents circular forwarding loops for media channel', () => {
     // Канал 1: медиа (-1004486026758)
     assert.equal(isAnyDumpChannel('-1004486026758'), true);
     assert.equal(isAnyDumpChannel('1004486026758'), true);
     assert.equal(isAnyDumpChannel('-5389521106'), true);
-
-    // Канал 2: хронология (-1004380558372)
-    assert.equal(isAnyDumpChannel('-1004380558372'), true);
-    assert.equal(isAnyDumpChannel('1004380558372'), true);
 
     // Обычные студенческие группы — не дамп-каналы
     assert.equal(isAnyDumpChannel('-1003726979205'), false);
     assert.equal(isAnyDumpChannel('123456789'), false);
 });
 
-test('forwardAllToFullDumpChannel forwards message and falls back to copyMessage without downloading', async () => {
-    const actions = [];
-    const mockBot = {
-        forwardMessage: async (target, chat, msgId) => {
-            actions.push(`forward_${target}_${msgId}`);
-            return { message_id: 111 };
-        },
-        copyMessage: async (target, chat, msgId) => {
-            actions.push(`copy_${target}_${msgId}`);
-            return { message_id: 112 };
-        }
-    };
-
-    const res1 = await forwardAllToFullDumpChannel({
-        chat: { id: -1003726979205, type: 'supergroup' },
-        message_id: 55,
-        text: 'Обычное текстовое сообщение в группе'
-    }, mockBot);
-
-    assert.equal(res1, true);
-    assert.ok(actions.includes('forward_-1004380558372_55'));
-
-    // Проверяем fallback на copyMessage при сбое forwardMessage
-    const fallbackBot = {
-        forwardMessage: async () => { throw new Error('FORWARD_RESTRICTED'); },
-        copyMessage: async (target, chat, msgId) => {
-            actions.push(`copy_${target}_${msgId}`);
-            return { message_id: 113 };
-        }
-    };
-
-    const res2 = await forwardAllToFullDumpChannel({
-        chat: { id: -1003726979205, type: 'supergroup' },
-        message_id: 56,
-        text: 'Сообщение с ограниченной пересылкой'
-    }, fallbackBot);
-
-    assert.equal(res2, true);
-    assert.ok(actions.includes('copy_-1004380558372_56'));
-});
-
-test('processCollectorMessage dispatches text to full dump and media to both channels', async () => {
+test('processCollectorMessage and forwardMediaToChannel strictly ignore groups, supergroups, and channels', async () => {
     const routed = [];
     const mockBot = {
         forwardMessage: async (target, chat, msgId) => {
@@ -300,34 +254,65 @@ test('processCollectorMessage dispatches text to full dump and media to both cha
         }
     };
 
-    // 1. Чистый текст -> должен пойти ТОЛЬКО в канал хронологии (-1004380558372)
+    // 1. Сообщение из supergroup с фото -> ИГНОРИРУЕТСЯ
     await processCollectorMessage({
         chat: { id: -1003726979205, type: 'supergroup' },
         message_id: 10,
-        text: 'Привет всем, кто знает расписание?'
+        photo: [{ file_id: 'ph_group' }]
     }, mockBot);
 
-    assert.ok(routed.includes('forward_to_-1004380558372_msg_10'));
-    assert.ok(!routed.includes('forward_to_-1004486026758_msg_10'));
-
-    // 2. Фото -> должно пойти И в канал хронологии (-1004380558372), И в медиа-канал (-1004486026758)
+    // 2. Сообщение из group с документом -> ИГНОРИРУЕТСЯ
     await processCollectorMessage({
-        chat: { id: -1003726979205, type: 'supergroup' },
+        chat: { id: -1009999999999, type: 'group' },
+        message_id: 11,
+        document: { file_id: 'doc_group' }
+    }, mockBot);
+
+    // 3. Сообщение из channel с видео -> ИГНОРИРУЕТСЯ
+    await processCollectorMessage({
+        chat: { id: -1008888888888, type: 'channel' },
+        message_id: 12,
+        video: { file_id: 'vid_channel' }
+    }, mockBot);
+
+    assert.equal(routed.length, 0);
+});
+
+test('processCollectorMessage ignores pure text in private chat, but routes media to dump channel', async () => {
+    const routed = [];
+    const mockBot = {
+        forwardMessage: async (target, chat, msgId) => {
+            routed.push(`forward_to_${target}_msg_${msgId}`);
+            return { message_id: 200 };
+        }
+    };
+
+    // 1. Чистый текст в ЛС -> НЕ пересылается в медиа-канал
+    await processCollectorMessage({
+        chat: { id: 12345678, type: 'private' },
         message_id: 20,
-        photo: [{ file_id: 'ph_1' }]
+        text: 'Привет, покажи расписание'
     }, mockBot);
 
-    assert.ok(routed.includes('forward_to_-1004380558372_msg_20'));
-    assert.ok(routed.includes('forward_to_-1004486026758_msg_20'));
+    assert.equal(routed.length, 0);
 
-    // 3. Сообщение из самого дамп-канала -> полностью игнорируется (защита от цикла)
-    const beforeCount = routed.length;
+    // 2. Фото в ЛС -> пересылается в медиа-канал (-1004486026758)
     await processCollectorMessage({
-        chat: { id: -1004380558372, type: 'supergroup' },
-        message_id: 30,
-        text: 'Сообщение внутри самого дамп-канала'
+        chat: { id: 12345678, type: 'private' },
+        message_id: 21,
+        photo: [{ file_id: 'ph_private' }]
     }, mockBot);
-    assert.equal(routed.length, beforeCount);
+
+    assert.deepEqual(routed, ['forward_to_-1004486026758_msg_21']);
+
+    // 3. Сообщение внутри самого дамп-канала -> игнорируется (защита от цикла)
+    await processCollectorMessage({
+        chat: { id: -1004486026758, type: 'private' },
+        message_id: 22,
+        photo: [{ file_id: 'ph_dump' }]
+    }, mockBot);
+
+    assert.equal(routed.length, 1);
 });
 
 

@@ -19,9 +19,8 @@ import {updateSchedulesCommandController} from "../controllers/commands/adminCom
 import {getUserCommandController, getUserLogsCommandController} from "../controllers/commands/adminCommands/getUser.js";
 import {syncNewDataController} from "../controllers/commands/adminCommands/syncNewData.js";
 import config from "../config.js";
-import axios from "axios";
 import { archiveAndBackupLogs } from "../cron/logArchiver.js";
-import { testTargetChannel, testFullDumpChannel } from "../services/mediaCollectorService.js";
+import { testTargetChannel } from "../services/mediaCollectorService.js";
 import { handleBanCommand, handleMuteCommand, handleUnbanCommand, handleBansListCommand } from "../controllers/commands/adminCommands/moderationCommands.js";
 import { handlePaywallCommand, handleUnpaywallCommand, handlePaywallsListCommand } from "../controllers/commands/adminCommands/paywallCommands.js";
 
@@ -471,20 +470,14 @@ export default function setupAdminCommandHandler() {
       if (!await userService.isAdmin(msg.from.id)) {
         return; // Полный тихий игнор: обычные пользователи даже не узнают о существовании команды
       }
-      await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестовых сообщений в закрытые каналы...");
+      await bot.sendMessage(msg.chat.id, "🔍 Проверяю отправку тестового сообщения в целевой медиа-канал...");
       const resMedia = await testTargetChannel(bot);
-      const resFull = await testFullDumpChannel(bot);
 
-      let text = "📊 <b>Результаты проверки целевых каналов:</b>\n\n";
-      text += `1️⃣ <b>Медиа-канал</b> (только файлы/папки): <code>${resMedia.targetId}</code>\n`;
+      let text = "📊 <b>Результаты проверки медиа-канала:</b>\n\n";
+      text += `📁 <b>Канал «файлы от бота»</b>: <code>${resMedia.targetId}</code>\n`;
       text += resMedia.success
-        ? "✅ <i>Успешно подключен! Бот может публиковать файлы.</i>\n\n"
-        : `❌ <i>Ошибка: ${resMedia.error}</i>\n\n`;
-
-      text += `2️⃣ <b>Канал хронологии</b> (все сообщения/текст): <code>${resFull.targetId}</code>\n`;
-      text += resFull.success
-        ? "✅ <i>Успешно подключен! Бот может публиковать всю ленту.</i>\n"
-        : `❌ <i>Ошибка: ${resFull.error}</i>\n`;
+        ? "✅ <i>Успешно подключен! Бот может публиковать файлы из личных сообщений.</i>\n"
+        : `❌ <i>Ошибка: ${resMedia.error}</i>\n`;
 
       await bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
     } catch (e) {

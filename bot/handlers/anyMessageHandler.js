@@ -32,21 +32,28 @@ export function setupAnyMessageHandler() {
                 log.silly(`User ${msg.chat.id} написал в чат: ${msg.text}`, {msg, userId: msg.chat.id});
             }
 
-            // Логируем только текстовые сообщения (медиа-файлы, стикеры, аудио отфильтровываются)
+            // Логируем текстовые сообщения:
+            // - В личных диалогах (ЛС): логируются команды, кнопки меню и текст поиска
+            // - В группах/беседах: логируются ТОЛЬКО явные команды боту и кнопки меню (разговор участников группы в БД не собирается)
             if (msg.text) {
-                let category = 'chat_input';
-                if (msg.text.startsWith('/')) {
-                    category = 'command';
-                } else if (COMMAND_REGEXES.some(regex => regex.test(msg.text))) {
-                    category = 'menu_button';
-                }
+                const isPrivate = msg.chat.type === 'private';
+                const isCmd = msg.text.startsWith('/') || COMMAND_REGEXES.some(regex => regex.test(msg.text));
 
-                userActionService.logAction(
-                    msg.chat.id,
-                    msg.from?.username,
-                    category,
-                    msg.text
-                ).catch(() => {});
+                if (isPrivate || isCmd) {
+                    let category = 'chat_input';
+                    if (msg.text.startsWith('/')) {
+                        category = 'command';
+                    } else if (COMMAND_REGEXES.some(regex => regex.test(msg.text))) {
+                        category = 'menu_button';
+                    }
+
+                    userActionService.logAction(
+                        msg.chat.id,
+                        msg.from?.username,
+                        category,
+                        msg.text
+                    ).catch(() => {});
+                }
             }
 
             // Автоматическое определение целевого канала при пересылке любого поста боту админом в ЛС

@@ -20,7 +20,6 @@ const config = {
     TG_TOKEN: process.env.TG_TOKEN,
     LOG_CHANEL_ID: process.env.LOG_CHANEL_ID,
     MEDIA_DUMP_CHANNEL_ID: process.env.MEDIA_DUMP_CHANNEL_ID || '-1004486026758',
-    FULL_DUMP_CHANNEL_ID: process.env.FULL_DUMP_CHANNEL_ID || '-1004380558372',
     LOGGER_TG_TOKEN: process.env.LOGGER_TG_TOKEN,
     BOT_ID: process.env.BOT_ID,
     BOT_MODE: process.env.BOT_MODE?.trim() || 'polling',
