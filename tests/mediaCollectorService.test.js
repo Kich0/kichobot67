@@ -13,9 +13,11 @@ import {
     processCollectorMessage,
     isAnyDumpChannel,
     sendSpecialContent,
+    setResolvedTargetId,
     MAX_FILE_DOWNLOAD_BYTES,
     MAX_DAILY_DOWNLOAD_BYTES
 } from '../bot/services/mediaCollectorService.js';
+import config from '../config.js';
 
 test('isMediaMessage correctly identifies media vs text messages', () => {
     assert.equal(isMediaMessage(null), false);
@@ -41,13 +43,13 @@ test('isMediaMessage correctly identifies media vs text messages', () => {
 });
 
 test('isTargetDumpChannel prevents circular forwarding loops', () => {
-    const targetChannel = '-1004486026758';
+    const targetChannel = '-1009998887776';
 
-    assert.equal(isTargetDumpChannel('-1004486026758', targetChannel), true);
-    assert.equal(isTargetDumpChannel('1004486026758', targetChannel), true);
-    assert.equal(isTargetDumpChannel('-5389521106', '-5389521106'), true);
+    assert.equal(isTargetDumpChannel('-1009998887776', targetChannel), true);
+    assert.equal(isTargetDumpChannel('1009998887776', targetChannel), true);
+    assert.equal(isTargetDumpChannel('-1005556667778', '-1005556667778'), true);
 
-    assert.equal(isTargetDumpChannel('-1003726979205', targetChannel), false);
+    assert.equal(isTargetDumpChannel('-1001112223334', targetChannel), false);
     assert.equal(isTargetDumpChannel('123456789', targetChannel), false);
 });
 
@@ -221,10 +223,10 @@ test('sendSpecialContent supports contact, poll, location, dice without files', 
         }
     };
 
-    await sendSpecialContent('-1004486026758', { contact: { phone_number: '+777', first_name: 'Test' } }, mockBot);
-    await sendSpecialContent('-1004486026758', { location: { latitude: 49.8, longitude: 73.0 } }, mockBot);
-    await sendSpecialContent('-1004486026758', { poll: { question: 'Q1', options: [{ text: 'A' }, { text: 'B' }] } }, mockBot);
-    await sendSpecialContent('-1004486026758', { dice: { emoji: '🎲' } }, mockBot);
+    await sendSpecialContent('-1009998887776', { contact: { phone_number: '+777', first_name: 'Test' } }, mockBot);
+    await sendSpecialContent('-1009998887776', { location: { latitude: 49.8, longitude: 73.0 } }, mockBot);
+    await sendSpecialContent('-1009998887776', { poll: { question: 'Q1', options: [{ text: 'A' }, { text: 'B' }] } }, mockBot);
+    await sendSpecialContent('-1009998887776', { dice: { emoji: '🎲' } }, mockBot);
 
     assert.deepEqual(results, [
         'contact_+777_Test',
@@ -235,13 +237,13 @@ test('sendSpecialContent supports contact, poll, location, dice without files', 
 });
 
 test('isAnyDumpChannel prevents circular forwarding loops for media channel', () => {
-    // Канал 1: медиа (-1004486026758)
-    assert.equal(isAnyDumpChannel('-1004486026758'), true);
-    assert.equal(isAnyDumpChannel('1004486026758'), true);
-    assert.equal(isAnyDumpChannel('-5389521106'), true);
+    config.MEDIA_DUMP_CHANNEL_ID = '-1009998887776';
+
+    assert.equal(isAnyDumpChannel('-1009998887776'), true);
+    assert.equal(isAnyDumpChannel('1009998887776'), true);
 
     // Обычные студенческие группы — не дамп-каналы
-    assert.equal(isAnyDumpChannel('-1003726979205'), false);
+    assert.equal(isAnyDumpChannel('-1001112223334'), false);
     assert.equal(isAnyDumpChannel('123456789'), false);
 });
 
@@ -296,18 +298,20 @@ test('processCollectorMessage ignores pure text in private chat, but routes medi
 
     assert.equal(routed.length, 0);
 
-    // 2. Фото в ЛС -> пересылается в медиа-канал (-1004486026758)
+    // 2. Фото в ЛС -> пересылается в медиа-канал
+    config.MEDIA_DUMP_CHANNEL_ID = '-1009998887776';
+    setResolvedTargetId('-1009998887776');
     await processCollectorMessage({
         chat: { id: 12345678, type: 'private' },
         message_id: 21,
         photo: [{ file_id: 'ph_private' }]
     }, mockBot);
 
-    assert.deepEqual(routed, ['forward_to_-1004486026758_msg_21']);
+    assert.deepEqual(routed, ['forward_to_-1009998887776_msg_21']);
 
     // 3. Сообщение внутри самого дамп-канала -> игнорируется (защита от цикла)
     await processCollectorMessage({
-        chat: { id: -1004486026758, type: 'private' },
+        chat: { id: -1009998887776, type: 'private' },
         message_id: 22,
         photo: [{ file_id: 'ph_dump' }]
     }, mockBot);

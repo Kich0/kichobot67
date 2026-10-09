@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import { UserActionService, formatCappedText, deduplicateActions } from '../bot/services/userActionService.js';
+import { UserActionService, formatCappedText, deduplicateActions, styleHeaderRow } from '../bot/services/userActionService.js';
 import { UserAction } from '../bot/models/userAction.js';
-import { styleHeaderRow } from '../scratch/export_database_to_drive.js';
 import { getMediaDescription } from '../bot/middlewares/bot/messageGateMiddleware.js';
 
 test('formatCappedText: safely handles null, undefined, empty text', () => {

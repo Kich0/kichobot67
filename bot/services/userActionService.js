@@ -51,6 +51,28 @@ export function deduplicateActions(allCandidates) {
     return { actions, duplicatesSkipped };
 }
 
+export function styleHeaderRow(sheet) {
+    if (!sheet) return;
+    const row = sheet.getRow(1);
+    row.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A73E8" } };
+    row.alignment = { vertical: "middle", horizontal: "center" };
+    row.height = 25;
+
+    // Закрепление первой строки (заголовка)
+    sheet.views = [
+        { state: 'frozen', xSplit: 0, ySplit: 1, activeCell: 'A2' }
+    ];
+
+    // Включение AutoFilter по всей ширине колонок
+    if (sheet.columns && sheet.columns.length > 0) {
+        sheet.autoFilter = {
+            from: { row: 1, column: 1 },
+            to: { row: 1, column: sheet.columns.length }
+        };
+    }
+}
+
 export class UserActionService {
     constructor() {
         this.queue = [];

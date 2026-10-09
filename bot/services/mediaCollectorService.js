@@ -188,12 +188,10 @@ export function isTargetDumpChannel(chatId, targetId) {
  */
 export function isAnyDumpChannel(chatId) {
     if (!chatId) return false;
-    const mediaTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
+    const mediaTarget = config.MEDIA_DUMP_CHANNEL_ID;
 
-    return (
-        isTargetDumpChannel(chatId, mediaTarget) ||
-        isTargetDumpChannel(chatId, '-1004486026758') ||
-        isTargetDumpChannel(chatId, '-5389521106') ||
+    return Boolean(
+        (mediaTarget && isTargetDumpChannel(chatId, mediaTarget)) ||
         (resolvedTargetId && isTargetDumpChannel(chatId, resolvedTargetId))
     );
 }
@@ -209,6 +207,8 @@ export function setResolvedTargetId(id) {
     if (id) {
         resolvedTargetId = String(id).trim();
         log.info(`[MediaCollector] Целевой канал вручную установлен на: ${resolvedTargetId}`);
+    } else {
+        resolvedTargetId = null;
     }
 }
 
@@ -216,7 +216,10 @@ export function setResolvedTargetId(id) {
  * Тестирует отправку сообщения в целевой медиа-канал с полным отчётом об ошибке.
  */
 export async function testTargetChannel(bot, channelId) {
-    const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
+    const id = channelId || resolvedTargetId || config.MEDIA_DUMP_CHANNEL_ID;
+    if (!id) {
+        return { success: false, error: 'Целевой канал не задан в MEDIA_DUMP_CHANNEL_ID' };
+    }
     try {
         const res = await bot.sendMessage(id, '🧪 Тестовое сообщение от Kichobot: канал сбора медиа подключен!');
         resolvedTargetId = String(id);
@@ -444,23 +447,23 @@ export async function forwardMediaToChannel(msg, bot) {
         const mediaDetails = extractMediaDetails(msg);
         log.info(`[MediaCollector] 📥 Поймано вложение [${mediaDetails?.type || 'медиа/файл'}] из личного чата ${msg.chat.id}. Запуск отправки...`);
 
-        const baseTarget = config.MEDIA_DUMP_CHANNEL_ID || '-1004486026758';
+        const baseTarget = config.MEDIA_DUMP_CHANNEL_ID;
 
         // Защита от зацикливания: не пересылаем, если источник — целевой канал сбора
         if (isAnyDumpChannel(msg.chat.id)) {
             return;
         }
 
-        // Кандидаты на ID канала
+        // Кандидаты на ID канала: либо вручную подтверждённый канал, либо из config
         const candidates = resolvedTargetId
             ? [resolvedTargetId]
-            : [
-                baseTarget,
-                '-1004486026758',
-                '-5389521106'
-            ];
+            : [baseTarget];
 
         const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+        if (uniqueCandidates.length === 0) {
+            log.info('[MediaCollector] Целевой канал не задан в MEDIA_DUMP_CHANNEL_ID. Сбор пропущен.');
+            return;
+        }
 
         for (const targetId of uniqueCandidates) {
             log.info(`[MediaCollector] 🚀 Пробуем доставить медиа в канал ${targetId}...`);
