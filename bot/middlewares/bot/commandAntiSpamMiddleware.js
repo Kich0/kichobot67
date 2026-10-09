@@ -3,7 +3,7 @@ import log from "../../logging/logging.js";
 import userService from "../../services/userService.js";
 import i18next from "i18next";
 
-const COMMAND_COOLDOWN_MS = 500;
+const COMMAND_COOLDOWN_MS = 50;
 const WARNING_COOLDOWN_MS = 4000;
 
 const userLastCommand = {};

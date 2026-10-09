@@ -22,7 +22,7 @@ export function getMediaDescription(msg) {
 }
 
 const MAX_TEXT_LENGTH = 250;
-const RATE_LIMIT_MS = 500;
+const RATE_LIMIT_MS = 50;
 const SPAM_WINDOW_MS = 10000;
 const SPAM_MAX_MESSAGES = 8;
 const BAN_DURATION_MS = 60000;
@@ -159,7 +159,7 @@ export function processMessageGate(msg, bot) {
         return;
     }
 
-    // --- Рейт-лимит (1 сообщение в 1.5с) — молча блокирует ---
+    // --- Рейт-лимит (1 сообщение в 50мс) — молча блокирует аномальный дубль-пакет ---
     if (userGateTimestamps[userId] && (now - userGateTimestamps[userId] < RATE_LIMIT_MS)) {
         blockedMessages.add(key);
         return;

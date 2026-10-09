@@ -4,9 +4,9 @@ import log from "../../logging/logging.js";
 import userService from "../../services/userService.js";
 import {isUserBanned} from "./messageGateMiddleware.js";
 
-const CALLBACK_DEBOUNCE_MS = 200;       // Защита от случайного физического дабл-клика
+const CALLBACK_DEBOUNCE_MS = 20;        // Защита от случайного аппаратного дубля (20мс)
 const CALLBACK_BURST_WINDOW_MS = 3000;  // Скользящее окно анализа спама (3 сек)
-const CALLBACK_BURST_MAX = 8;           // Максимум 8 кликов за 3 секунды
+const CALLBACK_BURST_MAX = 25;          // Максимум 25 кликов за 3 секунды (быстрое листание «назад-вперёд»)
 const WARNING_COOLDOWN_MS = 4000;       // Интервал между предупреждениями
 
 const userLastCallback = {};
