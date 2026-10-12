@@ -1,5 +1,6 @@
 import { Group } from "../models/group.js";
 import { Schedule } from "../models/schedule.js";
+import scheduleService from "./scheduleService.js";
 import log from "../logging/logging.js";
 import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
@@ -156,12 +157,9 @@ export async function enrichTeacherSchedule(scheduleData, teacher) {
                 try {
                     const liveData = await BackendScheduleService.get_schedule_by_groupId(grp.id, grp.language || 'рус');
                     if (liveData && Array.isArray(liveData) && liveData.length > 0) {
-                        const updatedDoc = await Schedule.findOneAndUpdate(
-                            { groupId: grp.id },
-                            { data: liveData, language: grp.language || 'рус' },
-                            { upsert: true, new: true }
-                        ).lean();
-                        groupIdToSchedule.set(grp.id, updatedDoc || { groupId: grp.id, data: liveData });
+                        // Через версионирование: изменилось -> старая версия в историю, не изменилось -> только время проверки
+                        await scheduleService.updateByGroupId(grp.id, liveData);
+                        groupIdToSchedule.set(grp.id, { groupId: grp.id, data: liveData, updatedAt: new Date() });
                     }
                 } catch (fetchErr) {
                     log.warn(`[TeacherScheduleEnricher] Не удалось обновить расписание группы ${grp.name} (${grp.id}): ${fetchErr.message}`);

@@ -12,11 +12,27 @@ const teacherScheduleDaySchema = new mongoose.Schema({
     groups: [groupSchema]
 });
 
-// Расписание преподавателя хранится бессрочно как несгораемый аварийный резерв
+// Расписание преподавателя хранится бессрочно как несгораемый аварийный резерв.
+// Здесь лежит ОДИН актуальный «оригинал»; при изменении содержимого (хоть одной буквы)
+// прежний оригинал переносится в коллекцию TeacherScheduleVersion (см. scheduleVersioning.js).
 const teacherScheduleSchema = new mongoose.Schema({
     teacherId: { type: Number, ref: "teacher", field: 'id', required: true, unique: true, index: true },
-    data: [teacherScheduleDaySchema]
+    data: [teacherScheduleDaySchema],
+    hash: { type: String },          // SHA-256 содержимого
+    changedAt: { type: Date },       // когда содержимое последний раз реально менялось
+    checkedAt: { type: Date }        // когда расписание последний раз сверялось с API
 }, { timestamps: true });
 
 export const TeacherSchedule = mongoose.model('TeacherSchedule', teacherScheduleSchema);
 
+// История прежних версий расписаний преподавателей (не удаляется, только страховочная обрезка по лимиту)
+const teacherScheduleVersionSchema = new mongoose.Schema({
+    teacherId: { type: Number, required: true },
+    hash: { type: String, required: true },
+    data: [teacherScheduleDaySchema],
+    validFrom: { type: Date },
+    validTo: { type: Date }
+}, { timestamps: true });
+teacherScheduleVersionSchema.index({ teacherId: 1, validTo: -1 });
+
+export const TeacherScheduleVersion = mongoose.model('TeacherScheduleVersion', teacherScheduleVersionSchema);
