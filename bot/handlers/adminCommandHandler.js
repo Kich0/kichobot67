@@ -128,36 +128,38 @@ export default function setupAdminCommandHandler() {
     }
   })
 
-  bot.onText(/\/stat/, async (msg) => {
+  bot.onText(/^\/stat(?:@\w+)?(?:\s|$)/i, async (msg) => {
     if (!await userService.isAdmin(msg.from.id)) {
       return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
     }
-    try {
+    try {
       const activeUsersToday = await userActivityService.getTodayUserCount()
       const registeredUsersToday = await userRegistrationStatService.getTodayRegisteredUserCount()
 
-      let msg_text = 'Статистика ежедневного онлайна: \n' +
+      let msg_text = 'Статистика ежедневного онлайна (время Казахстана UTC+5): \n' +
         `Сегодня: ${activeUsersToday}\n`
       const {weakUserActivity, weakUserCount} = await UserActivityService.getWeakUserActivity()
       for (const doc of weakUserActivity) {
-        const date = new Date(doc.createdAt); // Преобразуем строку в объект Date
-        const day = date.getDate().toString().padStart(2, '0'); // Извлекаем день и форматируем
-        const month = (date.getMonth() + 1).toString().padStart(2, '0'); // Извлекаем месяц и форматируем
+        const date = new Date(doc.createdAt);
+        const kzDate = new Date(date.getTime() + 5 * 60 * 60 * 1000);
+        const day = kzDate.getUTCDate().toString().padStart(2, '0');
+        const month = (kzDate.getUTCMonth() + 1).toString().padStart(2, '0');
 
         msg_text += `${day}.${month}: ${doc.userActivity}\n`
       }
       msg_text += `Всего уникальных пользователей за неделю: ${weakUserCount}\n\n`
 
-      msg_text += 'Статистика ежедневных регистраций: \n' +
+      msg_text += 'Статистика ежедневных регистраций (время Казахстана UTC+5): \n' +
         `Сегодня: ${registeredUsersToday}\n`
       const {
         weakRegisteredUserCount,
         weakRegistrationStat
       } = await userRegistrationStatService.getWeakRegistrationStat()
       for (const doc of weakRegistrationStat) {
-        const date = new Date(doc.createdAt); // Преобразуем строку в объект Date
-        const day = date.getDate().toString().padStart(2, '0'); // Извлекаем день и форматируем
-        const month = (date.getMonth() + 1).toString().padStart(2, '0'); // Извлекаем месяц и форматируем
+        const date = new Date(doc.createdAt);
+        const kzDate = new Date(date.getTime() + 5 * 60 * 60 * 1000);
+        const day = kzDate.getUTCDate().toString().padStart(2, '0');
+        const month = (kzDate.getUTCMonth() + 1).toString().padStart(2, '0');
 
         msg_text += `${day}.${month}: ${doc.registeredUsers}\n`
       }
@@ -169,7 +171,7 @@ export default function setupAdminCommandHandler() {
     }
   })
 
-  bot.onText(/^\/users$/, async (msg) => {
+  bot.onText(/^\/users(?:@\w+)?$/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
@@ -181,7 +183,7 @@ export default function setupAdminCommandHandler() {
     }
   })
 
-  bot.onText(/^\/group_stat$/, async (msg) => {
+  bot.onText(/^\/group_stat(?:@\w+)?$/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
@@ -226,12 +228,15 @@ export default function setupAdminCommandHandler() {
     }
   })
 
-  bot.onText(/^\/get_schedule (\w+)$/i, async (msg, match) => {
+  bot.onText(/^\/get_schedule(?:@\w+)?(?:\s+(\w+)|\s*$)/i, async (msg, match) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
       const groupId = match[1];
+      if (!groupId) {
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/get_schedule [ID группы]</code>", { parse_mode: "HTML" });
+      }
 
       const answer = await bot.sendMessage(msg.chat.id, `Получаем расписание группы: ${groupId}`)
       const Group = await groupService.getById(groupId)
@@ -252,12 +257,15 @@ export default function setupAdminCommandHandler() {
 
   });
 
-  bot.onText(/^\/get_reserved_schedule (\w+)$/i, async (msg, match) => {
+  bot.onText(/^\/get_reserved_schedule(?:@\w+)?(?:\s+(\w+)|\s*$)/i, async (msg, match) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
       const groupId = match[1];
+      if (!groupId) {
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/get_reserved_schedule [ID группы]</code>", { parse_mode: "HTML" });
+      }
 
       const answer = await bot.sendMessage(msg.chat.id, `Получаем расписание группы: ${groupId}`)
       const Group = await groupService.getById(groupId)
@@ -278,28 +286,29 @@ export default function setupAdminCommandHandler() {
 
   });
 
-  bot.onText(/^\/(get_user|find_user|user)/i, getUserCommandController);
-  bot.onText(/^\/user_logs/i, getUserLogsCommandController);
+  bot.onText(/^\/(?:get_user|find_user|user)(?:@\w+)?/i, getUserCommandController);
+  bot.onText(/^\/user_logs(?:@\w+)?/i, getUserLogsCommandController);
 
-  bot.onText(/^\/ignoreLogs/i, async (msg) => {
+  bot.onText(/^\/ignoreLogs(?:@\w+)?/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
-      const userId = parseFloat(msg.text.replace('/ignoreLogs', ''))
+      const rawArg = msg.text.replace(/^\/ignoreLogs(?:@\w+)?(?:\s+|_)?/i, '').trim();
+      const userId = parseFloat(rawArg)
       if (isNaN(userId)) {
-        return await bot.sendMessage(msg.chat.id, "UserId is NaN")
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/ignoreLogs [userId]</code>", { parse_mode: "HTML" })
       }
 
       await blackListService.addToBlackList(userId)
 
-      await bot.sendMessage(msg.chat.id, "Added to black list")
+      await bot.sendMessage(msg.chat.id, `User ${userId} добавлен в чёрный список логов`)
     } catch (e) {
       log.error("Ошибочка при /ignoreLogs", {stack: e.stack})
     }
   });
 
-  bot.onText(/^\/(backup_logs|archive_logs|export_logs)/i, async (msg) => {
+  bot.onText(/^\/(?:backup_logs|archive_logs|export_logs)(?:@\w+)?(?:\s|$)/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!");
@@ -317,19 +326,20 @@ export default function setupAdminCommandHandler() {
   });
 
 
-  bot.onText(/^\/get_users_by_group/i, async (msg) => {
+  bot.onText(/^\/get_users_by_group(?:@\w+)?/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
-      const groupId = parseFloat(msg.text.replace('/get_users_by_group', ''))
+      const rawArg = msg.text.replace(/^\/get_users_by_group(?:@\w+)?(?:\s+|_)?/i, '').trim();
+      const groupId = parseFloat(rawArg)
       if (isNaN(groupId)) {
-        return await bot.sendMessage(msg.chat.id, "UserId is NaN")
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/get_users_by_group [ID группы]</code>", { parse_mode: "HTML" })
       }
 
       const users = await userService.getUsersByGroupId(groupId)
 
-      let msg_text = `Group ${groupId} users: \n`
+      let msg_text = `Group ${groupId} users (${users.length}): \n`
       for (const user of users) {
         msg_text += `/get_user${user.userId}\n`
       }
@@ -355,13 +365,14 @@ export default function setupAdminCommandHandler() {
 
   });
 
-  bot.onText(/^\/sms/i, async (msg) => {
+  bot.onText(/^\/sms(?:@\w+)?(?:\s|$)/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
       }
-      const split_data = msg.text.trim().split(/\s+/);
-      if (split_data.length < 3) {
+      const rawText = msg.text.replace(/^\/sms(?:@\w+)?\s*/i, '').trim();
+      const split_data = rawText.split(/\s+/).filter(Boolean);
+      if (split_data.length < 2 || !rawText) {
         return await bot.sendMessage(
           msg.chat.id,
           "ℹ️ <b>Формат команды:</b>\n" +
@@ -374,9 +385,8 @@ export default function setupAdminCommandHandler() {
           { parse_mode: "HTML" }
         );
       }
-      const target = split_data[1];
-      const targetIndex = msg.text.indexOf(target);
-      const msg_text = msg.text.slice(targetIndex + target.length).trim();
+      const target = split_data[0];
+      const msg_text = rawText.slice(target.length).trim();
 
       // Разовое оповещение всем пользователям (без спам-циклов)
       if (target.toLowerCase() === 'all') {
@@ -422,21 +432,27 @@ export default function setupAdminCommandHandler() {
     }
   });
 
-  bot.onText(/^\/get_group (\w+)/i, async (msg, match) => {
+  bot.onText(/^\/get_group(?:@\w+)?(?:\s+(\w+)|\s*$)/i, async (msg, match) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
       const groupId = match[1];
+      if (!groupId) {
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/get_group [groupId]</code>", { parse_mode: "HTML" });
+      }
 
       const group = await groupService.getById(groupId)
+      if (!group) {
+        return await bot.sendMessage(msg.chat.id, `❌ Группа с ID "${groupId}" не найдена в базе данных.`);
+      }
       await bot.sendMessage(msg.chat.id, JSON.stringify(group, null, 4))
     } catch (e) {
       log.error({stack: e.stack})
     }
   });
 
-  bot.onText(/^\/restart/i, async (msg) => {
+  bot.onText(/^\/restart(?:@\w+)?(?:\s|$)/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
@@ -448,15 +464,15 @@ export default function setupAdminCommandHandler() {
     }
   });
 
-  bot.onText(/^\/get_callback/i, async (msg) => {
+  bot.onText(/^\/get_callback(?:@\w+)?(?:\s+(.+)|$)/i, async (msg, match) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
       }
-      if (msg.text.split(" ") < 2) {
-        return await bot.sendMessage(msg.chat.id, "После команды должно быть значение колбека")
+      const callback_data = match[1]?.trim();
+      if (!callback_data) {
+        return await bot.sendMessage(msg.chat.id, "ℹ️ Использование: <code>/get_callback [callback_data]</code>", { parse_mode: "HTML" });
       }
-      const callback_data = msg.text.replace('/get_callback ', '')
       await bot.sendMessage(msg.chat.id, "here is your callback: " + callback_data, {
         reply_markup: {inline_keyboard: [[{text: callback_data, callback_data}]]}
       })
@@ -465,7 +481,7 @@ export default function setupAdminCommandHandler() {
     }
   })
 
-  bot.onText(/^\/test_media/i, async (msg) => {
+  bot.onText(/^\/test_media(?:@\w+)?(?:\s|$)/i, async (msg) => {
     try {
       if (!await userService.isAdmin(msg.from.id)) {
         return; // Полный тихий игнор: обычные пользователи даже не узнают о существовании команды
@@ -486,18 +502,18 @@ export default function setupAdminCommandHandler() {
   });
 
   // === Модерация (бан и мут) ===
-  bot.onText(/^\/ban(\s|$)/i, handleBanCommand);
-  bot.onText(/^\/mute(\s|$)/i, handleMuteCommand);
-  bot.onText(/^\/unban(\s|$)/i, handleUnbanCommand);
-  bot.onText(/^\/unmute(\s|$)/i, handleUnbanCommand);
-  bot.onText(/^\/bans$/i, handleBansListCommand);
+  bot.onText(/^\/ban(?:@\w+)?(\s|$)/i, handleBanCommand);
+  bot.onText(/^\/mute(?:@\w+)?(\s|$)/i, handleMuteCommand);
+  bot.onText(/^\/unban(?:@\w+)?(\s|$)/i, handleUnbanCommand);
+  bot.onText(/^\/unmute(?:@\w+)?(\s|$)/i, handleUnbanCommand);
+  bot.onText(/^\/bans(?:@\w+)?$/i, handleBansListCommand);
 
-  // === Платный режим кнопок (9 000 ⭐ звёзд) ===
-  bot.onText(/^\/(paywall|toll|starwall|stars|tax)(\s|$)/i, handlePaywallCommand);
-  bot.onText(/^\/(unpaywall|untoll)(\s|$)/i, handleUnpaywallCommand);
-  bot.onText(/^\/(paywalls|tolls)$/i, handlePaywallsListCommand);
+  // === Платный режим кнопок (любое количество ⭐ звёзд) ===
+  bot.onText(/^\/(?:paywall|toll|starwall|stars|tax)(?:@\w+)?(\s|$)/i, handlePaywallCommand);
+  bot.onText(/^\/(?:unpaywall|untoll)(?:@\w+)?(\s|$)/i, handleUnpaywallCommand);
+  bot.onText(/^\/(?:paywalls|tolls)(?:@\w+)?$/i, handlePaywallsListCommand);
 
-  bot.onText(/^\/ahelp/i, async (msg) => {
+  bot.onText(/^\/ahelp(?:@\w+)?(?:\s|$)/i, async (msg) => {
     const msg_text = '⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n' +
       '🔄 <b>Синхронизация данных:</b>\n' +
       '/sync (или /pull_new) — <i>Умный сбор новых данных: проверяет сайт КарУ и добавляет ТОЛЬКО новые группы, преподавателей, кафедры и программы БЕЗ дубликатов!</i>\n' +

@@ -20,7 +20,30 @@ function escapeHtml(text) {
 
 export async function getAndSendUserInfo(identifier, toChatId) {
     try {
-        const user = await userService.findUser(identifier);
+        let user = await userService.findUser(identifier);
+
+        // Получаем понятные логи действий пользователя (10 последних действий)
+        let actions = [];
+        const numUserId = Number(String(identifier).trim().replace(/^@/, ''));
+        if (user) {
+            actions = await userActionService.getUserActions(user.userId, 10);
+        } else if (!isNaN(numUserId) && numUserId !== 0) {
+            // Если в таблице User нет (например, не завершил регистрацию), но в UserAction логи есть:
+            actions = await userActionService.getUserActions(numUserId, 10);
+            if (actions.length > 0) {
+                user = {
+                    userId: numUserId,
+                    username: actions[0]?.username || null,
+                    firstName: 'В логах бота',
+                    lastName: '',
+                    userType: 'private',
+                    createdAt: actions[actions.length - 1]?.createdAt,
+                    updatedAt: actions[0]?.createdAt,
+                    language: 'ru'
+                };
+            }
+        }
+
         if (!user) {
             return await bot.sendMessage(
                 toChatId,
@@ -42,8 +65,6 @@ export async function getAndSendUserInfo(identifier, toChatId) {
         }
         const teacher = user.teacher ? await teacherService.getById(user.teacher).catch(() => null) : null;
 
-        // Получаем понятные логи действий пользователя
-        const actions = await userActionService.getUserActions(user.userId, 7);
         const actionsFormatted = userActionService.formatActionsList(actions);
 
         const usernameText = user.username
@@ -63,10 +84,28 @@ export async function getAndSendUserInfo(identifier, toChatId) {
             scheduleInfo = `👨‍🏫 Преподаватель <b>${escapeHtml(teacher.name)}</b> (ID: ${teacher.id})`;
         }
 
+        // Определяем точную последнюю активность: берём самое свежее время между действиями в UserAction и user.updatedAt
+        let latestActiveDate = null;
+        if (actions && actions.length > 0 && actions[0].createdAt) {
+            latestActiveDate = new Date(actions[0].createdAt);
+        }
+        if (user.updatedAt) {
+            const userUpdated = new Date(user.updatedAt);
+            if (!latestActiveDate || userUpdated > latestActiveDate) {
+                latestActiveDate = userUpdated;
+            }
+        }
+        if (!latestActiveDate && user.createdAt) {
+            latestActiveDate = new Date(user.createdAt);
+        }
+
         const regDate = user.createdAt ? userActionService.formatDate(user.createdAt) : 'Неизвестно';
-        const lastActive = user.updatedAt
-            ? `${ScheduleController.formatElapsedTime(new Date(user.updatedAt).getTime())} назад`
-            : 'Неизвестно';
+        let lastActive = 'Неизвестно';
+        if (latestActiveDate && !isNaN(latestActiveDate.getTime())) {
+            const elapsed = ScheduleController.formatElapsedTime(latestActiveDate.getTime(), 'ru');
+            const absoluteKz = userActionService.formatDate(latestActiveDate);
+            lastActive = `${elapsed} назад (<code>${absoluteKz}</code>)`;
+        }
 
         const langText = user.language === 'kz' ? '🇰🇿 Казахский (kz)' : '🇷🇺 Русский (ru)';
 
@@ -77,9 +116,9 @@ export async function getAndSendUserInfo(identifier, toChatId) {
             `• <b>Тип чата:</b> ${escapeHtml(user.userType || 'private')}\n` +
             `• <b>Язык бота:</b> ${langText}\n` +
             `• <b>Текущее расписание:</b>\n  ${scheduleInfo}\n\n` +
-            `📅 <b>Регистрация:</b> ${regDate}\n` +
+            `📅 <b>Регистрация:</b> <code>${regDate}</code>\n` +
             `⏱ <b>Последняя активность:</b> ${lastActive}\n\n` +
-            `📜 <b>История действий (понятные логи):</b>\n${actionsFormatted}\n\n` +
+            `📜 <b>История действий (время Казахстана UTC+5):</b>\n${actionsFormatted}\n\n` +
             `💬 <b>Написать личное сообщение через бота:</b>\n` +
             `<code>/sms ${user.username ? '@' + user.username : user.userId} [текст сообщения]</code>`;
 
@@ -105,9 +144,9 @@ export async function getUserCommandController(msg) {
             return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
         }
 
-        // Извлекаем аргумент: /get_user @username, /get_user 12345, /get_user12345, /find_user @username
+        // Извлекаем аргумент: /get_user @username, /get_user 12345, /get_user12345, /get_user@bot 12345, /find_user @username
         let identifier = msg.text
-            .replace(/^\/(get_user|find_user|user)/i, '')
+            .replace(/^\/(?:get_user|find_user|user)(?:@\w+)?(?:\s+|_)?/i, '')
             .trim();
 
         if (!identifier) {
@@ -125,7 +164,7 @@ export async function getUserCommandController(msg) {
 
         await getAndSendUserInfo(identifier, msg.chat.id);
     } catch (e) {
-        log.error("Ошибочка при /get_user", { stack: e.stack });
+        log.error("Ошибочка при /get_user: " + e.message, { stack: e.stack });
     }
 }
 
@@ -135,9 +174,11 @@ export async function getUserLogsCommandController(msg) {
             return await bot.sendMessage(msg.chat.id, "⛔ У вас нет доступа к этой команде!");
         }
 
-        const parts = msg.text.trim().split(/\s+/);
-        const identifier = parts[1];
-        const limit = parseInt(parts[2], 10) || 25;
+        // Поддержка: /user_logs @username 20, /user_logs 12345 50, /user_logs@bot @username, /user_logs12345
+        const rawArgs = msg.text.replace(/^\/user_logs(?:@\w+)?(?:\s+|_)?/i, '').trim();
+        const parts = rawArgs.split(/\s+/).filter(Boolean);
+        const identifier = parts[0];
+        const limit = parseInt(parts[1], 10) || 25;
 
         if (!identifier) {
             return await bot.sendMessage(
@@ -149,7 +190,22 @@ export async function getUserLogsCommandController(msg) {
             );
         }
 
-        const user = await userService.findUser(identifier);
+        let user = await userService.findUser(identifier);
+        let actions = [];
+        const numUserId = Number(String(identifier).trim().replace(/^@/, ''));
+        if (user) {
+            actions = await userActionService.getUserActions(user.userId, limit);
+        } else if (!isNaN(numUserId) && numUserId !== 0) {
+            actions = await userActionService.getUserActions(numUserId, limit);
+            if (actions.length > 0) {
+                user = {
+                    userId: numUserId,
+                    username: actions[0]?.username || null,
+                    firstName: 'В логах бота'
+                };
+            }
+        }
+
         if (!user) {
             return await bot.sendMessage(
                 msg.chat.id,
@@ -158,13 +214,28 @@ export async function getUserLogsCommandController(msg) {
             );
         }
 
-        const actions = await userActionService.getUserActions(user.userId, limit);
         const actionsFormatted = userActionService.formatActionsList(actions);
+        const userTitle = user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.firstName || 'Без имени');
+        const title = `📜 <b>Логи действий пользователя ${userTitle} (ID: <code>${user.userId}</code>, записей: ${actions.length}):</b>\n\n`;
 
-        const title = `📜 <b>Логи действий пользователя ${user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.firstName)} (ID: <code>${user.userId}</code>):</b>\n\n`;
-
-        await bot.sendMessage(msg.chat.id, title + actionsFormatted, { parse_mode: "HTML" });
+        const fullMessage = title + actionsFormatted;
+        if (fullMessage.length <= 4000) {
+            await bot.sendMessage(msg.chat.id, fullMessage, { parse_mode: "HTML" });
+        } else {
+            const lines = actionsFormatted.split('\n');
+            let currentChunk = title;
+            for (const line of lines) {
+                if ((currentChunk + '\n' + line).length > 3800) {
+                    await bot.sendMessage(msg.chat.id, currentChunk, { parse_mode: "HTML" });
+                    currentChunk = '';
+                }
+                currentChunk += (currentChunk ? '\n' : '') + line;
+            }
+            if (currentChunk) {
+                await bot.sendMessage(msg.chat.id, currentChunk, { parse_mode: "HTML" });
+            }
+        }
     } catch (e) {
-        log.error("Ошибочка при /user_logs", { stack: e.stack });
+        log.error("Ошибочка при /user_logs: " + e.message, { stack: e.stack });
     }
 }

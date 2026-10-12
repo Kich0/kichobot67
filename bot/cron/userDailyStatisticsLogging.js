@@ -4,7 +4,9 @@ import UserRegistrationStatService from "../services/userRegistrationStatService
 
 export async function setupUserDailyStatisticsLogging(){
     cron.schedule('59 23 * * *', async () => {
-        await UserActivityService.dailyUserActivityLogging()
-        await UserRegistrationStatService.dailyRegisteredUserCountLogging()
+        await UserActivityService.dailyUserActivityLogging();
+        await UserRegistrationStatService.dailyRegisteredUserCountLogging();
+    }, {
+        timezone: "Asia/Almaty"
     });
 }

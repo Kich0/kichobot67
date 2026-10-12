@@ -3,39 +3,40 @@ import {User} from "../models/user.js";
 import log from "../logging/logging.js";
 
 class UserRegistrationStatService {
+    getKZStartOfDay(daysAgo = 0) {
+        const KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
+        const nowKz = new Date(Date.now() + KZ_OFFSET_MS);
+        const startUtcMs = Date.UTC(nowKz.getUTCFullYear(), nowKz.getUTCMonth(), nowKz.getUTCDate() - daysAgo) - KZ_OFFSET_MS;
+        return new Date(startUtcMs);
+    }
+
     async getTodayRegisteredUserCount(){
         try{
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Обнуляем время для сравнения с началом дня
-            return await User.countDocuments({createdAt: {$gte: today}})
+            const today = this.getKZStartOfDay(0);
+            return await User.countDocuments({createdAt: {$gte: today}});
         }catch (e) {
-            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров сегодня: " + e.stack)
+            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров сегодня: " + e.stack);
         }
     }
 
     async dailyRegisteredUserCountLogging(){
         try{
-            const registeredUsers = await this.getTodayRegisteredUserCount()
+            const registeredUsers = await this.getTodayRegisteredUserCount();
             userRegistrationStat.create({registeredUsers})
-                .then(() => log.warn("Произошла запись зарегестрированных юзеров!"))
+                .then(() => log.warn("Произошла запись зарегестрированных юзеров!"));
         }catch (e) {
-            throw new Error("Ошибка при логировании кол-ва зарегестрированных юзеров сегодня: " + e.stack)
+            throw new Error("Ошибка при логировании кол-ва зарегестрированных юзеров сегодня: " + e.stack);
         }
     }
 
     async getWeakRegisteredUserCount(){
         try{
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Обнуляем время для сравнения с началом дня
-
-            const oneWeekAgo = new Date(today);
-            oneWeekAgo.setDate(today.getDate() - 6);
-
+            const oneWeekAgo = this.getKZStartOfDay(6);
             return await User.countDocuments({
-                createdAt: { $gte: oneWeekAgo} // Между одной неделей назад и сегодняшней датой
+                createdAt: { $gte: oneWeekAgo}
             });
         }catch (e) {
-            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров неделю: " + e.stack)
+            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров неделю: " + e.stack);
         }
     }
 

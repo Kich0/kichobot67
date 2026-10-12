@@ -13,14 +13,13 @@ import {searchHelpCommandController} from "../controllers/commands/searchHelpCom
 import {safeHandler} from "../utils/safeHandler.js";
 
 export function setupCommandHandlers() {
-    bot.onText(/^\/start/i, safeHandler(startCommandController, 'start'));
+    bot.onText(/^\/start(?:@\w+)?(?:\s.*)?$/i, safeHandler(startCommandController, 'start'));
 
     bot.onText(/^🗒 Новое расписание/i, safeHandler(newScheduleCommandController, 'newSchedule'));
     bot.onText(/^🗒 Жаңа кесте/i, safeHandler(newScheduleCommandController, 'newSchedule'));
-    bot.onText(/^\/new$/i, safeHandler(newScheduleCommandController, 'newSchedule'));
-    bot.onText(/^\/new (.+)/i, safeHandler(newScheduleCommandController, 'newSchedule'));
+    bot.onText(/^\/new(?:@\w+)?(?:\s.*)?$/i, safeHandler(newScheduleCommandController, 'newSchedule'));
 
-    bot.onText(/^\/schedule/i, safeHandler(scheduleCommandController, 'schedule'));
+    bot.onText(/^\/schedule(?:@\w+)?(?:\s.*)?$/i, safeHandler(scheduleCommandController, 'schedule'));
     bot.onText(/^расписание/i, safeHandler(scheduleCommandController, 'schedule'));
 
     bot.onText(/^🗓 Расписание преподавателя/i, safeHandler(teacherScheduleCommandController, 'teacherSchedule'));
@@ -31,25 +30,25 @@ export function setupCommandHandlers() {
 
     bot.onText(/^профиль/i, safeHandler(profileCommandController, 'profile'));
 
-    bot.onText(/^\/help/i, safeHandler(helpCommandController, 'help'))
-    bot.onText(/^(?:[💡❓⚠️\u26A0\uFE0F\s])*(Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)/iu, safeHandler(helpCommandController, 'help'))
+    bot.onText(/^\/help(?:@\w+)?(?:\s.*)?$/i, safeHandler(helpCommandController, 'help'));
+    bot.onText(/^(?:[💡❓⚠️\u26A0\uFE0F\s])*(Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)/iu, safeHandler(helpCommandController, 'help'));
 
-    bot.onText(/^\/remove/i, safeHandler(removeKeyboardCommandController, 'removeKeyboard'))
+    bot.onText(/^\/remove(?:@\w+)?(?:\s.*)?$/i, safeHandler(removeKeyboardCommandController, 'removeKeyboard'));
 
-    bot.onText(/^Г (.+)/i, safeHandler(searchGroupCommandController, 'searchGroup'))
-    bot.onText(/^Т (.+)/i, safeHandler(searchGroupCommandController, 'searchGroup'))
-    bot.onText(/^Г$/i, safeHandler(searchGroupCommandController, 'searchGroup'))
-    bot.onText(/^Т$/i, safeHandler(searchGroupCommandController, 'searchGroup'))
-    bot.onText(/^Группа/i, safeHandler(searchGroupCommandController, 'searchGroup'))
-    bot.onText(/^Тобы/i, safeHandler(searchGroupCommandController, 'searchGroup'))
+    bot.onText(/^Г (.+)/i, safeHandler(searchGroupCommandController, 'searchGroup'));
+    bot.onText(/^Т (.+)/i, safeHandler(searchGroupCommandController, 'searchGroup'));
+    bot.onText(/^Г$/i, safeHandler(searchGroupCommandController, 'searchGroup'));
+    bot.onText(/^Т$/i, safeHandler(searchGroupCommandController, 'searchGroup'));
+    bot.onText(/^Группа/i, safeHandler(searchGroupCommandController, 'searchGroup'));
+    bot.onText(/^Тобы/i, safeHandler(searchGroupCommandController, 'searchGroup'));
 
-    bot.onText(/^П (.+)/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
-    bot.onText(/^О (.+)/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
-    bot.onText(/^П$/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
-    bot.onText(/^О$/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
-    bot.onText(/^Преподаватель/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
-    bot.onText(/^Оқытушы/i, safeHandler(searchTeacherCommandController, 'searchTeacher'))
+    bot.onText(/^П (.+)/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
+    bot.onText(/^О (.+)/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
+    bot.onText(/^П$/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
+    bot.onText(/^О$/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
+    bot.onText(/^Преподаватель/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
+    bot.onText(/^Оқытушы/i, safeHandler(searchTeacherCommandController, 'searchTeacher'));
 
-    bot.onText(/^\/search/i, safeHandler(searchHelpCommandController, 'searchHelp'))
+    bot.onText(/^\/search(?:@\w+)?(?:\s.*)?$/i, safeHandler(searchHelpCommandController, 'searchHelp'));
     bot.onText(/^Поиск/i, safeHandler(searchHelpCommandController, 'searchHelp'))
 }

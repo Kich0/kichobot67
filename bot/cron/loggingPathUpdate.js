@@ -9,5 +9,7 @@ export async function setupLoggingPathUpdate(){
                 transport.reopenFile();
             }
         });
+    }, {
+        timezone: "Asia/Almaty"
     });
 }

@@ -151,14 +151,20 @@ test('userActionService: formatDate and formatActionsList work correctly', () =>
     assert.equal(service.formatDate(null), '');
     assert.equal(service.formatActionsList([]), '• <i>История действий пуста (пока нет записей)</i>');
 
+    // 08:30:15 UTC -> 13:30:15 Asia/Almaty (UTC+5)
     const sampleDate = new Date('2026-10-03T08:30:15Z');
     const formattedDate = service.formatDate(sampleDate);
-    assert.ok(formattedDate.includes('2026'));
+    assert.equal(formattedDate, '03.10.2026 13:30:15');
 
+    // Проверка экранирования опасных HTML-символов в formatActionsList
     const listOutput = service.formatActionsList([
-        { createdAt: sampleDate, text: 'Открыл расписание' }
+        { createdAt: sampleDate, text: 'Открыл расписание <script>alert("xss")</script> & "тест"' }
     ]);
-    assert.ok(listOutput.includes('Открыл расписание'));
+    assert.ok(listOutput.includes('03.10.2026 13:30:15'));
+    assert.ok(listOutput.includes('&lt;script&gt;'));
+    assert.ok(listOutput.includes('&amp;'));
+    assert.ok(listOutput.includes('&quot;тест&quot;'));
+    assert.ok(!listOutput.includes('<script>'));
     assert.ok(listOutput.includes('<code>'));
 });
 

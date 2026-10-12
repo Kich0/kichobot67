@@ -177,12 +177,16 @@ export class UserActionService {
     formatDate(dateObj) {
         if (!dateObj) return '';
         const d = new Date(dateObj);
-        const day = String(d.getDate()).padStart(2, '0');
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const hours = String(d.getHours()).padStart(2, '0');
-        const mins = String(d.getMinutes()).padStart(2, '0');
-        const secs = String(d.getSeconds()).padStart(2, '0');
-        return `${day}.${month}.${d.getFullYear()} ${hours}:${mins}:${secs}`;
+        if (isNaN(d.getTime())) return '';
+        // Гарантированное точное время Казахстана (Asia/Almaty, UTC+5)
+        const kzDate = new Date(d.getTime() + 5 * 60 * 60 * 1000);
+        const day = String(kzDate.getUTCDate()).padStart(2, '0');
+        const month = String(kzDate.getUTCMonth() + 1).padStart(2, '0');
+        const year = kzDate.getUTCFullYear();
+        const hours = String(kzDate.getUTCHours()).padStart(2, '0');
+        const mins = String(kzDate.getUTCMinutes()).padStart(2, '0');
+        const secs = String(kzDate.getUTCSeconds()).padStart(2, '0');
+        return `${day}.${month}.${year} ${hours}:${mins}:${secs}`;
     }
 
     formatActionsList(actions) {
@@ -190,9 +194,20 @@ export class UserActionService {
             return '• <i>История действий пуста (пока нет записей)</i>';
         }
 
+        const escape = (str) => {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        };
+
         return actions.map(a => {
             const time = this.formatDate(a.createdAt);
-            return `• <code>${time}</code> — ${a.text}`;
+            const safeText = escape(a.text);
+            return `• <code>${time}</code> — ${safeText}`;
         }).join('\n');
     }
 }
