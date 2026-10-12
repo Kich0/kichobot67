@@ -23,13 +23,16 @@ const scheduleSchema = new mongoose.Schema({
 
 export const Schedule = mongoose.model('Schedule', scheduleSchema);
 
-// История прежних версий расписаний групп (не удаляется, только страховочная обрезка по лимиту)
+// История прежних версий расписаний групп.
+// Каждая версия автоматически удаляется через 2 месяца после архивации (TTL по archivedAt),
+// а суммарный размер истории ограничен 50 МБ (см. scheduleVersioning.js).
 const scheduleVersionSchema = new mongoose.Schema({
     groupId: { type: Number, required: true },
     hash: { type: String, required: true },
     data: [scheduleDaySchema],
     validFrom: { type: Date },
-    validTo: { type: Date }
+    validTo: { type: Date },
+    archivedAt: { type: Date, default: Date.now, expires: 60 * 24 * 60 * 60 } // 2 месяца
 }, { timestamps: true });
 scheduleVersionSchema.index({ groupId: 1, validTo: -1 });
 

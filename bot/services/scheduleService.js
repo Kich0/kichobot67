@@ -1,5 +1,5 @@
 import {Schedule, ScheduleVersion} from "../models/schedule.js"
-import {saveVersioned, projectGroupSchedule} from "./scheduleVersioning.js";
+import {saveVersioned, projectGroupSchedule, enforceScheduleHistoryLimit} from "./scheduleVersioning.js";
 
 class scheduleService {
     /**
@@ -16,7 +16,8 @@ class scheduleService {
                 keyField: "groupId",
                 key: numGroupId,
                 data,
-                project: projectGroupSchedule
+                project: projectGroupSchedule,
+                afterArchive: enforceScheduleHistoryLimit
             });
         } catch (e) {
             throw new Error("Ошибка при обновлении расписания по групАйди: " + e.stack)

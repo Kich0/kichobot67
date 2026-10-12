@@ -1,4 +1,7 @@
 import crypto from "crypto";
+import log from "../logging/logging.js";
+import { ScheduleVersion } from "../models/schedule.js";
+import { TeacherScheduleVersion } from "../models/teacherSchedule.js";
 
 /**
  * Версионирование расписаний.
@@ -7,11 +10,19 @@ import crypto from "crypto";
  * (его бот показывает при падении API). Если содержимое расписания изменилось хоть на одну букву —
  * предыдущий оригинал уходит в коллекцию истории (ScheduleVersion / TeacherScheduleVersion), а новый
  * становится актуальным. Если ничего не изменилось — запись только «трогается» (обновляется время проверки).
+ *
+ * Хранение истории ограничено двумя правилами:
+ *  1. Срок: каждая архивная версия автоматически удаляется через 2 месяца после архивации (TTL-индекс, см. модели).
+ *  2. Размер: суммарно история (обе коллекции) не превышает 50 МБ — самые старые версии удаляются первыми.
  */
 
-// Страховочный лимит истории на одну группу/преподавателя (самые старые версии сверх лимита удаляются,
-// чтобы бесплатная Atlas-база 512 МБ не переполнилась). Реально расписание меняется единицы раз за семестр.
-export const MAX_VERSIONS_PER_ENTITY = 100;
+// Суммарный лимит размера истории (обе коллекции вместе)
+export const HISTORY_MAX_BYTES = 50 * 1024 * 1024;
+// Срок хранения архивных версий — 2 месяца (60 дней). Должен совпадать с `expires` в моделях ScheduleVersion/TeacherScheduleVersion.
+export const HISTORY_TTL_SECONDS = 60 * 24 * 60 * 60;
+
+const SIZE_CHECK_INTERVAL_MS = 30 * 1000;
+let lastSizeCheck = 0;
 
 const str = (v) => (v === undefined || v === null ? "" : String(v));
 
@@ -47,6 +58,57 @@ export function computeScheduleHash(projected) {
 }
 
 /**
+ * Следит, чтобы суммарный размер истории не превышал maxBytes: если превышает — удаляет самые старые версии
+ * (пропорционально размеру каждой коллекции). Проверка не чаще раза в 30 секунд (или при force).
+ * @param {Array} models модели коллекций истории (с полем archivedAt)
+ * @returns {Promise<{skipped?: boolean, total?: number, deleted?: number}>}
+ */
+export async function enforceHistorySizeLimit(models, maxBytes = HISTORY_MAX_BYTES, { force = false } = {}) {
+    const nowMs = Date.now();
+    if (!force && nowMs - lastSizeCheck < SIZE_CHECK_INTERVAL_MS) return { skipped: true };
+    lastSizeCheck = nowMs;
+
+    const stats = [];
+    for (const M of models) {
+        // collStats падает, если коллекция ещё не создана -> считаем её пустой
+        const s = await M.db.db.command({ collStats: M.collection.collectionName }).catch(() => null);
+        stats.push({ M, size: Number(s?.size) || 0, count: Number(s?.count) || 0 });
+    }
+
+    const total = stats.reduce((sum, s) => sum + s.size, 0);
+    if (total <= maxBytes) return { total, deleted: 0 };
+
+    let deleted = 0;
+    for (const st of stats) {
+        if (!st.count || !st.size) continue;
+        const targetSize = maxBytes * (st.size / total);
+        const excess = st.size - targetSize;
+        const avgDoc = st.size / st.count;
+        const n = Math.min(st.count, Math.ceil(excess / avgDoc));
+        if (n <= 0) continue;
+        const oldest = await st.M.find({}).sort({ archivedAt: 1 }).limit(n).select("_id").lean();
+        if (oldest.length > 0) {
+            await st.M.deleteMany({ _id: { $in: oldest.map((o) => o._id) } });
+            deleted += oldest.length;
+        }
+    }
+    return { total, deleted };
+}
+
+/** Обёртка для сервисов: проверка лимита 50 МБ после архивации; никогда не бросает исключений. */
+export async function enforceScheduleHistoryLimit() {
+    try {
+        const r = await enforceHistorySizeLimit([ScheduleVersion, TeacherScheduleVersion]);
+        if (r.deleted > 0) {
+            const mb = (r.total / (1024 * 1024)).toFixed(1);
+            log.warn(`[ScheduleHistory] История расписаний была ${mb} МБ (> 50 МБ): удалено ${r.deleted} самых старых версий.`);
+        }
+    } catch (e) {
+        log.error(`[ScheduleHistory] Ошибка контроля размера истории: ${e.message}`);
+    }
+}
+
+/**
  * Сохраняет расписание с версионированием.
  * @returns {{status: 'unchanged'|'changed'|'created', hash: string}}
  */
@@ -57,7 +119,7 @@ export async function saveVersioned({
     key,
     data,
     project,
-    maxVersions = MAX_VERSIONS_PER_ENTITY,
+    afterArchive,
 }) {
     const hash = computeScheduleHash(project(data));
     const now = new Date();
@@ -98,23 +160,19 @@ export async function saveVersioned({
         return { status: "unchanged", hash };
     }
 
-    // 3. Содержимое изменилось — старый оригинал не удаляем, а сохраняем в историю.
+    // 3. Содержимое изменилось — старый оригинал не удаляем, а сохраняем в историю
+    //    (автоудаление через 2 месяца по archivedAt + общий лимит размера 50 МБ).
     await VersionModel.create({
         [keyField]: key,
         hash: beforeHash,
         data: before.data,
         validFrom: before.changedAt || before.createdAt || before.updatedAt || now,
         validTo: now,
+        archivedAt: now,
     });
 
-    // 4. Страховочная обрезка самых старых версий сверх лимита.
-    const extra = await VersionModel.find({ [keyField]: key })
-        .sort({ validTo: -1 })
-        .skip(maxVersions)
-        .select("_id")
-        .lean();
-    if (extra.length > 0) {
-        await VersionModel.deleteMany({ _id: { $in: extra.map((e) => e._id) } });
+    if (typeof afterArchive === "function") {
+        await afterArchive();
     }
 
     return { status: "changed", hash };

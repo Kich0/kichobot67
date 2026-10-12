@@ -4,7 +4,10 @@ import {
     computeScheduleHash,
     projectGroupSchedule,
     projectTeacherSchedule,
-    saveVersioned
+    saveVersioned,
+    enforceHistorySizeLimit,
+    HISTORY_MAX_BYTES,
+    HISTORY_TTL_SECONDS
 } from '../bot/services/scheduleVersioning.js';
 import { Schedule, ScheduleVersion } from '../bot/models/schedule.js';
 import { TeacherSchedule, TeacherScheduleVersion } from '../bot/models/teacherSchedule.js';
@@ -118,25 +121,92 @@ test('saveVersioned: legacy doc without hash and same content is not archived; c
     assert.equal(f.store.versions[0].data[0].groups[0].subject, 's');
 });
 
-test('saveVersioned: history is trimmed to maxVersions, newest kept', async () => {
+test('saveVersioned: archived version gets archivedAt and afterArchive hook is called only on real change', async () => {
     const f = makeFakes('groupId');
-    const args = { Model: f.Model, VersionModel: f.VersionModel, keyField: 'groupId', key: 1, project: projectGroupSchedule, maxVersions: 3 };
-    for (let i = 0; i < 7; i++) {
-        await saveVersioned({ ...args, data: day('v' + i) });
-        await new Promise(r => setTimeout(r, 2));
-    }
-    assert.equal(f.store.versions.length, 3);
-    const subjects = f.store.versions.map(v => v.data[0].subjects[0].subject).sort();
-    assert.deepEqual(subjects, ['v3', 'v4', 'v5']);
+    let hookCalls = 0;
+    const args = {
+        Model: f.Model, VersionModel: f.VersionModel, keyField: 'groupId', key: 1,
+        project: projectGroupSchedule, afterArchive: async () => { hookCalls++; }
+    };
+    await saveVersioned({ ...args, data: day('a') });   // created
+    await saveVersioned({ ...args, data: day('a') });   // unchanged
+    assert.equal(hookCalls, 0);
+    await saveVersioned({ ...args, data: day('b') });   // changed
+    assert.equal(hookCalls, 1);
+    assert.ok(f.store.versions[0].archivedAt instanceof Date, 'archivedAt is set (drives the 2-month TTL)');
 });
 
-test('schedule history models have NO TTL index and carry hash fields', () => {
-    for (const M of [Schedule, ScheduleVersion, TeacherSchedule, TeacherScheduleVersion]) {
+// Фейковая коллекция истории с заданным размером для проверки лимита
+function makeHistoryColl(name, docs, bytesPerDoc) {
+    const state = { docs: docs.map((archivedAt, i) => ({ _id: `${name}${i}`, archivedAt })) };
+    return {
+        state,
+        collection: { collectionName: name },
+        db: { db: { command: async ({ collStats }) => {
+            if (collStats !== name) throw new Error('unexpected collection');
+            return { size: state.docs.length * bytesPerDoc, count: state.docs.length };
+        } } },
+        find() {
+            let arr = [...state.docs];
+            const chain = {
+                sort() { arr.sort((a, b) => a.archivedAt - b.archivedAt); return chain; },
+                limit(n) { arr = arr.slice(0, n); return chain; },
+                select() { return chain; },
+                async lean() { return arr; }
+            };
+            return chain;
+        },
+        async deleteMany({ _id }) { state.docs = state.docs.filter(d => !_id.$in.includes(d._id)); }
+    };
+}
+
+test('enforceHistorySizeLimit: under the limit nothing is deleted', async () => {
+    const A = makeHistoryColl('a', [1, 2, 3], 1000);
+    const B = makeHistoryColl('b', [1, 2], 1000);
+    const r = await enforceHistorySizeLimit([A, B], 10_000, { force: true });
+    assert.equal(r.deleted, 0);
+    assert.equal(A.state.docs.length, 3);
+    assert.equal(B.state.docs.length, 2);
+});
+
+test('enforceHistorySizeLimit: over the limit the OLDEST versions are deleted until it fits', async () => {
+    // 100 docs x 1000 B = 100 000 B в одной коллекции, лимит 50 000 B -> должно остаться ~50 самых новых
+    const A = makeHistoryColl('a', Array.from({ length: 100 }, (_, i) => i), 1000);
+    const B = makeHistoryColl('b', [], 1000);
+    const r = await enforceHistorySizeLimit([A, B], 50_000, { force: true });
+    assert.equal(r.deleted, 50);
+    assert.equal(A.state.docs.length, 50);
+    const remaining = A.state.docs.map(d => d.archivedAt);
+    assert.equal(Math.min(...remaining), 50, 'oldest 50 removed, newest 50 kept');
+});
+
+test('enforceHistorySizeLimit: limit is shared across both history collections', async () => {
+    const A = makeHistoryColl('a', Array.from({ length: 60 }, (_, i) => i), 1000);
+    const B = makeHistoryColl('b', Array.from({ length: 60 }, (_, i) => i), 1000);
+    // всего 120 000 B, лимит 60 000 B -> суммарно должно остаться около 60 документов
+    await enforceHistorySizeLimit([A, B], 60_000, { force: true });
+    const total = (A.state.docs.length + B.state.docs.length) * 1000;
+    assert.ok(total <= 60_000, `total ${total} must fit in 60000`);
+    assert.ok(total >= 58_000, `should not delete far more than needed (${total})`);
+});
+
+test('history limits: 50 MB total and 2-month TTL on history; main schedule collections never expire', () => {
+    assert.equal(HISTORY_MAX_BYTES, 50 * 1024 * 1024);
+    assert.equal(HISTORY_TTL_SECONDS, 60 * 24 * 60 * 60);
+
+    for (const M of [Schedule, TeacherSchedule]) {
         const ttl = M.schema.indexes().filter(([, opts]) => opts && opts.expireAfterSeconds !== undefined);
-        assert.equal(ttl.length, 0, `${M.modelName} must not expire`);
+        assert.equal(ttl.length, 0, `${M.modelName} (актуальный оригинал) must not expire`);
+    }
+    for (const M of [ScheduleVersion, TeacherScheduleVersion]) {
+        const ttl = M.schema.indexes().filter(([, opts]) => opts && opts.expireAfterSeconds !== undefined);
+        assert.equal(ttl.length, 1, `${M.modelName} must have exactly one TTL index`);
+        assert.deepEqual(Object.keys(ttl[0][0]), ['archivedAt']);
+        assert.equal(ttl[0][1].expireAfterSeconds, HISTORY_TTL_SECONDS, '2 months');
     }
     assert.ok(Schedule.schema.path('hash'));
     assert.ok(TeacherSchedule.schema.path('hash'));
     assert.ok(ScheduleVersion.schema.path('validTo'));
     assert.ok(TeacherScheduleVersion.schema.path('validTo'));
 });
+

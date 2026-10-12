@@ -1,5 +1,5 @@
 import {TeacherSchedule, TeacherScheduleVersion} from "../models/teacherSchedule.js"
-import {saveVersioned, projectTeacherSchedule} from "./scheduleVersioning.js";
+import {saveVersioned, projectTeacherSchedule, enforceScheduleHistoryLimit} from "./scheduleVersioning.js";
 
 class teacherScheduleService {
     /**
@@ -16,7 +16,8 @@ class teacherScheduleService {
                 keyField: "teacherId",
                 key: id,
                 data,
-                project: projectTeacherSchedule
+                project: projectTeacherSchedule,
+                afterArchive: enforceScheduleHistoryLimit
             });
         } catch (e) {
             throw new Error("Ошибка при обновлении расписания по teacherId: " + e.stack)

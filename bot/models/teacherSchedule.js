@@ -25,13 +25,16 @@ const teacherScheduleSchema = new mongoose.Schema({
 
 export const TeacherSchedule = mongoose.model('TeacherSchedule', teacherScheduleSchema);
 
-// История прежних версий расписаний преподавателей (не удаляется, только страховочная обрезка по лимиту)
+// История прежних версий расписаний преподавателей.
+// Каждая версия автоматически удаляется через 2 месяца после архивации (TTL по archivedAt),
+// а суммарный размер истории ограничен 50 МБ (см. scheduleVersioning.js).
 const teacherScheduleVersionSchema = new mongoose.Schema({
     teacherId: { type: Number, required: true },
     hash: { type: String, required: true },
     data: [teacherScheduleDaySchema],
     validFrom: { type: Date },
-    validTo: { type: Date }
+    validTo: { type: Date },
+    archivedAt: { type: Date, default: Date.now, expires: 60 * 24 * 60 * 60 } // 2 месяца
 }, { timestamps: true });
 teacherScheduleVersionSchema.index({ teacherId: 1, validTo: -1 });
 
