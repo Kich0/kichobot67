@@ -104,7 +104,8 @@ test('userActionService: manual flush() flushes remaining items gracefully', asy
         assert.equal(service.queue.length, 0);
         assert.equal(insertedBatches.length, 1);
         assert.equal(insertedBatches[0][0].userId, 999);
-        assert.equal(insertedBatches[0][0].text, 'Clicked button');
+        assert.ok(insertedBatches[0][0].text.includes('Clicked button'));
+        assert.equal(insertedBatches[0][0].isFirst, true);
     } finally {
         UserAction.insertMany = originalInsertMany;
     }
@@ -206,8 +207,8 @@ test('userActionService: empty/whitespace text falls back to action to satisfy M
 
     assert.equal(service.queue.length, 2);
     // Neither text property is empty string
-    assert.equal(service.queue[0].text, 'start_menu');
-    assert.equal(service.queue[1].text, 'chat_input');
+    assert.ok(service.queue[0].text.includes('start_menu'));
+    assert.ok(service.queue[1].text.includes('chat_input'));
 
     // Mongoose schema validation passes on both documents
     const doc1 = new UserAction(service.queue[0]);
@@ -324,4 +325,94 @@ test('group messages: plain chat is ignored while bot commands and private messa
     assert.equal(shouldLog('private', 'Привет бот'), true);
     assert.equal(shouldLog('private', 'ИВТ-21'), true);
 });
+
+test('userActionService: first interaction via text/command marks isFirst: true and prefixes [Первое сообщение пользователя]', async () => {
+    const service = new UserActionService();
+    service.stop();
+    service.clearCache();
+
+    await service.logAction(7001, 'newuser1', 'command', '/start');
+
+    assert.equal(service.queue.length, 1);
+    const rec = service.queue[0];
+    assert.equal(rec.userId, 7001);
+    assert.equal(rec.username, 'newuser1');
+    assert.equal(rec.action, 'command');
+    assert.equal(rec.isFirst, true);
+    assert.ok(rec.text.includes('🆕 [Первое сообщение пользователя] /start'));
+});
+
+test('userActionService: first interaction via button click marks isFirst: true and prefixes [Первое действие пользователя (кнопка)]', async () => {
+    const service = new UserActionService();
+    service.stop();
+    service.clearCache();
+
+    await service.logAction(7002, 'newuser2', 'change_language', 'Сменил язык на русский');
+
+    assert.equal(service.queue.length, 1);
+    const rec = service.queue[0];
+    assert.equal(rec.userId, 7002);
+    assert.equal(rec.username, 'newuser2');
+    assert.equal(rec.action, 'change_language');
+    assert.equal(rec.isFirst, true);
+    assert.ok(rec.text.includes('🆕 [Первое действие пользователя (кнопка)] Сменил язык на русский'));
+});
+
+test('userActionService: first button click after /start command marks isFirst: true and prefixes [Первое нажатие кнопки]', async () => {
+    const service = new UserActionService();
+    service.stop();
+    service.clearCache();
+
+    // 1. Сначала пользователь отправляет команду /start
+    await service.logAction(7003, 'newuser3', 'command', '/start');
+    assert.equal(service.queue[0].isFirst, true);
+    assert.ok(service.queue[0].text.includes('🆕 [Первое сообщение пользователя]'));
+
+    // 2. Затем нажимает свою первую кнопку
+    await service.logAction(7003, 'newuser3', 'change_language', 'Сменил язык на казахский');
+    assert.equal(service.queue[1].isFirst, true);
+    assert.ok(service.queue[1].text.includes('🆕 [Первое нажатие кнопки] Сменил язык на казахский'));
+
+    // 3. Второе нажатие кнопки уже НЕ помечается как первое
+    await service.logAction(7003, 'newuser3', 'faculty_menu', 'Выбор факультета (стр. 1)');
+    assert.equal(service.queue[2].isFirst, false);
+    assert.equal(service.queue[2].text, 'Выбор факультета (стр. 1)');
+    assert.ok(!service.queue[2].text.includes('🆕'));
+});
+
+test('userActionService: formatActionsList displays first action badge when isFirst is true', () => {
+    const service = new UserActionService();
+    service.stop();
+
+    const actions = [
+        {
+            userId: 8001,
+            action: 'command',
+            text: '🆕 [Первое сообщение пользователя] /start',
+            isFirst: true,
+            createdAt: new Date('2026-10-13T00:00:00Z')
+        },
+        {
+            userId: 8001,
+            action: 'change_language',
+            text: 'Сменил язык на русский',
+            isFirst: true, // Флаг есть, но в старом тексте нет префикса
+            createdAt: new Date('2026-10-13T00:00:05Z')
+        },
+        {
+            userId: 8001,
+            action: 'view_group',
+            text: 'Открыл расписание группы',
+            isFirst: false,
+            createdAt: new Date('2026-10-13T00:00:10Z')
+        }
+    ];
+
+    const formatted = service.formatActionsList(actions);
+    assert.ok(formatted.includes('🆕 [Первое сообщение пользователя] /start'));
+    assert.ok(formatted.includes('🆕 [Первое действие] Сменил язык на русский'));
+    assert.ok(formatted.includes('Открыл расписание группы'));
+    assert.ok(!formatted.includes('undefined'));
+});
+
 

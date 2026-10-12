@@ -4,24 +4,57 @@ import log from "../logging/logging.js";
 export const userLanguagesCache = {}
 
 class UserService {
-    async registerUser(msg) {
+    constructor() {
+        this.registeredUserIds = new Set();
+    }
+
+    async registerUser(msgOrCall, extra = {}) {
         try {
-            const User = await this.findUserById(msg.chat.id)
-            if (!User) {
-                await this.createUser({
-                    userId: msg.chat.id,
-                    userType: String(msg.chat.type),
-                    userTitle: msg.chat.title,
-                    firstName: msg.chat.first_name,
-                    lastName: msg.chat.last_name,
-                    username: msg.chat.username,
-                }).then(user => log.warn(`Зарегистрирован новый пользователь! /get_user${msg.chat.id}`, {
-                    user,
-                    userId: msg.chat.id
-                }))
+            if (!msgOrCall) return;
+            const from = msgOrCall.from || (msgOrCall.chat ? msgOrCall.from : msgOrCall);
+            const chat = msgOrCall.chat || msgOrCall.message?.chat || {};
+            const rawId = from?.id || chat?.id || msgOrCall.userId || msgOrCall.id;
+            const userId = Number(rawId);
+            if (!userId || isNaN(userId)) return;
+
+            if (this.registeredUserIds && this.registeredUserIds.has(userId)) {
+                return;
             }
+
+            const existingUser = await this.findUserById(userId);
+            if (existingUser) {
+                if (!this.registeredUserIds) this.registeredUserIds = new Set();
+                this.registeredUserIds.add(userId);
+                return existingUser;
+            }
+
+            const cleanUsername = (from?.username || chat?.username || extra.username || '')
+                ? String(from?.username || chat?.username || extra.username).replace(/^@/, '')
+                : null;
+
+            const userData = {
+                userId,
+                userType: String(chat?.type || extra.userType || 'private'),
+                userTitle: chat?.title || extra.userTitle || null,
+                firstName: from?.first_name || chat?.first_name || extra.firstName || null,
+                lastName: from?.last_name || chat?.last_name || extra.lastName || null,
+                username: cleanUsername,
+            };
+
+            const newUser = await this.createUser(userData);
+            if (!this.registeredUserIds) this.registeredUserIds = new Set();
+            this.registeredUserIds.add(userId);
+
+            log.warn(`Зарегистрирован новый пользователь! /get_user${userId}`, {
+                user: newUser,
+                userId
+            });
+            return newUser;
         } catch (e) {
-            log.error("Ошибка при попытке зарегестрировать пользователя", {stack: e.stack, msg, userId: msg.chat.id})
+            log.error("Ошибка при попытке зарегистрировать пользователя: " + e.message, {
+                stack: e.stack,
+                userId: msgOrCall?.chat?.id || msgOrCall?.from?.id
+            });
         }
     }
 

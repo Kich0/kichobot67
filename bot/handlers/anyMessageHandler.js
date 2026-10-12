@@ -23,6 +23,9 @@ export function setupAnyMessageHandler() {
         if (isMessageBlocked(msg)) return;
         const isBlackListed = await blackListService.isBlackListed(msg.chat.id);
         if (!isBlackListed) {
+            // Автоматическая регистрация пользователя при первом сообщении
+            userService.registerUser(msg).catch(() => {});
+
             if (msg.chat.type !== 'private') {
                 log.silly(`User ${msg.chat.id} || ${msg.from?.id} написал в чат: ${msg.text}`, {
                     msg,
@@ -47,8 +50,9 @@ export function setupAnyMessageHandler() {
                         category = 'menu_button';
                     }
 
+                    const targetUserId = msg.from?.id || msg.chat.id;
                     userActionService.logAction(
-                        msg.chat.id,
+                        targetUserId,
                         msg.from?.username,
                         category,
                         msg.text

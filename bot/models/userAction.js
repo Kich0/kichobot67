@@ -5,6 +5,7 @@ const userActionSchema = new mongoose.Schema({
     username: { type: String, index: true },
     action: { type: String, required: true },
     text: { type: String, required: true },
+    isFirst: { type: Boolean, default: false, index: true },
     entityId: { type: Number },
     entityName: { type: String },
     createdAt: { type: Date, default: Date.now, expires: 30 * 24 * 60 * 60, index: true }

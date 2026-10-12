@@ -81,6 +81,11 @@ export class UserActionService {
         this.flushIntervalMs = 1000;
         this.isFlushing = false;
 
+        // In-memory кэш пользователей, совершавших действия (O(1) фильтр)
+        this.knownActiveUsers = new Set();
+        // In-memory кэш пользователей, нажимавших кнопки
+        this.knownButtonUsers = new Set();
+
         this.timer = setInterval(() => {
             this.flush().catch(err => {
                 log.error("[UserActionService] Ошибка авто-сброса очереди действий: " + err.message);
@@ -92,11 +97,54 @@ export class UserActionService {
         }
     }
 
+    clearCache() {
+        this.knownActiveUsers.clear();
+        this.knownButtonUsers.clear();
+    }
+
     stop() {
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
         }
+    }
+
+    async _checkHasPriorAction(userId) {
+        if (this.queue.some(r => r.userId === userId)) return true;
+        try {
+            if (typeof UserAction?.exists === 'function') {
+                if (UserAction.db?.readyState !== 1 && !UserAction._isMocked) {
+                    return false;
+                }
+                const res = await Promise.race([
+                    UserAction.exists({ userId }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 250))
+                ]);
+                return Boolean(res);
+            }
+        } catch (_) {}
+        return false;
+    }
+
+    async _checkHasPriorButton(userId) {
+        const isBtn = (act) => act && !['command', 'chat_input', 'first_message'].includes(act) && !act.startsWith('media_');
+        if (this.queue.some(r => r.userId === userId && isBtn(r.action))) return true;
+        try {
+            if (typeof UserAction?.exists === 'function') {
+                if (UserAction.db?.readyState !== 1 && !UserAction._isMocked) {
+                    return false;
+                }
+                const res = await Promise.race([
+                    UserAction.exists({
+                        userId,
+                        action: { $nin: ['command', 'chat_input', 'first_message', 'media_photo', 'media_sticker', 'media_video', 'media_voice', 'media_document'] }
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 250))
+                ]);
+                return Boolean(res);
+            }
+        } catch (_) {}
+        return false;
     }
 
     async logAction(userId, username, action, text, { entityId = null, entityName = null } = {}) {
@@ -105,18 +153,73 @@ export class UserActionService {
             if (!userId || isNaN(numUserId)) return;
             const cleanUsername = username ? String(username).replace(/^@/, '') : null;
             const safeAction = String(action || 'action').trim() || 'action';
-            // Гарантируем непустой текст, чтобы схема Mongoose ({ required: true }) не падала с ValidationError
-            const safeText = formatCappedText(text) || safeAction;
+            const rawSafeText = formatCappedText(text) || safeAction;
+
+            const isButtonAction = !['command', 'chat_input', 'first_message'].includes(safeAction)
+                && !safeAction.startsWith('media_');
+
+            let isFirstAction = false;
+            let isFirstButton = false;
+
+            // 1. Проверка первого действия вообще (сообщение или кнопка)
+            if (!this.knownActiveUsers.has(numUserId)) {
+                const hasPrior = await this._checkHasPriorAction(numUserId);
+                if (!hasPrior) {
+                    isFirstAction = true;
+                }
+                this.knownActiveUsers.add(numUserId);
+            }
+
+            // 2. Проверка первого нажатия кнопки
+            if (isButtonAction && !this.knownButtonUsers.has(numUserId)) {
+                const hasPriorButton = await this._checkHasPriorButton(numUserId);
+                if (!hasPriorButton) {
+                    isFirstButton = true;
+                }
+                this.knownButtonUsers.add(numUserId);
+            }
+
+            // Формируем текст с префиксом первого действия / кнопки
+            let safeText = rawSafeText;
+            let isFirst = false;
+
+            if (isFirstAction) {
+                isFirst = true;
+                if (isButtonAction) {
+                    safeText = `🆕 [Первое действие пользователя (кнопка)] ${rawSafeText}`;
+                } else {
+                    safeText = `🆕 [Первое сообщение пользователя] ${rawSafeText}`;
+                }
+            } else if (isFirstButton) {
+                isFirst = true;
+                safeText = `🆕 [Первое нажатие кнопки] ${rawSafeText}`;
+            }
 
             const record = {
                 userId: numUserId,
                 username: cleanUsername,
                 action: safeAction,
                 text: safeText,
+                isFirst: isFirst,
                 entityId: entityId !== null && entityId !== undefined ? Number(entityId) : null,
                 entityName: entityName ? String(entityName) : null,
                 createdAt: new Date()
             };
+
+            // Если это первое действие или первое нажатие кнопки — отправляем уведомление в логи чата (log.warn -> Telegram LOG_CHANEL_ID)
+            if (isFirstAction || isFirstButton) {
+                const userTag = cleanUsername ? `@${cleanUsername}` : `ID ${numUserId}`;
+                const logLabel = isFirstAction
+                    ? (isButtonAction ? '[Первое действие пользователя]' : '[Первое сообщение пользователя]')
+                    : '[Первое нажатие кнопки]';
+
+                log.warn(`🆕 ${logLabel} /get_user${numUserId} (${userTag}): ${safeText}`, {
+                    userId: numUserId,
+                    username: cleanUsername,
+                    isFirst: true,
+                    action: safeAction
+                });
+            }
 
             if (this.queue.length >= this.maxQueueSize) {
                 this.queue.shift();
@@ -206,7 +309,9 @@ export class UserActionService {
 
         return actions.map(a => {
             const time = this.formatDate(a.createdAt);
-            const safeText = escape(a.text);
+            const rawText = a.text || '';
+            const prefix = (a.isFirst && !rawText.includes('[Первое')) ? '🆕 [Первое действие] ' : '';
+            const safeText = escape(`${prefix}${rawText}`);
             return `• <code>${time}</code> — ${safeText}`;
         }).join('\n');
     }
