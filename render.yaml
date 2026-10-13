@@ -7,6 +7,8 @@ services:
     buildCommand: npm install
     startCommand: node --max-old-space-size=350 --expose-gc server.js
     envVars:
+      - key: TZ
+        value: Asia/Almaty
       - key: NODE_ENV
         value: production
       - key: PORT

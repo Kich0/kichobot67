@@ -6,6 +6,7 @@
  * 
  * Бот вызывает сервисы бэкенда НАПРЯМУЮ через import (без HTTP).
  */
+process.env.TZ = process.env.TZ || 'Asia/Almaty';
 
 import express from "express";
 import dns from "dns";

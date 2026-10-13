@@ -45,7 +45,8 @@ class UserActivityService {
                         dateKey: {
                             $dateToString: {
                                 format: "%Y-%m-%d",
-                                date: { $add: ["$createdAt", 5 * 60 * 60 * 1000] }
+                                date: "$createdAt",
+                                timezone: "+05:00"
                             }
                         }
                     }
@@ -71,7 +72,8 @@ class UserActivityService {
                         dateKey: {
                             $dateToString: {
                                 format: "%Y-%m-%d",
-                                date: { $add: ["$createdAt", 5 * 60 * 60 * 1000] }
+                                date: "$createdAt",
+                                timezone: "+05:00"
                             }
                         }
                     }
