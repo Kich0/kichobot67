@@ -1,55 +1,57 @@
 import {userRegistrationStat} from "../models/user-regiistration-stat.js";
 import {User} from "../models/user.js";
 import log from "../logging/logging.js";
+import userActivityService from "./userActivityService.js";
 
 class UserRegistrationStatService {
     getKZStartOfDay(daysAgo = 0) {
-        const KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
-        const nowKz = new Date(Date.now() + KZ_OFFSET_MS);
-        const startUtcMs = Date.UTC(nowKz.getUTCFullYear(), nowKz.getUTCMonth(), nowKz.getUTCDate() - daysAgo) - KZ_OFFSET_MS;
-        return new Date(startUtcMs);
+        return userActivityService.getKZDayInfo(daysAgo).startUtc;
     }
 
-    async getTodayRegisteredUserCount(){
-        try{
-            const today = this.getKZStartOfDay(0);
-            return await User.countDocuments({createdAt: {$gte: today}});
-        }catch (e) {
-            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров сегодня: " + e.stack);
+    async getTodayRegisteredUserCount() {
+        try {
+            const today = userActivityService.getKZDayInfo(0);
+            return await User.countDocuments({ createdAt: { $gte: today.startUtc } });
+        } catch (e) {
+            throw new Error("Ошибка при получении кол-ва зарегистрированных юзеров сегодня: " + e.stack);
         }
     }
 
-    async dailyRegisteredUserCountLogging(){
-        try{
+    async dailyRegisteredUserCountLogging() {
+        try {
             const registeredUsers = await this.getTodayRegisteredUserCount();
-            userRegistrationStat.create({registeredUsers})
-                .then(() => log.warn("Произошла запись зарегестрированных юзеров!"));
-        }catch (e) {
-            throw new Error("Ошибка при логировании кол-ва зарегестрированных юзеров сегодня: " + e.stack);
+            await userRegistrationStat.create({ registeredUsers });
+            log.warn(`Произошла запись зарегистрированных юзеров: ${registeredUsers}`);
+        } catch (e) {
+            throw new Error("Ошибка при логировании кол-ва зарегистрированных юзеров сегодня: " + e.stack);
         }
     }
 
-    async getWeakRegisteredUserCount(){
-        try{
-            const oneWeekAgo = this.getKZStartOfDay(6);
+    async getWeakRegisteredUserCount() {
+        try {
+            const sevenDaysAgo = userActivityService.getKZDayInfo(7);
             return await User.countDocuments({
-                createdAt: { $gte: oneWeekAgo}
+                createdAt: { $gte: sevenDaysAgo.startUtc }
             });
-        }catch (e) {
-            throw new Error("Ошибка при получении кол-ва зарегестрированных юзеров неделю: " + e.stack);
+        } catch (e) {
+            throw new Error("Ошибка при получении кол-ва зарегистрированных юзеров за неделю: " + e.stack);
         }
     }
 
-    async getWeakRegistrationStat(){
-        try{
-            const weakRegistrationStat =  await userRegistrationStat.find().sort({createdAt:-1}).limit(7)
-            const weakRegisteredUserCount = await this.getWeakRegisteredUserCount()
-            return {weakRegistrationStat, weakRegisteredUserCount}
-        }catch (e) {
-            throw new Error("Ошибка при получении статистики регистраций юзеров в течении недели: " + e.stack)
+    async getWeakRegistrationStat() {
+        try {
+            const stats = await userActivityService.getComprehensiveStatistics();
+            return {
+                weakRegistrationStat: stats.dailyRegistrations.map(d => ({
+                    registeredUsers: d.count,
+                    createdAt: d.dateStr
+                })),
+                weakRegisteredUserCount: stats.weekRegisteredUsersCount
+            };
+        } catch (e) {
+            throw new Error("Ошибка при получении статистики регистраций юзеров: " + e.stack);
         }
     }
-
 }
 
-export default new UserRegistrationStatService()
+export default new UserRegistrationStatService();

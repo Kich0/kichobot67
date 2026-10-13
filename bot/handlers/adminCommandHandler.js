@@ -133,41 +133,11 @@ export default function setupAdminCommandHandler() {
       return await bot.sendMessage(msg.chat.id, "У вас нет доступа к этой прекрасной команде!")
     }
     try {
-      const activeUsersToday = await userActivityService.getTodayUserCount()
-      const registeredUsersToday = await userRegistrationStatService.getTodayRegisteredUserCount()
-
-      let msg_text = 'Статистика ежедневного онлайна (время Казахстана UTC+5): \n' +
-        `Сегодня: ${activeUsersToday}\n`
-      const {weakUserActivity, weakUserCount} = await UserActivityService.getWeakUserActivity()
-      for (const doc of weakUserActivity) {
-        const date = new Date(doc.createdAt);
-        const kzDate = new Date(date.getTime() + 5 * 60 * 60 * 1000);
-        const day = kzDate.getUTCDate().toString().padStart(2, '0');
-        const month = (kzDate.getUTCMonth() + 1).toString().padStart(2, '0');
-
-        msg_text += `${day}.${month}: ${doc.userActivity}\n`
-      }
-      msg_text += `Всего уникальных пользователей за неделю: ${weakUserCount}\n\n`
-
-      msg_text += 'Статистика ежедневных регистраций (время Казахстана UTC+5): \n' +
-        `Сегодня: ${registeredUsersToday}\n`
-      const {
-        weakRegisteredUserCount,
-        weakRegistrationStat
-      } = await userRegistrationStatService.getWeakRegistrationStat()
-      for (const doc of weakRegistrationStat) {
-        const date = new Date(doc.createdAt);
-        const kzDate = new Date(date.getTime() + 5 * 60 * 60 * 1000);
-        const day = kzDate.getUTCDate().toString().padStart(2, '0');
-        const month = (kzDate.getUTCMonth() + 1).toString().padStart(2, '0');
-
-        msg_text += `${day}.${month}: ${doc.registeredUsers}\n`
-      }
-      msg_text += `Всего зареганных пользователей за неделю: ${weakRegisteredUserCount}`
-
-      await bot.sendMessage(msg.chat.id, msg_text)
+      const stats = await userActivityService.getComprehensiveStatistics();
+      const msg_text = userActivityService.formatStatMessage(stats);
+      await bot.sendMessage(msg.chat.id, msg_text);
     } catch (e) {
-      log.error("Ошибочка в /stat", {stack: e.stack})
+      log.error("Ошибочка в /stat", {stack: e.stack});
     }
   })
 

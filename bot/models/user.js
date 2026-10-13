@@ -18,5 +18,8 @@ const userSchema = new mongoose.Schema(
         timestamps: true, // Указываем использовать timestamps
     }
 );
+
+userSchema.index({ createdAt: -1 });
+
 export const User = mongoose.model('User', userSchema)
 
