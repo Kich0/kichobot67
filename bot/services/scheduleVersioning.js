@@ -27,11 +27,45 @@ let lastSizeCheck = 0;
 
 const str = (v) => (v === undefined || v === null ? "" : String(v));
 
+const DAY_INDEX_MAP = {
+    "дүйсенбі": 1, "понедельник": 1, "пн": 1,
+    "сейсенбі": 2, "вторник": 2, "вт": 2,
+    "сәрсенбі": 3, "среда": 3, "ср": 3,
+    "бейсенбі": 4, "четверг": 4, "чт": 4,
+    "жұма": 5, "пятница": 5, "пт": 5,
+    "сенбі": 6, "суббота": 6, "сб": 6
+};
+
+/** Канонический номер дня недели (1..6) для независимости от языка интерфейса (RU/KZ). */
+export function normalizeDayCanonical(dayStr) {
+    if (!dayStr) return "";
+    const clean = String(dayStr).trim().toLowerCase();
+    const idx = DAY_INDEX_MAP[clean];
+    return idx !== undefined ? String(idx) : clean;
+}
+
+/** Дата официального начала учебного года / осеннего семестра (01.09.2026 08:00 Asia/Almaty). */
+export const SEMESTER_START_DATE = new Date("2026-09-01T03:00:00.000Z");
+
+/**
+ * Валидирует дату начала действия расписания.
+ * Технические метки из лета (до начала осеннего семестра) привязываются к 1 сентября 2026.
+ */
+export function resolveValidFrom(candidateDate, defaultDate = new Date()) {
+    if (!candidateDate) return defaultDate;
+    const d = new Date(candidateDate);
+    if (isNaN(d.getTime())) return defaultDate;
+    if (d < SEMESTER_START_DATE) {
+        return SEMESTER_START_DATE;
+    }
+    return d;
+}
+
 /** Проекция расписания группы ровно на те поля, которые хранятся в схеме Schedule. */
 export function projectGroupSchedule(data) {
     if (!Array.isArray(data)) return [];
     return data.map((d) => ({
-        day: str(d?.day),
+        day: normalizeDayCanonical(d?.day),
         subjects: (Array.isArray(d?.subjects) ? d.subjects : []).map((s) => ({
             time: str(s?.time),
             subject: str(s?.subject),
@@ -43,7 +77,7 @@ export function projectGroupSchedule(data) {
 export function projectTeacherSchedule(data) {
     if (!Array.isArray(data)) return [];
     return data.map((d) => ({
-        day: str(d?.day),
+        day: normalizeDayCanonical(d?.day),
         groups: (Array.isArray(d?.groups) ? d.groups : []).map((g) => ({
             time: str(g?.time),
             group: str(g?.group),
@@ -156,7 +190,7 @@ export async function saveVersioned({
         // ничего не изменилось, возвращаем прежнюю дату изменения.
         await Model.updateOne(
             { [keyField]: key },
-            { $set: { changedAt: before.changedAt || before.createdAt || now } }
+            { $set: { changedAt: resolveValidFrom(before.changedAt || before.updatedAt || before.createdAt, now) } }
         );
         return { status: "unchanged", hash };
     }
@@ -174,11 +208,20 @@ export async function saveVersioned({
         log.error(`[ScheduleHistory] Ошибка вычисления диффа расписания: ${e.message}`);
     }
 
+    // Защита от ложных архиваций: если diff не выявил реальных изменений пар/аудиторий/преподавателей
+    if (diffResult && !diffResult.hasChanges) {
+        await Model.updateOne(
+            { [keyField]: key },
+            { $set: { hash, checkedAt: now } }
+        );
+        return { status: "unchanged", hash };
+    }
+
     await VersionModel.create({
         [keyField]: key,
         hash: beforeHash,
         data: before.data,
-        validFrom: before.changedAt || before.createdAt || before.updatedAt || now,
+        validFrom: resolveValidFrom(before.changedAt || before.updatedAt || before.createdAt, now),
         validTo: now,
         diffSummary: diffResult?.summary || "",
         diffDetails: diffResult?.changes || [],

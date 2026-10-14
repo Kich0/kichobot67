@@ -104,7 +104,7 @@ test('saveVersioned: legacy doc without hash and same content is not archived; c
     const f = makeFakes('teacherId');
     const args = { Model: f.Model, VersionModel: f.VersionModel, keyField: 'teacherId', key: 9, project: projectTeacherSchedule };
     const legacyData = [{ day: 'Пн', groups: [{ time: 't', group: 'g', subject: 's', lessonType: 'л' }] }];
-    const createdAt = new Date('2026-01-01');
+    const createdAt = new Date('2026-09-10T10:00:00.000Z');
     f.store.doc = { _id: 1, teacherId: 9, data: legacyData, createdAt, updatedAt: createdAt };
 
     // то же содержимое, но с лишним (не хранимым) полем groupsList
@@ -119,6 +119,24 @@ test('saveVersioned: legacy doc without hash and same content is not archived; c
     assert.equal(r2.status, 'changed');
     assert.equal(f.store.versions.length, 1);
     assert.equal(f.store.versions[0].data[0].groups[0].subject, 's');
+});
+
+test('resolveValidFrom and normalizeDayCanonical work correctly', async () => {
+    const { resolveValidFrom, normalizeDayCanonical, SEMESTER_START_DATE } = await import('../bot/services/scheduleVersioning.js');
+    // Даты из лета привязываются к началу семестра (01.09.2026)
+    assert.equal(resolveValidFrom(new Date('2026-06-04T15:30:00Z')).getTime(), SEMESTER_START_DATE.getTime());
+    assert.equal(resolveValidFrom(new Date('2026-08-25T12:00:00Z')).getTime(), SEMESTER_START_DATE.getTime());
+    // Даты после начала семестра сохраняются как есть
+    const septDate = new Date('2026-09-15T12:00:00Z');
+    assert.equal(resolveValidFrom(septDate).getTime(), septDate.getTime());
+
+    // Дни недели приводятся к каноническому номеру 1..6 независимо от языка (RU/KZ)
+    assert.equal(normalizeDayCanonical('Понедельник'), '1');
+    assert.equal(normalizeDayCanonical('Дүйсенбі'), '1');
+    assert.equal(normalizeDayCanonical('Вторник'), '2');
+    assert.equal(normalizeDayCanonical('Сейсенбі'), '2');
+    assert.equal(normalizeDayCanonical('Суббота'), '6');
+    assert.equal(normalizeDayCanonical('Сенбі'), '6');
 });
 
 test('saveVersioned: archived version gets archivedAt and afterArchive hook is called only on real change', async () => {

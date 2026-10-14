@@ -97,6 +97,23 @@ export function findInlineDiff(oldStr, newStr) {
     };
 }
 
+const DAY_INDEX = {
+    'понедельник': 1, 'дүйсенбі': 1, 'monday': 1, 'пн': 1, '1': 1,
+    'вторник': 2, 'сейсенбі': 2, 'tuesday': 2, 'вт': 2, '2': 2,
+    'среда': 3, 'сәрсенбі': 3, 'wednesday': 3, 'ср': 3, '3': 3,
+    'четверг': 4, 'бейсенбі': 4, 'thursday': 4, 'чт': 4, '4': 4,
+    'пятница': 5, 'жұма': 5, 'friday': 5, 'пт': 5, '5': 5,
+    'суббота': 6, 'сенбі': 6, 'saturday': 6, 'сб': 6, '6': 6,
+    'воскресенье': 7, 'жексенбі': 7, 'sunday': 7, 'вс': 7, '7': 7
+};
+
+export function getDayIndex(dayStr) {
+    if (!dayStr) return 0;
+    return DAY_INDEX[String(dayStr).toLowerCase().trim()] || 0;
+}
+
+const CANONICAL_DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+
 /**
  * Нормализует предмет для поиска переносов (удаляет аудиторию, тип занятия, лишние пробелы)
  */
@@ -118,27 +135,40 @@ function extractCoreSubject(str) {
  * @returns {{ hasChanges: boolean, changesCount: number, changes: Array, summary: string }}
  */
 export function compareStudentSchedules(oldData = [], newData = []) {
-    const days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
-    const oldDayMap = new Map((Array.isArray(oldData) ? oldData : []).map(d => [d.day, d.subjects || []]));
-    const newDayMap = new Map((Array.isArray(newData) ? newData : []).map(d => [d.day, d.subjects || []]));
+    const oldDayByIndex = new Map();
+    for (const d of (Array.isArray(oldData) ? oldData : [])) {
+        const idx = getDayIndex(d?.day);
+        if (idx) oldDayByIndex.set(idx, { dayName: d.day, subjects: d.subjects || [] });
+    }
+
+    const newDayByIndex = new Map();
+    for (const d of (Array.isArray(newData) ? newData : [])) {
+        const idx = getDayIndex(d?.day);
+        if (idx) newDayByIndex.set(idx, { dayName: d.day, subjects: d.subjects || [] });
+    }
 
     const changes = [];
 
     // Собираем все пары старого расписания для поиска переносов
     const allOldSlots = [];
-    for (const [day, subjects] of oldDayMap.entries()) {
-        for (const s of subjects) {
-            allOldSlots.push({ day, time: s.time, subject: s.subject, core: extractCoreSubject(s.subject) });
+    for (const [dayIdx, entry] of oldDayByIndex.entries()) {
+        const day = entry.dayName || CANONICAL_DAYS[dayIdx - 1];
+        for (const s of entry.subjects) {
+            allOldSlots.push({ day, dayIdx, time: s.time, subject: s.subject, core: extractCoreSubject(s.subject) });
         }
     }
 
     const matchedOldSlots = new Set();
     const matchedNewSlots = new Set();
 
-    // 1. Пословное сравнение слотов в один и тот же день
-    for (const day of days) {
-        const oldSubs = oldDayMap.get(day) || [];
-        const newSubs = newDayMap.get(day) || [];
+    // 1. Сравнение слотов в один и тот же день (по индексу дня 1..6)
+    for (let dayIdx = 1; dayIdx <= 6; dayIdx++) {
+        const oldEntry = oldDayByIndex.get(dayIdx);
+        const newEntry = newDayByIndex.get(dayIdx);
+        const day = newEntry?.dayName || oldEntry?.dayName || CANONICAL_DAYS[dayIdx - 1];
+
+        const oldSubs = oldEntry?.subjects || [];
+        const newSubs = newEntry?.subjects || [];
 
         const oldSlotMap = new Map(oldSubs.map((s, idx) => [s.time || `slot_${idx}`, s.subject]));
         const newSlotMap = new Map(newSubs.map((s, idx) => [s.time || `slot_${idx}`, s.subject]));
@@ -242,15 +272,27 @@ export function compareStudentSchedules(oldData = [], newData = []) {
  * @returns {{ hasChanges: boolean, changesCount: number, changes: Array, summary: string }}
  */
 export function compareTeacherSchedules(oldData = [], newData = []) {
-    const days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
-    const oldDayMap = new Map((Array.isArray(oldData) ? oldData : []).map(d => [d.day, d.groups || []]));
-    const newDayMap = new Map((Array.isArray(newData) ? newData : []).map(d => [d.day, d.groups || []]));
+    const oldDayByIndex = new Map();
+    for (const d of (Array.isArray(oldData) ? oldData : [])) {
+        const idx = getDayIndex(d?.day);
+        if (idx) oldDayByIndex.set(idx, { dayName: d.day, groups: d.groups || [] });
+    }
+
+    const newDayByIndex = new Map();
+    for (const d of (Array.isArray(newData) ? newData : [])) {
+        const idx = getDayIndex(d?.day);
+        if (idx) newDayByIndex.set(idx, { dayName: d.day, groups: d.groups || [] });
+    }
 
     const changes = [];
 
-    for (const day of days) {
-        const oldGrps = oldDayMap.get(day) || [];
-        const newGrps = newDayMap.get(day) || [];
+    for (let dayIdx = 1; dayIdx <= 6; dayIdx++) {
+        const oldEntry = oldDayByIndex.get(dayIdx);
+        const newEntry = newDayByIndex.get(dayIdx);
+        const day = newEntry?.dayName || oldEntry?.dayName || CANONICAL_DAYS[dayIdx - 1];
+
+        const oldGrps = oldEntry?.groups || [];
+        const newGrps = newEntry?.groups || [];
 
         const oldSlotMap = new Map(oldGrps.map((g, idx) => [g.time || `slot_${idx}`, g]));
         const newSlotMap = new Map(newGrps.map((g, idx) => [g.time || `slot_${idx}`, g]));
