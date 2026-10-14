@@ -91,4 +91,43 @@ test('ScheduleApiAdapter.adaptTeacherSchedule produces 6 days with Kazakh day na
 
     const teacherScheduleKaz = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, 'каз');
     assert.equal(teacherScheduleKaz[0].day, 'Дүйсенбі');
+
+    const teacherScheduleUpper = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, 'KZ');
+    assert.equal(teacherScheduleUpper[0].day, 'Дүйсенбі');
+
+    const teacherScheduleQaz = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, 'қаз');
+    assert.equal(teacherScheduleQaz[0].day, 'Дүйсенбі');
+
+    const teacherScheduleEmpty = ScheduleApiAdapter.adaptTeacherSchedule([], 'kz');
+    assert.equal(teacherScheduleEmpty.length, 6);
+    assert.equal(teacherScheduleEmpty[0].day, 'Дүйсенбі');
+    assert.equal(teacherScheduleEmpty[0].groups.length, 0);
+
+    const teacherScheduleRuFallback = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, null);
+    assert.equal(teacherScheduleRuFallback[0].day, 'Понедельник');
+});
+
+test('ScheduleApiAdapter.adaptGroupSchedule produces 6 days with Kazakh day names when language is kz or каз', () => {
+    const rawRecords = [
+        {
+            dayIndex: 1,
+            time: '08:30-09:20',
+            slot: 1,
+            subject: 'Математика',
+            type: 'лекция',
+            teacher: 'Попова Н. В.',
+            room: '315',
+            building: '1'
+        }
+    ];
+
+    const groupScheduleKz = ScheduleApiAdapter.adaptGroupSchedule(rawRecords, 'kz');
+    assert.equal(groupScheduleKz.length, 6);
+    assert.equal(groupScheduleKz[0].day, 'Дүйсенбі');
+
+    const groupScheduleKaz = ScheduleApiAdapter.adaptGroupSchedule(rawRecords, 'каз');
+    assert.equal(groupScheduleKaz[0].day, 'Дүйсенбі');
+
+    const groupScheduleRu = ScheduleApiAdapter.adaptGroupSchedule(rawRecords, 'рус');
+    assert.equal(groupScheduleRu[0].day, 'Понедельник');
 });

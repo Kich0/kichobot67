@@ -227,7 +227,8 @@ class TeacherScheduleController {
 
     async sendSchedule(call, schedule_cache, preMessage = '') {
         try {
-            const user_language = await userService.getUserLanguage(call.message.chat.id)
+            const chatId = call.message?.chat?.id || call.from?.id;
+            const user_language = await userService.getUserLanguage(chatId);
 
             const timestamp = schedule_cache.timestamp
             const data = schedule_cache.data
@@ -383,7 +384,8 @@ class TeacherScheduleController {
                     // Прошло >= 5 минут (или кэша нет) — скачиваем свежее расписание
                     // ТАБЛИЦА НЕДЕЛИ НЕ ЗАТРАГИВАЕТСЯ И НЕ СБРАСЫВАЕТСЯ!
                     try {
-                        const user_language = await userService.getUserLanguage(call.message.chat.id);
+                        const chatId = call.message?.chat?.id || call.from?.id;
+                        const user_language = await userService.getUserLanguage(chatId);
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId, user_language);
@@ -429,7 +431,8 @@ class TeacherScheduleController {
                 } else {
                     // Кэш отсутствует или старше 30 минут — скачиваем с сайта
                     try {
-                        const user_language = await userService.getUserLanguage(call.message.chat.id);
+                        const chatId = call.message?.chat?.id || call.from?.id;
+                        const user_language = await userService.getUserLanguage(chatId);
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
                         const response = await downloadSchedule(teacherId, user_language);
@@ -634,6 +637,7 @@ class TeacherScheduleController {
                 TeacherTableImageService.invalidateTeacherImage(teacherId);
                 if (cached) {
                     delete cached.telegramFileId;
+                    delete cached.telegramFileIds;
                 }
 
                 try {
@@ -702,6 +706,7 @@ class TeacherScheduleController {
                     teacherScheduleService.updateByTeacherId(teacherId, cached.data).catch(() => {});
                     TeacherTableImageService.invalidateTeacherImage(teacherId);
                     delete cached.telegramFileId;
+                    delete cached.telegramFileIds;
                 }
             }
 
@@ -717,10 +722,12 @@ class TeacherScheduleController {
             const markup = this.getTeacherTableMarkup(teacherId, dayNumber, departmentId, user_language);
 
             let photoMsg = null;
+            const langKey = (user_language === 'kz' || user_language === 'каз') ? 'kz' : 'ru';
 
             // Попытка отправить через сохранённый file_id Telegram (0 байт трафика на Render!)
-            if (cached?.telegramFileId && !forceRefresh) {
-                photoMsg = await bot.sendPhoto(chatId, cached.telegramFileId, {
+            const cachedFileId = cached?.telegramFileIds?.[langKey];
+            if (cachedFileId && !forceRefresh) {
+                photoMsg = await bot.sendPhoto(chatId, cachedFileId, {
                     caption,
                     parse_mode: 'HTML',
                     reply_markup: markup
@@ -742,7 +749,8 @@ class TeacherScheduleController {
                 });
 
                 if (photoMsg?.photo?.length > 0 && cached) {
-                    cached.telegramFileId = photoMsg.photo[photoMsg.photo.length - 1].file_id;
+                    if (!cached.telegramFileIds) cached.telegramFileIds = {};
+                    cached.telegramFileIds[langKey] = photoMsg.photo[photoMsg.photo.length - 1].file_id;
                 }
             }
 

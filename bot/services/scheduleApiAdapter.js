@@ -67,7 +67,9 @@ class ScheduleApiAdapter {
      * @returns {Array} - 6 дней недели со списком предметов
      */
     adaptGroupSchedule(records = [], language = 'рус') {
-        const daysList = language === 'каз' ? this.daysKz : this.daysRu;
+        const normLang = String(language || '').toLowerCase().trim();
+        const isKz = normLang === 'каз' || normLang === 'kz' || normLang === 'kaz' || normLang === 'қаз';
+        const daysList = isKz ? this.daysKz : this.daysRu;
         const schedule = [];
 
         for (let dayNum = 1; dayNum <= 6; dayNum++) {
@@ -147,7 +149,8 @@ class ScheduleApiAdapter {
      * @returns {Array} - 6 дней недели со списком занятий преподавателя
      */
     adaptTeacherSchedule(records = [], language = 'рус') {
-        const isKz = language === 'каз' || language === 'kz';
+        const normLang = String(language || '').toLowerCase().trim();
+        const isKz = normLang === 'каз' || normLang === 'kz' || normLang === 'kaz' || normLang === 'қаз';
         const daysList = isKz ? this.daysKz : this.daysRu;
         const schedule = [];
 

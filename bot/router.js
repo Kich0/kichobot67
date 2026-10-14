@@ -86,8 +86,12 @@ router.post('/webhook', (req, res) => {
         res.sendStatus(200);
 
         const update = req.body;
+        if (!update || typeof update !== 'object' || Object.keys(update).length === 0) {
+            return;
+        }
+
         botHealthMonitor.updateActivity();
-        Promise.resolve(bot.processUpdate(update)).catch(e => {
+        Promise.resolve().then(() => bot.processUpdate(update)).catch(e => {
             log.error('Error processing webhook update asynchronously', { stack: e.stack, update });
         });
     } catch (e) {
