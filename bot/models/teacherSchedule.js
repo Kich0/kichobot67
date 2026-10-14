@@ -34,6 +34,8 @@ const teacherScheduleVersionSchema = new mongoose.Schema({
     data: [teacherScheduleDaySchema],
     validFrom: { type: Date },
     validTo: { type: Date },
+    diffSummary: { type: String },              // Краткое описание отличий
+    diffDetails: { type: Array, default: [] },  // Структурированный массив изменений
     archivedAt: { type: Date, default: Date.now, expires: 60 * 24 * 60 * 60 } // 2 месяца
 }, { timestamps: true });
 teacherScheduleVersionSchema.index({ teacherId: 1, validTo: -1 });

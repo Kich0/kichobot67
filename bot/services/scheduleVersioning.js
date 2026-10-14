@@ -2,6 +2,7 @@ import crypto from "crypto";
 import log from "../logging/logging.js";
 import { ScheduleVersion } from "../models/schedule.js";
 import { TeacherScheduleVersion } from "../models/teacherSchedule.js";
+import { compareStudentSchedules, compareTeacherSchedules } from "./scheduleDiffService.js";
 
 /**
  * Версионирование расписаний.
@@ -162,12 +163,25 @@ export async function saveVersioned({
 
     // 3. Содержимое изменилось — старый оригинал не удаляем, а сохраняем в историю
     //    (автоудаление через 2 месяца по archivedAt + общий лимит размера 50 МБ).
+    let diffResult = null;
+    try {
+        if (keyField === "groupId") {
+            diffResult = compareStudentSchedules(before.data, data);
+        } else if (keyField === "teacherId") {
+            diffResult = compareTeacherSchedules(before.data, data);
+        }
+    } catch (e) {
+        log.error(`[ScheduleHistory] Ошибка вычисления диффа расписания: ${e.message}`);
+    }
+
     await VersionModel.create({
         [keyField]: key,
         hash: beforeHash,
         data: before.data,
         validFrom: before.changedAt || before.createdAt || before.updatedAt || now,
         validTo: now,
+        diffSummary: diffResult?.summary || "",
+        diffDetails: diffResult?.changes || [],
         archivedAt: now,
     });
 

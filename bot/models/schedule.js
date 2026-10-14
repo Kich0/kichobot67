@@ -32,6 +32,8 @@ const scheduleVersionSchema = new mongoose.Schema({
     data: [scheduleDaySchema],
     validFrom: { type: Date },
     validTo: { type: Date },
+    diffSummary: { type: String },              // Краткое описание отличий
+    diffDetails: { type: Array, default: [] },  // Структурированный массив изменений
     archivedAt: { type: Date, default: Date.now, expires: 60 * 24 * 60 * 60 } // 2 месяца
 }, { timestamps: true });
 scheduleVersionSchema.index({ groupId: 1, validTo: -1 });
