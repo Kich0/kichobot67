@@ -54,10 +54,12 @@ class ScheduleApiAdapter {
 
     formatRoom(room, building) {
         if (!room && !building) return '';
-        if (room && building) {
-            return `Ауд.${room}/${building}`;
+        const cleanRoom = (room || '').replace(/^Ауд\.?\s*/i, '').trim();
+        const cleanBuilding = (building || '').replace(/^Корп(?:ус)?\.?\s*/i, '').trim();
+        if (cleanRoom && cleanBuilding) {
+            return `Ауд.${cleanRoom}/${cleanBuilding}`;
         }
-        return `Ауд.${room || building}`;
+        return `Ауд.${cleanRoom || cleanBuilding}`;
     }
 
     /**
@@ -88,9 +90,14 @@ class ScheduleApiAdapter {
 
                 // 1. Предмет и тип занятия (например, "Управление данными (Big Data) /Лекция/")
                 let subjectLine = '';
-                if (r.subject) {
-                    const typeBadge = this.formatLessonType(r.type);
-                    subjectLine = `${r.subject.trim()} ${typeBadge}`.trim();
+                const rawSubj = (r.subject || r.discipline || '').trim();
+                if (rawSubj) {
+                    const typeBadge = this.formatLessonType(r.type || r.lessonType);
+                    if (typeBadge && !rawSubj.toLowerCase().includes(typeBadge.toLowerCase())) {
+                        subjectLine = `${rawSubj} ${typeBadge}`.trim();
+                    } else {
+                        subjectLine = rawSubj;
+                    }
                 }
 
                 // 2. Преподаватель (полное ФИО) и аудитория/корпус
@@ -180,19 +187,19 @@ class ScheduleApiAdapter {
                         slotData.groupsList.push(groupName);
                         slotData.group = `${slotData.groupsList.join(', ')}${roomStr}`;
                     }
-                    if (!slotData.subject && r.subject) {
-                        slotData.subject = r.subject;
+                    if (!slotData.subject && (r.subject || r.discipline)) {
+                        slotData.subject = (r.subject || r.discipline).trim();
                     }
-                    if (!slotData.lessonType && r.type) {
-                        slotData.lessonType = this.formatLessonTypeBadge(r.type);
+                    if (!slotData.lessonType && (r.type || r.lessonType)) {
+                        slotData.lessonType = this.formatLessonTypeBadge(r.type || r.lessonType);
                     }
                 } else {
                     timeSlotMap.set(time, {
                         time,
                         group: `${groupName}${roomStr}`,
                         groupsList: [groupName],
-                        subject: r.subject || '',
-                        lessonType: this.formatLessonTypeBadge(r.type) || '',
+                        subject: (r.subject || r.discipline || '').trim(),
+                        lessonType: this.formatLessonTypeBadge(r.type || r.lessonType) || '',
                         room: r.room || '',
                         building: r.building || ''
                     });

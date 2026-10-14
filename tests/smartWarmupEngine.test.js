@@ -153,3 +153,39 @@ test('SmartWarmupEngine: start() and stop() manage timers cleanly', () => {
     assert.equal(engine.groupTimer, null);
     assert.equal(engine.teacherTimer, null);
 });
+
+test('SmartWarmupEngine: skips tick during night sleep hours (02:00 to 05:59 KZ)', async () => {
+    const engine = new SmartWarmupEngine();
+    let warmupGroupCalled = false;
+    let warmupTeacherCalled = false;
+
+    engine.warmupSingleGroup = async () => { warmupGroupCalled = true; };
+    engine.warmupSingleTeacher = async () => { warmupTeacherCalled = true; };
+    engine.topGroups = [{ id: 1 }];
+    engine.topTeachers = [{ id: 10 }];
+    engine.lastTopGroupsFetchAt = Date.now();
+    engine.lastTopTeachersFetchAt = Date.now();
+
+    // Mock Date.now / system time to simulate 03:00 KZ (22:00 UTC)
+    const realDate = global.Date;
+    class MockNightDate extends realDate {
+        constructor(...args) {
+            if (args.length > 0) {
+                super(...args);
+            } else {
+                // 22:00 UTC = 03:00 KZ (night sleep)
+                super(Date.UTC(2026, 9, 15, 22, 0, 0));
+            }
+        }
+    }
+    global.Date = MockNightDate;
+
+    try {
+        await engine.tickGroup();
+        await engine.tickTeacher();
+        assert.equal(warmupGroupCalled, false, 'Group tick must be skipped during night sleep');
+        assert.equal(warmupTeacherCalled, false, 'Teacher tick must be skipped during night sleep');
+    } finally {
+        global.Date = realDate;
+    }
+});

@@ -13,6 +13,9 @@ import { schedule_cache } from "../controllers/ScheduleController.js";
 import { teacher_text_cache } from "../controllers/TeacherScheduleController.js";
 import groupService from "../services/groupService.js";
 import teacherService from "../services/teacherService.js";
+import facultyService from "../services/facultyService.js";
+import teacherDirectoryService from "../services/teacherDirectoryService.js";
+import { enrichTeacherSchedule } from "../services/teacherScheduleEnricher.js";
 
 export const KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
 
@@ -120,10 +123,16 @@ export class SmartWarmupEngine {
 
             const scores = new Map();
             for (const item of (userTeacherAgg || [])) {
-                if (item._id) scores.set(item._id, (scores.get(item._id) || 0) + item.count * 3);
+                if (item._id) {
+                    const id = Number(item._id) || item._id;
+                    scores.set(id, (scores.get(id) || 0) + item.count * 3);
+                }
             }
             for (const item of (actionTeacherAgg || [])) {
-                if (item._id) scores.set(item._id, (scores.get(item._id) || 0) + item.count);
+                if (item._id) {
+                    const id = Number(item._id) || item._id;
+                    scores.set(id, (scores.get(id) || 0) + item.count);
+                }
             }
 
             let sortedIds = Array.from(scores.entries())
@@ -164,7 +173,7 @@ export class SmartWarmupEngine {
                 return; // Ночной сон (02:00-05:59 KZ)
             }
 
-            if (!buketovApiService.canMakeApiCall()) {
+            if (!buketovApiService.canMakeApiCall(5)) {
                 return; // Лимит 110 req/min близок или сайт КарУ лежит (API_DOWN)
             }
 
@@ -197,12 +206,20 @@ export class SmartWarmupEngine {
 
             const groupIdent = `${group.id}|${lang}`;
             const botGroup = await groupService.getById(group.id).catch(() => group);
+            let facultyId = 0;
+            if (botGroup) {
+                facultyId = await facultyService.getIdByGroup(botGroup).catch(() => 0) || 0;
+            }
+
+            const isFromDb = Boolean(scheduleData._fromDb);
 
             // 1. Сохраняем в RAM schedule_cache
             schedule_cache[groupIdent] = {
                 data: scheduleData,
                 timestamp: Date.now(),
-                group: botGroup || group
+                group: botGroup || group,
+                facultyId,
+                isFromDb
             };
 
             // 2. Сохраняем в MongoDB резерв (fire-and-forget)
@@ -227,7 +244,7 @@ export class SmartWarmupEngine {
                 return; // Ночной сон (02:00-05:59 KZ)
             }
 
-            if (!buketovApiService.canMakeApiCall()) {
+            if (!buketovApiService.canMakeApiCall(5)) {
                 return; // Лимит 110 req/min близок или API_DOWN
             }
 
@@ -254,22 +271,30 @@ export class SmartWarmupEngine {
     async warmupSingleTeacher(teacher) {
         if (!teacher || !teacher.id) return;
         try {
+            const rawTeacher = await teacherService.getById(teacher.id).catch(() => teacher);
+            const botTeacher = teacherDirectoryService.enrich(rawTeacher || teacher);
+
             const scheduleData = await BackendTeacherScheduleService.get_teacher_schedule(teacher.id, 'рус');
             if (!scheduleData) return;
 
-            const botTeacher = await teacherService.getById(teacher.id).catch(() => teacher);
+            const isFromDb = Boolean(scheduleData._fromDb);
+            const enrichedData = await enrichTeacherSchedule(scheduleData, botTeacher).catch(() => scheduleData);
+            if (enrichedData) {
+                enrichedData._fromDb = isFromDb;
+            }
 
             // 1. Сохраняем в RAM teacher_text_cache
             teacher_text_cache[teacher.id] = {
-                data: scheduleData,
+                data: enrichedData || scheduleData,
                 timestamp: Date.now(),
-                teacher: botTeacher || teacher,
-                departmentId: botTeacher?.department || teacher?.department,
-                _enriched: true
+                teacher: botTeacher,
+                departmentId: botTeacher?.department || teacher?.department || 0,
+                _enriched: true,
+                isFromDb
             };
 
             // 2. Сохраняем в MongoDB резерв (fire-and-forget)
-            teacherScheduleService.updateByTeacherId(teacher.id, scheduleData).catch(e => {
+            teacherScheduleService.updateByTeacherId(teacher.id, enrichedData || scheduleData).catch(e => {
                 log.warn(`[SmartWarmup] Ошибка сохранения резерва MongoDB для преподавателя ${teacher.id}: ${e.message}`);
             });
         } catch (e) {

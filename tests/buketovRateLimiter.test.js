@@ -50,20 +50,29 @@ test('checkRateLimit: automatically prunes timestamps older than 60,000 ms', () 
     BuketovApiService.outboundRequestTimestamps = [];
 });
 
-test('canMakeApiCall: returns true only when rate limit is available AND Circuit Breaker is not API_DOWN', () => {
+test('canMakeApiCall: returns true only when rate limit is available AND Circuit Breaker is not API_DOWN, supports headroom', () => {
     BuketovApiService.outboundRequestTimestamps = [];
     BuketovApiService.circuitState = 'CLOSED';
 
     // 1. Normal state: allowed
     assert.equal(BuketovApiService.canMakeApiCall(), true);
+    assert.equal(BuketovApiService.canMakeApiCall(5), true);
 
-    // 2. Circuit Breaker tripped: blocked
+    // 2. Near limit check: 106 requests -> canMakeApiCall() allowed, but canMakeApiCall(5) blocked
+    const now = Date.now();
+    for (let i = 0; i < 106; i++) {
+        BuketovApiService.outboundRequestTimestamps.push(now);
+    }
+    assert.equal(BuketovApiService.canMakeApiCall(), true); // 106 < 110
+    assert.equal(BuketovApiService.canMakeApiCall(5), false); // 106 >= (110 - 5)
+
+    // 3. Circuit Breaker tripped: blocked
+    BuketovApiService.outboundRequestTimestamps = [];
     BuketovApiService.circuitState = 'API_DOWN';
     assert.equal(BuketovApiService.canMakeApiCall(), false);
 
-    // 3. Circuit Breaker recovered, but rate limit full: blocked
+    // 4. Circuit Breaker recovered, but rate limit full: blocked
     BuketovApiService.circuitState = 'CLOSED';
-    const now = Date.now();
     for (let i = 0; i < 110; i++) {
         BuketovApiService.outboundRequestTimestamps.push(now);
     }
@@ -74,7 +83,9 @@ test('canMakeApiCall: returns true only when rate limit is available AND Circuit
     BuketovApiService.circuitState = 'CLOSED';
 });
 
-test('_dbScheduleToRecords: converts MongoDB student schedule days into valid API record objects', () => {
+test('_dbScheduleToRecords: converts MongoDB student schedule days into valid API record objects and integrates with ScheduleApiAdapter', async () => {
+    const { default: ScheduleApiAdapter } = await import('../bot/services/scheduleApiAdapter.js');
+
     const days = [
         {
             day: 'Понедельник',
@@ -108,8 +119,11 @@ test('_dbScheduleToRecords: converts MongoDB student schedule days into valid AP
     assert.equal(records[0].slot, 1);
     assert.equal(records[0].time, '08:30-09:50');
     assert.equal(records[0].discipline, 'Математический анализ /Лекция/');
+    assert.equal(records[0].subject, 'Математический анализ /Лекция/');
+    assert.equal(records[0].type, 'Лекция');
     assert.equal(records[0].teacher, 'Иванов И. И.');
-    assert.equal(records[0].room, 'Ауд.204/1');
+    assert.equal(records[0].room, '204');
+    assert.equal(records[0].building, '1');
     assert.equal(records[0].group, 'ИС-21-1');
 
     assert.equal(records[1].day, 'Сейсенбі');
@@ -117,12 +131,21 @@ test('_dbScheduleToRecords: converts MongoDB student schedule days into valid AP
     assert.equal(records[1].slot, 1);
     assert.equal(records[1].time, '11:30-12:50');
     assert.equal(records[1].discipline, 'Программирование');
+    assert.equal(records[1].subject, 'Программирование');
     assert.equal(records[1].teacher, 'Петров П. П.');
-    assert.equal(records[1].room, 'Ауд.101');
+    assert.equal(records[1].room, '101');
     assert.equal(records[1].group, 'ИС-21-1');
+
+    // Round-trip verification through ScheduleApiAdapter
+    const adapted = ScheduleApiAdapter.adaptGroupSchedule(records, 'рус');
+    assert.equal(adapted.length, 6);
+    assert.ok(adapted[0].subjects[0].subject.includes('Математический анализ'));
+    assert.ok(!adapted[0].subjects[0].subject.includes('Ауд.Ауд.'));
 });
 
-test('_dbTeacherScheduleToRecords: converts MongoDB teacher schedule days into valid API record objects', () => {
+test('_dbTeacherScheduleToRecords: converts MongoDB teacher schedule days into valid API record objects and integrates with ScheduleApiAdapter', async () => {
+    const { default: ScheduleApiAdapter } = await import('../bot/services/scheduleApiAdapter.js');
+
     const days = [
         {
             day: 'Среда',
@@ -144,9 +167,45 @@ test('_dbTeacherScheduleToRecords: converts MongoDB teacher schedule days into v
     assert.equal(records[0].slot, 1);
     assert.equal(records[0].time, '08:30-09:50');
     assert.equal(records[0].discipline, 'Физическая культура');
+    assert.equal(records[0].subject, 'Физическая культура');
+    assert.equal(records[0].type, 'Прак.зан.');
+    assert.equal(records[0].lessonType, 'Прак.зан.');
     assert.equal(records[0].teacher, 'Сидоров С. С.');
     assert.equal(records[0].group, 'ФК-11');
-    assert.equal(records[0].lessonType, 'Прак.зан.');
+
+    // Round-trip verification through ScheduleApiAdapter
+    const adapted = ScheduleApiAdapter.adaptTeacherSchedule(records, 'рус');
+    assert.equal(adapted.length, 6);
+    const matchedSlot = adapted[2].groups.find(g => g.group.includes('ФК-11'));
+    assert.ok(matchedSlot);
+    assert.equal(matchedSlot.subject, 'Физическая культура');
+    assert.equal(matchedSlot.lessonType, 'Прак.зан.');
+});
+
+test('_dbScheduleToRecords: handles multiple subgroups separated by book emoji 📚 without losing records', () => {
+    const days = [
+        {
+            day: 'Понедельник',
+            subjects: [
+                {
+                    time: '08:30-09:50',
+                    subject: 'Математика /Лекция/\nИванов И. И.\nАуд.204/1\n📚 Физика /Прак.зан./\nПетров П. П.\nАуд.205/2'
+                }
+            ]
+        }
+    ];
+
+    const records = BuketovApiService._dbScheduleToRecords(days, 'ИС-21');
+    assert.equal(records.length, 2);
+    assert.equal(records[0].subject, 'Математика /Лекция/');
+    assert.equal(records[0].teacher, 'Иванов И. И.');
+    assert.equal(records[0].room, '204');
+    assert.equal(records[0].building, '1');
+
+    assert.equal(records[1].subject, 'Физика /Прак.зан./');
+    assert.equal(records[1].teacher, 'Петров П. П.');
+    assert.equal(records[1].room, '205');
+    assert.equal(records[1].building, '2');
 });
 
 test('fetchScheduleFromApi: enforces 110 req/min, calls fetchScheduleFromDb and makes 0 network calls when limit reached', async () => {
@@ -166,7 +225,7 @@ test('fetchScheduleFromApi: enforces 110 req/min, calls fetchScheduleFromDb and 
     BuketovApiService.fetchScheduleFromDb = async function(params, cacheType) {
         fallbackCalled = true;
         fallbackArgs = { params, cacheType };
-        return { records: [{ discipline: 'Mocked From DB' }], total: 1, _fromDb: true };
+        return { records: [{ discipline: 'Mocked From DB', subject: 'Mocked From DB' }], total: 1, _fromDb: true };
     };
 
     try {

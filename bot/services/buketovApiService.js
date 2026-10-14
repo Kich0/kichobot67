@@ -102,19 +102,20 @@ class BuketovApiService {
     /**
      * Проверка скользящего 60-секундного окна исходящих сетевых запросов.
      * Возвращает false, если достигнут защитный лимит (>= 110 req/min).
+     * @param {number} headroom - Дополнительный запас слотов (например, для фонового конвейера)
      */
-    checkRateLimit() {
+    checkRateLimit(headroom = 0) {
         const now = Date.now();
         const cutoff = now - 60000;
         this.outboundRequestTimestamps = this.outboundRequestTimestamps.filter(ts => ts > cutoff);
-        return this.outboundRequestTimestamps.length < this.MAX_REQUESTS_PER_MINUTE;
+        return this.outboundRequestTimestamps.length < (this.MAX_REQUESTS_PER_MINUTE - headroom);
     }
 
     /**
      * Публичный метод проверки возможности сделать сетевой запрос к API КарУ прямо сейчас.
      */
-    canMakeApiCall() {
-        return this.checkRateLimit() && this.circuitState !== 'API_DOWN';
+    canMakeApiCall(headroom = 0) {
+        return this.checkRateLimit(headroom) && this.circuitState !== 'API_DOWN';
     }
 
     /**
@@ -149,21 +150,61 @@ class BuketovApiService {
                     const item = d.subjects[slotIdx];
                     if (!item || !item.subject || !item.subject.trim()) continue;
 
-                    const lines = item.subject.split('\n').map(l => l.trim()).filter(Boolean);
-                    const discipline = lines[0] || '';
-                    const teacher = lines[1] || '';
-                    const roomInfo = lines[2] || '';
+                    // Поддержка нескольких подгрупп/блоков, разделенных символом книги 📚
+                    const blocks = item.subject.split(/(?:\r?\n)?📚\s*/).filter(b => b && b.trim());
+                    for (const block of blocks) {
+                        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+                        if (lines.length === 0) continue;
 
-                    records.push({
-                        day: dayName,
-                        dayIndex,
-                        slot: slotIdx + 1,
-                        time: item.time || '',
-                        discipline,
-                        teacher,
-                        room: roomInfo,
-                        group: groupName
-                    });
+                        let rawDiscipline = lines[0] || '';
+                        let teacher = lines[1] || '';
+                        let roomInfo = lines[2] || '';
+
+                        // Если преподаватель и аудитория оказались на 2-й строке
+                        if (lines.length === 2 && !roomInfo) {
+                            const match = lines[1].match(/(.+?)\s+(Ауд\.?\s*[^\s]+|\d+\/\d+)$/i);
+                            if (match) {
+                                teacher = match[1].trim();
+                                roomInfo = match[2].trim();
+                            }
+                        }
+
+                        // Выделяем тип занятия, если он есть в названии
+                        let type = '';
+                        const typeMatch = rawDiscipline.match(/\/(?:Лекция|Прак\.зан\.|Лаб\.раб\.|СРОП|[^\/]+)\//i);
+                        if (typeMatch) {
+                            type = typeMatch[0].replace(/\//g, '').trim();
+                        }
+
+                        // Парсим номер аудитории и корпус
+                        let room = '';
+                        let building = '';
+                        if (roomInfo) {
+                            const cleanRoom = roomInfo.replace(/^Ауд\.?\s*/i, '').trim();
+                            if (cleanRoom.includes('/')) {
+                                const parts = cleanRoom.split('/');
+                                room = parts[0].trim();
+                                building = parts[1].trim();
+                            } else {
+                                room = cleanRoom;
+                            }
+                        }
+
+                        records.push({
+                            day: dayName,
+                            dayIndex,
+                            slot: slotIdx + 1,
+                            time: item.time || '',
+                            subject: rawDiscipline,
+                            discipline: rawDiscipline,
+                            type,
+                            lessonType: type,
+                            teacher,
+                            room,
+                            building,
+                            group: groupName
+                        });
+                    }
                 }
             }
         }
@@ -193,15 +234,29 @@ class BuketovApiService {
                     const item = d.groups[slotIdx];
                     if (!item || (!item.group && !item.subject)) continue;
 
+                    let room = item.room || '';
+                    let building = item.building || '';
+                    if (!room && item.group) {
+                        const roomMatch = item.group.match(/\((?:Ауд\.\s*)?([^/)]+)(?:\/([^)]+))?\)/i);
+                        if (roomMatch) {
+                            room = roomMatch[1].trim();
+                            building = roomMatch[2] ? roomMatch[2].trim() : '';
+                        }
+                    }
+
                     records.push({
                         day: dayName,
                         dayIndex,
                         slot: slotIdx + 1,
                         time: item.time || '',
+                        subject: item.subject || '',
                         discipline: item.subject || '',
+                        type: item.lessonType || '',
+                        lessonType: item.lessonType || '',
                         teacher: teacherName,
                         group: item.group || '',
-                        lessonType: item.lessonType || ''
+                        room,
+                        building
                     });
                 }
             }
@@ -218,35 +273,57 @@ class BuketovApiService {
         try {
             if (isTeacher) {
                 const teacherQuery = params.teacher || params.q;
-                if (teacherQuery) {
+                if (teacherQuery || params.teacherId) {
                     const { Teacher } = await import("../models/teacher.js");
                     const { TeacherSchedule } = await import("../models/teacherSchedule.js");
 
-                    const cleanName = this.cleanTeacherName(teacherQuery);
-                    const surname = cleanName.split(/[\s.]+/).filter(Boolean)[0] || cleanName;
+                    let teacherDoc = null;
+                    if (params.teacherId) {
+                        teacherDoc = await Teacher.findOne({ id: Number(params.teacherId) }).lean().catch(() => null);
+                    }
 
-                    const teacherDoc = await Teacher.findOne({ name: new RegExp(surname, 'i') }).lean().catch(() => null);
+                    if (!teacherDoc && teacherQuery) {
+                        const cleanName = this.cleanTeacherName(teacherQuery);
+                        const surname = cleanName.split(/[\s.]+/).filter(Boolean)[0] || cleanName;
+                        const teacherDocs = await Teacher.find({ name: new RegExp(surname, 'i') }).lean().catch(() => []);
+                        if (teacherDocs.length > 0) {
+                            teacherDoc = teacherDocs.find(t => this.matchTeacherRecord(t.name, teacherQuery)) || teacherDocs[0];
+                        }
+                    }
+
                     if (teacherDoc) {
                         const dbDoc = await TeacherSchedule.findOne({ teacherId: teacherDoc.id }).lean().catch(() => null);
-                        if (dbDoc && Array.isArray(dbDoc.data)) {
-                            const records = this._dbTeacherScheduleToRecords(dbDoc.data, teacherDoc.name);
+                        const daysData = dbDoc?.data || dbDoc?.schedule;
+                        if (Array.isArray(daysData)) {
+                            const records = this._dbTeacherScheduleToRecords(daysData, teacherDoc.name);
                             return { records, total: records.length, _fromDb: true };
                         }
                     }
                 }
             } else {
                 const groupName = params.group;
-                if (groupName) {
+                if (groupName || params.groupId) {
                     const { Group } = await import("../models/group.js");
                     const { Schedule } = await import("../models/schedule.js");
 
-                    const escaped = groupName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-                    const groupDoc = await Group.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean().catch(() => null);
+                    let groupDoc = null;
+                    if (params.groupId) {
+                        groupDoc = await Group.findOne({ id: Number(params.groupId) }).lean().catch(() => null);
+                    }
+
+                    if (!groupDoc && groupName) {
+                        const escaped = groupName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+                        groupDoc = await Group.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean().catch(() => null);
+                        if (!groupDoc) {
+                            groupDoc = await Group.findOne({ name: new RegExp(escaped, 'i') }).lean().catch(() => null);
+                        }
+                    }
 
                     if (groupDoc) {
                         const dbDoc = await Schedule.findOne({ groupId: groupDoc.id }).lean().catch(() => null);
-                        if (dbDoc && Array.isArray(dbDoc.data)) {
-                            const records = this._dbScheduleToRecords(dbDoc.data, groupDoc.name);
+                        const daysData = dbDoc?.data || dbDoc?.schedule;
+                        if (Array.isArray(daysData)) {
+                            const records = this._dbScheduleToRecords(daysData, groupDoc.name);
                             return { records, total: records.length, _fromDb: true };
                         }
                     }

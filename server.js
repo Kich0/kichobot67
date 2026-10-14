@@ -41,7 +41,7 @@ import setupAdminCommandHandler from "./bot/handlers/adminCommandHandler.js";
 import { setupUserDailyStatisticsLogging } from "./bot/cron/userDailyStatisticsLogging.js";
 import { setupDailyDataUpdate } from "./bot/cron/dailyDataUpdate.js";
 import { setupLoggingPathUpdate as setupBotLoggingPathUpdate } from "./bot/cron/loggingPathUpdate.js";
-import { setupScheduleCacheWarmup } from "./bot/cron/scheduleCacheWarmup.js";
+import { setupScheduleCacheWarmup, smartWarmupEngine } from "./bot/cron/scheduleCacheWarmup.js";
 import setupNewChatMemberHandler from "./bot/handlers/newChatMemberHandler.js";
 import { setupAnyMessageHandler } from "./bot/handlers/anyMessageHandler.js";
 import setupPaymentHandlers from "./bot/handlers/paymentHandler.js";
@@ -274,6 +274,10 @@ const appStart = async () => {
                 });
                 if (typeof userActionService.stop === 'function') {
                     userActionService.stop();
+                }
+
+                if (smartWarmupEngine && typeof smartWarmupEngine.stop === 'function') {
+                    smartWarmupEngine.stop();
                 }
 
                 if (mongoose.connection.readyState !== 0) {
