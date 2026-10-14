@@ -62,14 +62,25 @@ class SmartSearchController {
             if (teachers.length === 1 && groups.length === 0) {
                 exactTeacher = teachers[0];
             } else if (teachers.length > 0) {
+                const queryTokens = normQ.split(' ').filter(Boolean);
                 const fullExactMatches = teachers.filter(t => {
                     const normName = normalizeCyrillic(t.name);
                     const normFull = normalizeCyrillic(t.fullName || t.name);
+                    const compFull = normFull.replace(/\s+/g, '');
                     const aliasMatches = t.aliases && Array.isArray(t.aliases) && t.aliases.some(a => {
                         const nA = normalizeCyrillic(a);
                         return nA === normQ || nA.replace(/\s+/g, '') === compactQuery;
                     });
-                    return normFull === normQ || normName === normQ || normFull.replace(/\s+/g, '') === compactQuery || aliasMatches;
+                    if (normFull === normQ || normName === normQ || compFull === compactQuery || aliasMatches) {
+                        return true;
+                    }
+                    if (queryTokens.length > 1) {
+                        const fullTokens = normFull.split(' ').filter(Boolean);
+                        if (queryTokens.every(qTok => fullTokens.includes(qTok))) {
+                            return true;
+                        }
+                    }
+                    return false;
                 });
                 if (fullExactMatches.length === 1) {
                     exactTeacher = fullExactMatches[0];
@@ -388,8 +399,8 @@ class SmartSearchController {
      */
     async findFuzzySuggestions(rawQuery) {
         try {
-            const clean = String(rawQuery || '').toLowerCase().trim();
-            const compact = clean.replace(/[\s-_.,]/g, '');
+            const normQ = normalizeCyrillic(rawQuery);
+            const compact = normQ.replace(/\s+/g, '');
             if (compact.length < 3) return [];
 
             const compactNoSuffix = compact.replace(/(\d+)[ркkzru]+$/i, '$1');
@@ -404,7 +415,8 @@ class SmartSearchController {
             // 1. Поиск среди групп
             for (const g of allGroups) {
                 if (!g || !g.name) continue;
-                const gComp = g.name.toLowerCase().replace(/[\s-_.,]/g, '');
+                const gNorm = normalizeCyrillic(g.name);
+                const gComp = gNorm.replace(/\s+/g, '');
                 const sim1 = calculateSimilarity(compact, gComp);
                 const sim2 = calculateSimilarity(compactNoSuffix, gComp);
                 const bestSim = Math.max(sim1, sim2);
@@ -416,12 +428,16 @@ class SmartSearchController {
 
             // 2. Поиск среди преподавателей
             for (const t of allTeachers) {
-                if (!t || !t.name) continue;
-                const parts = t.name.toLowerCase().split(/[\s.]+/).filter(Boolean);
-                const surname = parts[0] || '';
-                const simSurname = calculateSimilarity(compact, surname);
-                const simFull = calculateSimilarity(compact, t.name.toLowerCase().replace(/[\s-_.,]/g, ''));
-                const bestSim = Math.max(simSurname, simFull);
+                if (!t || (!t.name && !t.fullName)) continue;
+                const normFull = normalizeCyrillic(t.fullName || t.name);
+                const normLast = normalizeCyrillic(t.lastName || t.name.split(' ')[0]);
+                const normFirst = normalizeCyrillic(t.firstName || '');
+                const compFull = normFull.replace(/\s+/g, '');
+
+                const simSurname = calculateSimilarity(compact, normLast);
+                const simFirst = normFirst ? calculateSimilarity(compact, normFirst) : 0;
+                const simFull = calculateSimilarity(compact, compFull);
+                const bestSim = Math.max(simSurname, simFirst, simFull);
 
                 if (bestSim >= 0.60) {
                     suggestions.push({ type: 'teacher', item: t, sim: bestSim });

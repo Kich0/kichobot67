@@ -25,14 +25,21 @@ export function normalizeCyrillic(str) {
         .replace(/ө/g, 'о')
         .replace(/һ/g, 'х')
         .replace(/ё/g, 'е')
-        // Латинские гомоглифы на случай опечаток клавиатуры
+        // Латинские гомоглифы на случай опечаток клавиатуры и латинского ввода
         .replace(/a/g, 'а')
         .replace(/c/g, 'с')
         .replace(/e/g, 'е')
+        .replace(/h/g, 'х')
+        .replace(/i/g, 'и')
+        .replace(/j/g, 'й')
+        .replace(/k/g, 'к')
         .replace(/o/g, 'о')
         .replace(/p/g, 'р')
+        .replace(/s/g, 'с')
         .replace(/x/g, 'х')
-        .replace(/k/g, 'к')
+        .replace(/y/g, 'у')
+        // Казахские отчества с пробелом: "Сағынтай ұлы" -> "сагынтайулы", "Серік қызы" -> "сериккызы"
+        .replace(/\s+(улы|кызы|теги)(?=\s|$)/g, (m, p1) => p1)
         // Знаки препинания и дефисы -> пробелы
         .replace(/[-_.,/\\()[\]{}|:;!?"'`]/g, ' ')
         .replace(/\s+/g, ' ')
@@ -107,12 +114,13 @@ class TeacherDirectoryService {
             }
 
             if (combined.length > 0) {
+                const cleanLatinI = (str) => str ? String(str).replace(/i/g, 'і').replace(/I/g, 'І') : '';
                 this.teachers = combined.map(t => ({
                     ...t,
-                    fullName: formatTitleCase(t.fullName),
-                    firstName: formatTitleCase(t.firstName),
-                    lastName: formatTitleCase(t.lastName),
-                    patronymic: formatTitleCase(t.patronymic)
+                    fullName: formatTitleCase(cleanLatinI(t.fullName)),
+                    firstName: formatTitleCase(cleanLatinI(t.firstName)),
+                    lastName: formatTitleCase(cleanLatinI(t.lastName)),
+                    patronymic: formatTitleCase(cleanLatinI(t.patronymic))
                 }));
                 this._buildIndexes();
                 log.info(`[TeacherDirectory] Успешно загружен справочник КарУ: ${this.teachers.length} преподавателей`);

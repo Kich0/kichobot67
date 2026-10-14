@@ -1,6 +1,7 @@
 import {Group} from "../models/group.js";
 import log from "../logging/logging.js";
 import { normalizeCyrillic } from "./teacherDirectoryService.js";
+import { levenshteinDistance } from "./teacherService.js";
 
 class groupService {
     constructor() {
@@ -225,6 +226,21 @@ class groupService {
                     // 3. Компактное вхождение от 2 символов
                     if (compactQuery.length >= 2 && compName.includes(compactQuery)) {
                         return true;
+                    }
+
+                    // 4. Опечатка в 1 букву для запросов от 4 символов (замена, пропуск или лишняя буква, например "втпо" -> "втипо")
+                    if (compactQuery.length >= 4) {
+                        for (const len of [compactQuery.length - 1, compactQuery.length, compactQuery.length + 1]) {
+                            if (len >= 3 && len <= compName.length) {
+                                const prefix = compName.slice(0, len);
+                                if (levenshteinDistance(prefix, compactQuery) <= 1) {
+                                    return true;
+                                }
+                            }
+                        }
+                        if (levenshteinDistance(compName, compactQuery) <= 1) {
+                            return true;
+                        }
                     }
 
                     return false;

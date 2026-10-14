@@ -207,69 +207,142 @@ class teacherService {
                         continue;
                     }
 
-                    // 2. Точное совпадение по фамилии
+                    const compFull = normFull.replace(/\s+/g, '');
+
+                    // 2. Абсолютное точное совпадение по полному ФИО (с пробелами или без пробелов)
+                    if (normFull === normQuery || compFull === compactQuery || normName === normQuery) {
+                        matches.push({ teacher: t, score: 200 });
+                        continue;
+                    }
+
+                    // 3. Точное совпадение по фамилии
                     if (normLast === normQuery) {
-                        matches.push({ teacher: t, score: 120 });
+                        matches.push({ teacher: t, score: 150 });
                         continue;
                     }
 
-                    // 2.1 Точное совпадение по имени (например: "Нурсултан", "Надежда")
+                    // 4. Точное совпадение по имени (например: "Нурсултан", "Надежда", "Еркин")
                     if (normFirst && normFirst === normQuery) {
-                        matches.push({ teacher: t, score: 115 });
+                        matches.push({ teacher: t, score: 140 });
                         continue;
                     }
 
-                    // 2.2 Совпадение по псевдонимам (aliases)
+                    // 5. Совпадение по псевдонимам (aliases)
                     if (t.aliases && Array.isArray(t.aliases)) {
                         const aliasMatched = t.aliases.some(alias => {
                             const normAlias = normalizeCyrillic(alias);
-                            return normAlias === normQuery || normAlias.startsWith(normQuery) || (tokens.length > 1 && normAlias.includes(normQuery));
+                            return normAlias === normQuery || normAlias.replace(/\s+/g, '') === compactQuery || normAlias.startsWith(normQuery) || (tokens.length > 1 && normAlias.includes(normQuery));
                         });
                         if (aliasMatched) {
-                            matches.push({ teacher: t, score: 110 });
+                            matches.push({ teacher: t, score: 135 });
                             continue;
                         }
                     }
 
-                    // 3. Фамилия начинается с запроса (например: "попов" -> "Попова")
+                    // 6. Многословный запрос: все слова запроса точно входят в ФИО (в любом порядке!)
+                    // Например: "Еркін Сағынтайұлы Аяған", "Надежда Попова", "Попова Надежда"
+                    if (tokens.length > 1 && tokens.every(qTok => fullTokens.includes(qTok))) {
+                        matches.push({ teacher: t, score: 130 });
+                        continue;
+                    }
+
+                    // 7. Фамилия начинается с запроса (например: "попов" -> "Попова")
                     if (normLast.startsWith(normQuery)) {
+                        matches.push({ teacher: t, score: 110 });
+                        continue;
+                    }
+
+                    // 8. Имя начинается с запроса (например: "салтанат", "айнур", "полина")
+                    if (normFirst && normFirst.startsWith(normQuery)) {
                         matches.push({ teacher: t, score: 100 });
                         continue;
                     }
 
-                    // 4. Имя начинается с запроса (например: "салтанат", "айнур", "полина")
-                    if (normFirst && normFirst.startsWith(normQuery)) {
-                        matches.push({ teacher: t, score: 85 });
-                        continue;
-                    }
-
-                    // 4.1 Отчество начинается с запроса (например: "камелович", "викторовна")
-                    if (normPatr && normPatr.startsWith(normQuery)) {
-                        matches.push({ teacher: t, score: 75 });
-                        continue;
-                    }
-
-                    // 5. Инициалы начинаются с запроса (например: "попова н" -> "Попова Н. В.")
-                    if (normName.startsWith(normQuery) || normName.replace(/\s+/g, '').startsWith(compactQuery)) {
-                        matches.push({ teacher: t, score: 90 });
-                        continue;
-                    }
-
-                    // 6. Многословный запрос (например: "Попова Надежда", "Саликов Нурсултан", "Надежда Викторовна")
-                    // Каждый токен запроса должен быть префиксом хотя бы одного слова в ФИО
+                    // 9. Многословный запрос: каждый токен запроса является префиксом слова в ФИО (в любом порядке!)
                     if (tokens.length > 1) {
-                        const allTokensMatch = tokens.every(qTok => fullTokens.some(w => w.startsWith(qTok)));
-                        if (allTokensMatch) {
-                            matches.push({ teacher: t, score: 105 });
+                        const allTokensPrefixMatch = tokens.every(qTok => fullTokens.some(w => w.startsWith(qTok)));
+                        if (allTokensPrefixMatch) {
+                            matches.push({ teacher: t, score: 95 });
                             continue;
                         }
                     }
 
-                    // 7. Компактное совпадение от 3 букв (без пробелов)
-                    if (compactQuery.length >= 3) {
-                        const compFull = normFull.replace(/\s+/g, '');
-                        if (compFull.startsWith(compactQuery)) {
-                            matches.push({ teacher: t, score: 70 });
+                    // 10. Отчество начинается с запроса (например: "камелович", "викторовна")
+                    if (normPatr && normPatr.startsWith(normQuery)) {
+                        matches.push({ teacher: t, score: 90 });
+                        continue;
+                    }
+
+                    // 11. Инициалы начинаются с запроса (например: "попова н" -> "Попова Н. В.")
+                    if (normName.startsWith(normQuery) || normName.replace(/\s+/g, '').startsWith(compactQuery)) {
+                        matches.push({ teacher: t, score: 85 });
+                        continue;
+                    }
+
+                    // 12. Опечатка в 1 букву в фамилии (длина запроса и фамилии >= 4)
+                    // Например: "Попово" -> "Попова", "Аягон" -> "Аяған"
+                    if (tokens.length === 1 && normQuery.length >= 4 && normLast.length >= 4) {
+                        if (levenshteinDistance(normLast, normQuery) === 1) {
+                            matches.push({ teacher: t, score: 84 });
+                            continue;
+                        }
+                    }
+
+                    // 13. Опечатка в 1 букву в имени (длина >= 4)
+                    // Например: "Еркен" -> "Еркін"
+                    if (tokens.length === 1 && normQuery.length >= 4 && normFirst.length >= 4) {
+                        if (levenshteinDistance(normFirst, normQuery) === 1) {
+                            matches.push({ teacher: t, score: 82 });
+                            continue;
+                        }
+                    }
+
+                    // 14. Многословный запрос с опечаткой в 1 букву суммарно
+                    // Например: "Попова Надежда Виктаровна", "Аяган Еркин Сагинтайулы", "Жунусава Баян"
+                    if (tokens.length > 1) {
+                        let totalTypos = 0;
+                        let allTokensMatch = true;
+
+                        for (const qTok of tokens) {
+                            const exactPrefix = fullTokens.some(w => w.startsWith(qTok));
+                            if (exactPrefix) continue;
+
+                            if (qTok.length >= 4) {
+                                const typoMatch = fullTokens.some(w => {
+                                    for (const len of [qTok.length - 1, qTok.length, qTok.length + 1]) {
+                                        if (len >= 3 && len <= w.length) {
+                                            if (levenshteinDistance(w.slice(0, len), qTok) <= 1) return true;
+                                        }
+                                    }
+                                    return false;
+                                });
+                                if (typoMatch) {
+                                    totalTypos++;
+                                    continue;
+                                }
+                            }
+
+                            allTokensMatch = false;
+                            break;
+                        }
+
+                        if (allTokensMatch && totalTypos <= 1) {
+                            matches.push({ teacher: t, score: 78 });
+                            continue;
+                        }
+                    }
+
+                    // 15. Компактное совпадение от 3 букв (без пробелов)
+                    if (compactQuery.length >= 3 && compFull.startsWith(compactQuery)) {
+                        matches.push({ teacher: t, score: 72 });
+                        continue;
+                    }
+
+                    // 16. Компактное совпадение от 6 букв с 1 опечаткой
+                    if (compactQuery.length >= 6) {
+                        const prefix = compFull.slice(0, compactQuery.length);
+                        if (levenshteinDistance(prefix, compactQuery) === 1) {
+                            matches.push({ teacher: t, score: 68 });
                             continue;
                         }
                     }
@@ -327,6 +400,29 @@ class teacherService {
             throw new Error("Ошибка при дедупликации учителей: " + e.stack);
         }
     }
+}
+
+export function levenshteinDistance(s1, s2) {
+    const a = s1.toLowerCase();
+    const b = s2.toLowerCase();
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+    return matrix[b.length][a.length];
 }
 
 export default new teacherService()
