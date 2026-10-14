@@ -98,6 +98,8 @@ bot.on('callback_query', () => botHealthMonitor.updateActivity());
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 app.use(cors({ origin: '*', optionsSuccessStatus: 200 }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
@@ -219,21 +221,28 @@ const appStart = async () => {
         backendLog.info(`USE_FREE_PROXIES: ${config.USE_FREE_PROXIES}`);
 
         // DNS test
-        dns.resolve('schedule.buketov.edu.kz', (err, addresses) => {
+        dns.resolve('schedule.karnu-buketov.edu.kz', (err, addresses) => {
             if (err) backendLog.error("DNS TEST FAILED: " + err.message);
             else backendLog.info("DNS TEST SUCCESS: " + addresses.join(', '));
         });
 
-        // === Периодическая сборка мусора при флаге --expose-gc ===
+        // === Адаптивная периодическая сборка мусора при флаге --expose-gc ===
         setInterval(() => {
             if (global.gc) {
                 try {
-                    global.gc();
+                    const memory = process.memoryUsage();
+                    const heapUsedMB = memory.heapUsed / (1024 * 1024);
+                    const heapDiffMB = (memory.heapTotal - memory.heapUsed) / (1024 * 1024);
+
+                    if (heapUsedMB > 120 || heapDiffMB > 40) {
+                        backendLog.info(`[Memory] Запуск адаптивного GC (heapUsed: ${heapUsedMB.toFixed(1)} МБ, diff: ${heapDiffMB.toFixed(1)} МБ)`);
+                        global.gc();
+                    }
                 } catch (err) {
                     backendLog.warn("[Memory] GC error: " + err.message);
                 }
             }
-        }, 15 * 60 * 1000).unref();
+        }, 30 * 60 * 1000).unref();
 
         // === Graceful Shutdown ===
         const gracefulShutdown = async (signal) => {

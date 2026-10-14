@@ -153,7 +153,7 @@ class TeacherScheduleService {
         return linkObjects;
     }
 
-    async get_teacher_schedule(id) {
+    async get_teacher_schedule(id, language = 'рус') {
         const numId = Number(id) || id;
 
         // 1. Приоритетный путь: официальный API КарУ
@@ -163,7 +163,7 @@ class TeacherScheduleService {
                 const apiData = await BuketovApiService.getTeacherSchedule(teacher.name);
                 if (apiData && Array.isArray(apiData.records)) {
                     // Возвращаем расписание даже если records пуст (0 пар = 6 дней каникул/свободно)
-                    const schedule = ScheduleApiAdapter.adaptTeacherSchedule(apiData.records);
+                    const schedule = ScheduleApiAdapter.adaptTeacherSchedule(apiData.records, language);
                     schedule._fromDb = false;
                     return schedule;
                 }
@@ -229,7 +229,7 @@ class TeacherScheduleService {
 
         // 4. Финальный безопасный fallback: возвращаем корректную пустую сетку на 6 дней вместо краша бота
         log.warn(`[TeacherSchedule] Возврат пустой сетки для преподавателя id=${id}`);
-        return ScheduleApiAdapter.adaptTeacherSchedule([]);
+        return ScheduleApiAdapter.adaptTeacherSchedule([], language);
     }
 }
 

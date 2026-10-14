@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import BuketovApiService from '../bot/services/buketovApiService.js';
 
 test('BuketovApiService initializes partitioned student and teacher caches with proper capacities', () => {
-    assert.equal(BuketovApiService.STUDENT_CAPACITY, 400);
-    assert.equal(BuketovApiService.TEACHER_CAPACITY, 100);
+    assert.equal(BuketovApiService.STUDENT_CAPACITY, 1500);
+    assert.equal(BuketovApiService.TEACHER_CAPACITY, 500);
     assert.ok(BuketovApiService.studentCache instanceof Map);
     assert.ok(BuketovApiService.teacherCache instanceof Map);
     assert.equal(BuketovApiService.REQUEST_TIMEOUT_MS, 4500);

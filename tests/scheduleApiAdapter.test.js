@@ -65,3 +65,30 @@ test('ScheduleApiAdapter.adaptTeacherSchedule produces 6 days with time slots an
     assert.equal(matchedSlot.subject, 'Базы данных');
     assert.ok(matchedSlot.group.includes('ИТ-21-1'));
 });
+
+test('ScheduleApiAdapter.adaptTeacherSchedule produces 6 days with Kazakh day names when language is kz or каз', () => {
+    const rawRecords = [
+        {
+            dayIndex: 1,
+            time: '08:30-09:20',
+            slot: 1,
+            subject: 'Физика',
+            type: 'лекция',
+            group: 'ФИЗ-21',
+            room: '101',
+            building: '1'
+        }
+    ];
+
+    const teacherScheduleKz = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, 'kz');
+    assert.equal(teacherScheduleKz.length, 6);
+    assert.equal(teacherScheduleKz[0].day, 'Дүйсенбі');
+    assert.equal(teacherScheduleKz[1].day, 'Сейсенбі');
+    assert.equal(teacherScheduleKz[2].day, 'Сәрсенбі');
+    assert.equal(teacherScheduleKz[3].day, 'Бейсенбі');
+    assert.equal(teacherScheduleKz[4].day, 'Жұма');
+    assert.equal(teacherScheduleKz[5].day, 'Сенбі');
+
+    const teacherScheduleKaz = ScheduleApiAdapter.adaptTeacherSchedule(rawRecords, 'каз');
+    assert.equal(teacherScheduleKaz[0].day, 'Дүйсенбі');
+});

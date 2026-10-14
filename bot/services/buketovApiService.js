@@ -5,14 +5,14 @@ import { cleanTitles, normalizeCyrillic } from "./teacherDirectoryService.js";
 class BuketovApiService {
     constructor() {
         // Раздельные LRU-кэши в оперативной памяти:
-        // 1. studentCache — 400 слотов под группы студентов (~8 МБ)
+        // 1. studentCache — 1500 слотов под группы студентов
         this.studentCache = new Map();
-        this.STUDENT_CAPACITY = 400;
+        this.STUDENT_CAPACITY = 1500;
 
-        // 2. teacherCache — 100 слотов под преподавателей (~2.5 МБ)
+        // 2. teacherCache — 500 слотов под преподавателей
         // Трафик студентов НИКОГДА не вытесняет расписание преподавателей!
         this.teacherCache = new Map();
-        this.TEACHER_CAPACITY = 100;
+        this.TEACHER_CAPACITY = 500;
 
         this.cacheTTL = 10 * 60 * 1000; // 10 минут локального кэша
 

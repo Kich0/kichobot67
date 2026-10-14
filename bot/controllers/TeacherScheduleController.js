@@ -18,17 +18,17 @@ import BackendTeacherScheduleService from "../../backend/services/TeacherSchedul
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-async function downloadSchedule(teacherId, attemption = 1) {
+async function downloadSchedule(teacherId, language = 'рус', attemption = 1) {
     try {
         // Прямой вызов вместо axios.get(KSU_HELPER_URL/...)
         // Возвращаем объект с .data для совместимости с остальным кодом
-        const data = await BackendTeacherScheduleService.get_teacher_schedule(teacherId);
+        const data = await BackendTeacherScheduleService.get_teacher_schedule(teacherId, language);
         return { data, status: 200, isFromDb: Boolean(data?._fromDb) };
     } catch (e) {
         if (attemption < 2) {
             await sleep(1000);
             log.info(`teacher ${teacherId} попал в повторный запрос расписания (попытка ${attemption + 1})!`);
-            return await downloadSchedule(teacherId, attemption + 1);
+            return await downloadSchedule(teacherId, language, attemption + 1);
         } else {
             throw e;
         }
@@ -259,8 +259,12 @@ class TeacherScheduleController {
             const scheduleLifeTime = ScheduleController.formatElapsedTime(timestamp, user_language, isFromDb);
             const scheduleDateTime = ScheduleController.formatTimestamp(timestamp);
 
-            const schedule_day = data[dayNumber]['day']
-            const preSchedule = data[dayNumber]['groups']
+            const isKz = user_language === 'kz' || user_language === 'каз';
+            const daysRu = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+            const daysKz = ['Дүйсенбі', 'Сейсенбі', 'Сәрсенбі', 'Бейсенбі', 'Жұма', 'Сенбі'];
+            const daysList = isKz ? daysKz : daysRu;
+            const schedule_day = daysList[dayNumber] || data[dayNumber]?.['day'];
+            const preSchedule = data[dayNumber]?.['groups'] || [];
 
             const schedule = preSchedule.filter(obj => obj.group !== '')
 
@@ -379,9 +383,10 @@ class TeacherScheduleController {
                     // Прошло >= 5 минут (или кэша нет) — скачиваем свежее расписание
                     // ТАБЛИЦА НЕДЕЛИ НЕ ЗАТРАГИВАЕТСЯ И НЕ СБРАСЫВАЕТСЯ!
                     try {
+                        const user_language = await userService.getUserLanguage(call.message.chat.id);
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
-                        const response = await downloadSchedule(teacherId);
+                        const response = await downloadSchedule(teacherId, user_language);
                         const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
                         const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
@@ -424,9 +429,10 @@ class TeacherScheduleController {
                 } else {
                     // Кэш отсутствует или старше 30 минут — скачиваем с сайта
                     try {
+                        const user_language = await userService.getUserLanguage(call.message.chat.id);
                         const rawTeacher = cached?.teacher || await teacherService.getById(teacherId).catch(() => null);
                         const teacher = teacherDirectoryService.enrich(rawTeacher);
-                        const response = await downloadSchedule(teacherId);
+                        const response = await downloadSchedule(teacherId, user_language);
                         const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
                         const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                         const enrichedData = await enrichTeacherSchedule(response.data, teacher);
@@ -631,7 +637,7 @@ class TeacherScheduleController {
                 }
 
                 try {
-                    const response = await downloadSchedule(teacherId);
+                    const response = await downloadSchedule(teacherId, user_language);
                     const isFromDb = Boolean(response.isFromDb || response.data?._fromDb);
                     const timestamp = (isFromDb && response.data?._updatedAt) ? new Date(response.data._updatedAt).getTime() : Date.now();
                     const enrichedData = await enrichTeacherSchedule(response.data, teacher);
@@ -672,7 +678,7 @@ class TeacherScheduleController {
                             teacher_table_cache[teacherId] = cached;
                         } else {
                             cached = {
-                                data: ScheduleApiAdapter.adaptTeacherSchedule([]),
+                                data: ScheduleApiAdapter.adaptTeacherSchedule([], user_language),
                                 timestamp: Date.now(),
                                 teacher,
                                 _enriched: true,

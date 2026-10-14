@@ -143,13 +143,16 @@ class ScheduleApiAdapter {
     /**
      * Адаптация записей API в формат расписания преподавателя для бота
      * @param {Array} records - Массив объектов records от API
+     * @param {string} language - Язык расписания ('рус' или 'каз')
      * @returns {Array} - 6 дней недели со списком занятий преподавателя
      */
-    adaptTeacherSchedule(records = []) {
+    adaptTeacherSchedule(records = [], language = 'рус') {
+        const isKz = language === 'каз' || language === 'kz';
+        const daysList = isKz ? this.daysKz : this.daysRu;
         const schedule = [];
 
         for (let dayNum = 1; dayNum <= 6; dayNum++) {
-            const dayName = this.daysRu[dayNum - 1];
+            const dayName = daysList[dayNum - 1];
             const dayRecords = records.filter(r => this.getDayIndex(r) === dayNum);
 
             dayRecords.sort((a, b) => (a.slot || 0) - (b.slot || 0));

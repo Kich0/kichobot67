@@ -6,9 +6,14 @@ import {updateDepartmentsCommandController} from "../controllers/commands/adminC
 import {updateTeachersCommandController} from "../controllers/commands/adminCommands/updateTeachers.js";
 import log from "../logging/logging.js";
 import cron from "node-cron";
-
+import config from "../../config.js";
 
 export async function runDailyDataUpdate(isStartup = false) {
+    if (!config.AUTO_KSU_AUTH || (config.AUTO_KSU_AUTH !== true && config.AUTO_KSU_AUTH !== 'true')) {
+        log.info("[Sync] Пропуск устаревшего обновления данных через скрейпер КарГУ: AUTO_KSU_AUTH отключен. Бот работает через официальный REST API.");
+        return;
+    }
+
     const startTime = Date.now();
     log.info(`[Sync] Начинаю ${isStartup ? "стартовое" : "ежедневное"} обновление данных из КарГУ.`);
 

@@ -70,7 +70,7 @@ router.get('/health', async (req, res) => {
         });
     }
 });
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', (req, res) => {
     try {
         // Проверка Secret Token Telegram для защиты от поддельных запросов
         const expectedToken = getWebhookSecretToken();
@@ -82,15 +82,19 @@ router.post('/webhook', async (req, res) => {
             }
         }
 
+        // Немедленно возвращаем 200 OK в Telegram, исключая таймауты и повторные штормовые запросы
+        res.sendStatus(200);
+
         const update = req.body;
         botHealthMonitor.updateActivity();
-        await bot.processUpdate(update);
-
-        return res.sendStatus(200);
+        Promise.resolve(bot.processUpdate(update)).catch(e => {
+            log.error('Error processing webhook update asynchronously', { stack: e.stack, update });
+        });
     } catch (e) {
         log.error('Error processing webhook update', { stack: e.stack, update: req.body });
-        // Всегда возвращаем 200, чтобы Telegram не входил в 24-часовой шторм повторов
-        return res.sendStatus(200);
+        if (!res.headersSent) {
+            res.sendStatus(200);
+        }
     }
 });
 router.post('/webhook/test', authMiddleware, async (req, res) => {
