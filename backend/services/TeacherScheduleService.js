@@ -162,10 +162,14 @@ class TeacherScheduleService {
             if (teacher && teacher.name) {
                 const apiData = await BuketovApiService.getTeacherSchedule(teacher.name);
                 if (apiData && Array.isArray(apiData.records)) {
-                    // Возвращаем расписание даже если records пуст (0 пар = 6 дней каникул/свободно)
-                    const schedule = ScheduleApiAdapter.adaptTeacherSchedule(apiData.records, language);
-                    schedule._fromDb = false;
-                    return schedule;
+                    if (apiData.records.length === 0 && apiData._fromDb) {
+                        // Резерв MongoDB через BuketovApiService не нашел расписания — переходим к шагу 2
+                    } else {
+                        // Возвращаем расписание даже если records пуст (0 пар = 6 дней каникул/свободно)
+                        const schedule = ScheduleApiAdapter.adaptTeacherSchedule(apiData.records, language);
+                        schedule._fromDb = Boolean(apiData._fromDb);
+                        return schedule;
+                    }
                 }
             }
         } catch (apiErr) {

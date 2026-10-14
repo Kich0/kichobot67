@@ -169,9 +169,9 @@ class ScheduleService {
                 if (apiData && Array.isArray(apiData.records)) {
                     if (apiData.records.length > 0) {
                         const schedule = ScheduleApiAdapter.adaptGroupSchedule(apiData.records, language);
-                        schedule._fromDb = false;
+                        schedule._fromDb = Boolean(apiData._fromDb);
                         return schedule;
-                    } else {
+                    } else if (!apiData._fromDb) {
                         // Официальный API успешно ответил (200 OK), но записей расписания для этой группы нет
                         const err = new Error(`У группы ${currentGroup.name} нет расписания`);
                         err.code = 'NO_SCHEDULE';

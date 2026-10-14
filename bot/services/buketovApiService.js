@@ -24,6 +24,10 @@ class BuketovApiService {
         this.FAILURE_THRESHOLD = 2; // 2 подряд сбоя -> трип
         this.REQUEST_TIMEOUT_MS = 4500; // 4.5 секунды таймаут запроса (AbortController)
 
+        // Outbound Rate Limiter (Железный предохранитель 110 req/min)
+        this.MAX_REQUESTS_PER_MINUTE = 110;
+        this.outboundRequestTimestamps = [];
+
         // Фоновая очистка протухших записей кэша раз в 5 минут
         setInterval(() => {
             const now = Date.now();
@@ -96,6 +100,24 @@ class BuketovApiService {
     }
 
     /**
+     * Проверка скользящего 60-секундного окна исходящих сетевых запросов.
+     * Возвращает false, если достигнут защитный лимит (>= 110 req/min).
+     */
+    checkRateLimit() {
+        const now = Date.now();
+        const cutoff = now - 60000;
+        this.outboundRequestTimestamps = this.outboundRequestTimestamps.filter(ts => ts > cutoff);
+        return this.outboundRequestTimestamps.length < this.MAX_REQUESTS_PER_MINUTE;
+    }
+
+    /**
+     * Публичный метод проверки возможности сделать сетевой запрос к API КарУ прямо сейчас.
+     */
+    canMakeApiCall() {
+        return this.checkRateLimit() && this.circuitState !== 'API_DOWN';
+    }
+
+    /**
      * Очистка звания преподавателя для точного совпадения в API
      * Например: "ст.преп. Попова Н. В." -> "Попова Н. В."
      */
@@ -105,9 +127,149 @@ class BuketovApiService {
     }
 
     /**
-     * Выполнение запроса к /api/v1/schedule с разделенным RAM-кэшем и Circuit Breaker
+     * Преобразование расписания группы из MongoDB в формат записей API
+     */
+    _dbScheduleToRecords(days = [], groupName = '') {
+        const records = [];
+        const dayMap = {
+            'понедельник': 1, 'дүйсенбі': 1,
+            'вторник': 2, 'сейсенбі': 2,
+            'среда': 3, 'сәрсенбі': 3,
+            'четверг': 4, 'бейсенбі': 4,
+            'пятница': 5, 'жұма': 5,
+            'суббота': 6, 'сенбі': 6,
+            'воскресенье': 7, 'жексенбі': 7
+        };
+
+        for (const d of days) {
+            const dayName = (d.day || '').trim();
+            const dayIndex = dayMap[dayName.toLowerCase()] || 0;
+            if (Array.isArray(d.subjects)) {
+                for (let slotIdx = 0; slotIdx < d.subjects.length; slotIdx++) {
+                    const item = d.subjects[slotIdx];
+                    if (!item || !item.subject || !item.subject.trim()) continue;
+
+                    const lines = item.subject.split('\n').map(l => l.trim()).filter(Boolean);
+                    const discipline = lines[0] || '';
+                    const teacher = lines[1] || '';
+                    const roomInfo = lines[2] || '';
+
+                    records.push({
+                        day: dayName,
+                        dayIndex,
+                        slot: slotIdx + 1,
+                        time: item.time || '',
+                        discipline,
+                        teacher,
+                        room: roomInfo,
+                        group: groupName
+                    });
+                }
+            }
+        }
+        return records;
+    }
+
+    /**
+     * Преобразование расписания преподавателя из MongoDB в формат записей API
+     */
+    _dbTeacherScheduleToRecords(days = [], teacherName = '') {
+        const records = [];
+        const dayMap = {
+            'понедельник': 1, 'дүйсенбі': 1,
+            'вторник': 2, 'сейсенбі': 2,
+            'среда': 3, 'сәрсенбі': 3,
+            'четверг': 4, 'бейсенбі': 4,
+            'пятница': 5, 'жұма': 5,
+            'суббота': 6, 'сенбі': 6,
+            'воскресенье': 7, 'жексенбі': 7
+        };
+
+        for (const d of days) {
+            const dayName = (d.day || '').trim();
+            const dayIndex = dayMap[dayName.toLowerCase()] || 0;
+            if (Array.isArray(d.groups)) {
+                for (let slotIdx = 0; slotIdx < d.groups.length; slotIdx++) {
+                    const item = d.groups[slotIdx];
+                    if (!item || (!item.group && !item.subject)) continue;
+
+                    records.push({
+                        day: dayName,
+                        dayIndex,
+                        slot: slotIdx + 1,
+                        time: item.time || '',
+                        discipline: item.subject || '',
+                        teacher: teacherName,
+                        group: item.group || '',
+                        lessonType: item.lessonType || ''
+                    });
+                }
+            }
+        }
+        return records;
+    }
+
+    /**
+     * Резервное получение расписания из MongoDB при исчерпании лимита API (110 req/min)
+     */
+    async fetchScheduleFromDb(params = {}, cacheType = null) {
+        const isTeacher = cacheType === 'teacher' || !!params.teacher || !!params.q;
+
+        try {
+            if (isTeacher) {
+                const teacherQuery = params.teacher || params.q;
+                if (teacherQuery) {
+                    const { Teacher } = await import("../models/teacher.js");
+                    const { TeacherSchedule } = await import("../models/teacherSchedule.js");
+
+                    const cleanName = this.cleanTeacherName(teacherQuery);
+                    const surname = cleanName.split(/[\s.]+/).filter(Boolean)[0] || cleanName;
+
+                    const teacherDoc = await Teacher.findOne({ name: new RegExp(surname, 'i') }).lean().catch(() => null);
+                    if (teacherDoc) {
+                        const dbDoc = await TeacherSchedule.findOne({ teacherId: teacherDoc.id }).lean().catch(() => null);
+                        if (dbDoc && Array.isArray(dbDoc.data)) {
+                            const records = this._dbTeacherScheduleToRecords(dbDoc.data, teacherDoc.name);
+                            return { records, total: records.length, _fromDb: true };
+                        }
+                    }
+                }
+            } else {
+                const groupName = params.group;
+                if (groupName) {
+                    const { Group } = await import("../models/group.js");
+                    const { Schedule } = await import("../models/schedule.js");
+
+                    const escaped = groupName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    const groupDoc = await Group.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean().catch(() => null);
+
+                    if (groupDoc) {
+                        const dbDoc = await Schedule.findOne({ groupId: groupDoc.id }).lean().catch(() => null);
+                        if (dbDoc && Array.isArray(dbDoc.data)) {
+                            const records = this._dbScheduleToRecords(dbDoc.data, groupDoc.name);
+                            return { records, total: records.length, _fromDb: true };
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            log.warn(`[BuketovApiService] Ошибка fetchScheduleFromDb: ${e.message}`);
+        }
+
+        return { records: [], total: 0, _fromDb: true };
+    }
+
+    /**
+     * Публичный интерфейс запроса расписания (делегирует в fetchScheduleFromApi)
      */
     async fetchSchedule(params = {}, cacheType = null) {
+        return this.fetchScheduleFromApi(params, cacheType);
+    }
+
+    /**
+     * Выполнение запроса к /api/v1/schedule с защитным лимитом 110 req/min, RAM-кэшем и Circuit Breaker
+     */
+    async fetchScheduleFromApi(params = {}, cacheType = null) {
         // Определяем изолированный партиционированный кэш
         const isTeacher = cacheType === 'teacher' || !!params.teacher || !!params.q;
         const targetCache = isTeacher ? this.teacherCache : this.studentCache;
@@ -147,6 +309,15 @@ class BuketovApiService {
                 log.info(`[BuketovApiService] Circuit Breaker: 2 минуты прошло, переход в HALF_OPEN (тестовый запрос к API).`);
             }
         }
+
+        // 3. Железный предохранитель 110 req/min (Outbound Sliding Window Rate Limiter)
+        if (!this.checkRateLimit()) {
+            log.warn(`[BuketovApiService] ⚠️ Достигнут защитный лимит 110 запросов/мин (максимум API 120). Временный fallback на MongoDB.`);
+            return await this.fetchScheduleFromDb(params, cacheType);
+        }
+
+        // Фиксируем временную метку разрешенного сетевого вызова
+        this.outboundRequestTimestamps.push(Date.now());
 
         const headers = {
             'Accept': 'application/json',
