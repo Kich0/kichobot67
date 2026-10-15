@@ -2,7 +2,6 @@ import { Group } from "../models/group.js";
 import { Schedule } from "../models/schedule.js";
 import scheduleService from "./scheduleService.js";
 import log from "../logging/logging.js";
-import BackendScheduleService from "../../backend/services/ScheduleService.js";
 
 /**
  * Нормализовать строку времени для надёжного сравнения:

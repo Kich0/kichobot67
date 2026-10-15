@@ -13,7 +13,6 @@ import dns from "dns";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
-import bodyParser from "body-parser";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -24,11 +23,8 @@ import config from "./config.js";
 
 // === Backend imports ===
 import backendDb from "./backend/db/connection.js";
-import backendRouter from "./backend/router.js";
 import backendErrorMiddleware from "./backend/middlewares/errorMiddleware.js";
 import backendLog from "./backend/logging/logging.js";
-import { setupKsuReAuth } from "./backend/cron/ksuReAuth.js";
-import FreeProxyService from "./backend/services/FreeProxyService.js";
 
 // === Bot imports ===
 import TelegramBot from "node-telegram-bot-api";
@@ -103,7 +99,7 @@ app.set('trust proxy', 1);
 app.use(cors({ origin: '*', optionsSuccessStatus: 200 }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
-app.use(bodyParser.text({ type: 'text/html', limit: '5mb' }));
+app.use(express.text({ type: 'text/html', limit: '5mb' }));
 
 // Логирование запросов (исключая частые health-check пинги от Render / мониторинга)
 app.use((req, res, next) => {
@@ -113,9 +109,6 @@ app.use((req, res, next) => {
     }
     next();
 });
-
-// === Backend routes (расписание, WebApp API) ===
-app.use('/express/api', backendRouter);
 
 // === Bot routes (webhook, health, WebApp API) ===
 app.use('/bot', botRouter);
@@ -140,7 +133,6 @@ const appStart = async () => {
         const port = config.PORT;
         const server = app.listen(port, async () => {
             backendLog.info(`🚀 Kichobot UNIFIED server started on port ${port}`);
-            backendLog.info(`   Backend API: http://localhost:${port}/express/api/`);
             backendLog.info(`   Bot routes:  http://localhost:${port}/bot/`);
 
             // Настройка webhook если нужно
@@ -153,11 +145,6 @@ const appStart = async () => {
                 }, 60 * 1000);
             }
         });
-
-        // === Backend cron & Proxy pool ===
-        // Отключены: бот переведён на официальный JSON REST API КарУ (прокси и куки больше не нужны)
-        // await setupKsuReAuth();
-        // if (config.USE_FREE_PROXIES) { FreeProxyService.initPool().catch(...); }
 
         // === Bot initialization ===
         await i18nextInit();
