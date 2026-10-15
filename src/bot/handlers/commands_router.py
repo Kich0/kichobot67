@@ -23,6 +23,23 @@ from src.services.user_service import user_service
 commands_router = Router(name="commands_router")
 
 
+async def remove_reply_keyboard_safely(message: Message) -> None:
+    """Removes reply keyboard from user client by briefly sending ReplyKeyboardRemove."""
+    try:
+        bot = getattr(message, "bot", None) or getattr(message, "_bot", None)
+        chat_id = message.chat.id if message.chat else None
+        if bot and hasattr(bot, "send_message") and chat_id:
+            tmp = await bot.send_message(chat_id=chat_id, text="⏳", reply_markup=ReplyKeyboardRemove())
+            if hasattr(tmp, "delete"):
+                await tmp.delete()
+        else:
+            tmp = await message.answer("⏳", reply_markup=ReplyKeyboardRemove())
+            if hasattr(tmp, "delete"):
+                await tmp.delete()
+    except Exception:
+        pass
+
+
 @commands_router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     """Handles /start command: sends bilingual language selector with inline keyboard."""
@@ -54,9 +71,18 @@ async def handle_start(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:[💡❓⚠️\u26A0\uFE0F\s])*(?:Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)", flags=2))
 async def handle_help(message: Message) -> None:
     """Handles /help command and help text triggers."""
+    try:
+        await message.delete()
+    except Exception:
+        pass
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
-    await message.answer(t("help_command_content", lang), parse_mode="HTML", disable_web_page_preview=True)
+    await message.answer(
+        t("help_command_content", lang),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 @commands_router.message(Command("profile"))
@@ -160,6 +186,14 @@ async def handle_settings(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^🗒\s*(?:Новое расписание|Жаңа кесте)", flags=2))
 async def handle_new_schedule(message: Message) -> None:
     """Handles /new and '🗒 Новое расписание' / '🗒 Жаңа кесте' command, opening student vs teacher picker."""
+    is_reply_button = bool(message.text and not message.text.startswith("/"))
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if is_reply_button:
+        await remove_reply_keyboard_safely(message)
+
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
 
@@ -180,6 +214,14 @@ async def handle_new_schedule(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание преподавателя|Оқытушының кестесі)|[Пп]реподаватель|[Оо]қытушы)$"))
 async def handle_teacher_menu(message: Message) -> None:
     """Handles /teacher and '🗓 Расписание преподавателя' / '🗓 Оқытушының кестесі'."""
+    is_reply_button = bool(message.text and not message.text.startswith("/"))
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if is_reply_button:
+        await remove_reply_keyboard_safely(message)
+
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     user_doc = await user_service.get_or_create_user(user_id)
@@ -240,6 +282,14 @@ async def handle_teacher_menu(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание студента|Студенттің кестесі)|[Гг]руппа|[Тт]обы)$"))
 async def handle_group_menu(message: Message) -> None:
     """Handles /group and '🗓 Расписание студента' / '🗓 Студенттің кестесі'."""
+    is_reply_button = bool(message.text and not message.text.startswith("/"))
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if is_reply_button:
+        await remove_reply_keyboard_safely(message)
+
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     user_doc = await user_service.get_or_create_user(user_id)
@@ -410,6 +460,10 @@ async def handle_search_help(message: Message) -> None:
 @commands_router.message(Command("remove"))
 async def handle_remove_keyboard(message: Message) -> None:
     """Removes reply keyboard."""
+    try:
+        await message.delete()
+    except Exception:
+        pass
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     await message.answer(
@@ -432,4 +486,5 @@ __all__ = [
     "handle_start",
     "handle_teacher_menu",
     "handle_teacher_search_prefix",
+    "remove_reply_keyboard_safely",
 ]

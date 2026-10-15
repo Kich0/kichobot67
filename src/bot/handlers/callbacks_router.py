@@ -26,7 +26,9 @@ from cachetools import TTLCache
 from src.services.group_sorting import sort_groups, sort_teachers
 
 from src.bot.keyboards.inline import (
+    _get_attr,
     get_departments_keyboard,
+    get_domain_id,
     get_faculties_keyboard,
     get_groups_keyboard,
     get_language_keyboard,
@@ -38,7 +40,16 @@ from src.bot.keyboards.inline import (
     get_teachers_keyboard,
 )
 from src.bot.keyboards.reply import get_main_reply_keyboard
+from src.bot.middlewares.user_action_logger import (
+    register_department_name,
+    register_faculty_name,
+    register_group_name,
+    register_program_name,
+    register_teacher_name,
+)
 from src.core.constants import (
+    CACHE_CAPACITY_STUDENT_GROUPS,
+    CACHE_CAPACITY_TEACHERS,
     COOLDOWN_STUDENT_REFRESH,
     COOLDOWN_TEACHER_IMAGE_REFRESH,
     COOLDOWN_TEACHER_TEXT_REFRESH,
@@ -348,6 +359,11 @@ async def handle_faculty_menu(call: CallbackQuery) -> None:
         from src.database.models.faculty import Faculty
 
         faculties = await Faculty.find().sort("id").to_list()
+        for f in faculties:
+            f_id = get_domain_id(f, "faculty_id")
+            f_name = _get_attr(f, "name") or _get_attr(f, "fullName")
+            if f_id and f_name:
+                register_faculty_name(f_id, f_name)
     except Exception:
         faculties = []
 
@@ -375,8 +391,16 @@ async def handle_program_menu(call: CallbackQuery) -> None:
         from src.database.models.program import Program
 
         programs = await Program.find({"faculty": faculty_id}).sort("name").to_list()
+        for p in programs:
+            p_id = get_domain_id(p, "program_id")
+            p_name = _get_attr(p, "name")
+            if p_id and p_name:
+                register_program_name(p_id, p_name)
+
         faculty = await Faculty.find_one({"id": faculty_id})
         faculty_name = faculty.name if faculty else f"ID {faculty_id}"
+        if faculty_id and faculty_name:
+            register_faculty_name(faculty_id, faculty_name)
     except Exception:
         programs = []
         faculty_name = f"ID {faculty_id}"
@@ -407,8 +431,16 @@ async def handle_group_menu(call: CallbackQuery) -> None:
 
         raw_groups = await Group.find({"program": program_id}).to_list()
         groups = sort_groups(raw_groups)
+        for g in groups:
+            g_id = get_domain_id(g, "group_id")
+            g_name = _get_attr(g, "name")
+            if g_id and g_name:
+                register_group_name(g_id, g_name)
+
         program = await Program.find_one({"id": program_id})
         program_name = program.name if program else f"ID {program_id}"
+        if program_id and program_name:
+            register_program_name(program_id, program_name)
     except Exception:
         groups = []
         program_name = f"ID {program_id}"
@@ -599,6 +631,8 @@ async def build_student_day_schedule_view(
         if g_doc:
             if not group_name and getattr(g_doc, "name", None):
                 grp_name = g_doc.name
+            if grp_name and group_id:
+                register_group_name(group_id, grp_name)
             prog_id = getattr(g_doc, "program", None)
             fac_id = getattr(g_doc, "faculty", None)
             if prog_id:
@@ -772,6 +806,11 @@ async def handle_department_menu(call: CallbackQuery) -> None:
         from src.database.models.department import Department
 
         departments = await Department.find().sort("name").to_list()
+        for d in departments:
+            d_id = get_domain_id(d, "department_id")
+            d_name = _get_attr(d, "name")
+            if d_id and d_name:
+                register_department_name(d_id, d_name)
     except Exception:
         departments = []
 
@@ -806,12 +845,20 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
 
         raw_teachers = await Teacher.find({"department": dept_id}).to_list()
         teachers = [
-            teacher_directory_service.enrich(t.model_dump(by_alias=True) if hasattr(t, "model_dump") else t)
-            for t in raw_teachers
+            teacher_directory_service.enrich(raw_t.model_dump(by_alias=True) if hasattr(raw_t, "model_dump") else raw_t)
+            for raw_t in raw_teachers
         ]
         teachers = sort_teachers(teachers)
+        for tch in teachers:
+            tch_id = get_domain_id(tch, "teacher_id")
+            tch_name = _get_attr(tch, "fullName") or _get_attr(tch, "name")
+            if tch_id and tch_name:
+                register_teacher_name(tch_id, tch_name)
+
         dept = await Department.find_one({"id": dept_id})
         dept_name = dept.name if dept else f"ID {dept_id}"
+        if dept_id and dept_name:
+            register_department_name(dept_id, dept_name)
     except Exception:
         teachers = []
         dept_name = f"ID {dept_id}"
@@ -979,6 +1026,9 @@ async def build_teacher_day_text_view(
     if is_head and not job_title:
         job_title = "Кафедра меңгерушісі" if ui_lang in ("kz", "каз") else "Заведующий кафедрой"
 
+    if teacher_id and tch_name:
+        register_teacher_name(teacher_id, tch_name)
+
     title_part = f" ({job_title})" if job_title else ""
     header = f"👥 <b>{tch_name}</b>{title_part}\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
 
@@ -1078,6 +1128,8 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         if t_doc:
             enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
             teacher_name = enriched.get("fullName") or t_doc.name
+            if teacher_id and teacher_name:
+                register_teacher_name(teacher_id, teacher_name)
             dept_id = t_doc.department or 0
     except Exception:
         pass
@@ -1289,6 +1341,8 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
 
 
 __all__ = [
+    "_bg_persist_student_schedule",
+    "_bg_persist_teacher_schedule",
     "build_student_day_schedule_view",
     "build_teacher_day_text_view",
     "callbacks_router",

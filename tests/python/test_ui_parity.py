@@ -422,3 +422,36 @@ async def test_teacher_table_image_caption_parity(mock_db):
     assert "Загруженность:" not in caption_kz
     assert "🕒 <i><b>" in caption_kz
 
+
+def test_export_script_almaty_timezone_and_retroactive_callback_parsing():
+    from scratch.export_database_to_drive import (
+        ALMATY_TZ,
+        format_date,
+        json_serializer,
+        deduplicate_actions,
+    )
+
+    # 1. format_date converts UTC datetime to Asia/Almaty (UTC+5)
+    utc_dt = datetime(2026, 9, 1, 10, 0, 0, tzinfo=timezone.utc)
+    formatted = format_date(utc_dt)
+    assert formatted == "01.09.2026 15:00:00"
+
+    # ISO string with 'Z'
+    formatted_iso = format_date("2026-09-01T10:00:00Z")
+    assert formatted_iso == "01.09.2026 15:00:00"
+
+    # 2. json_serializer explicitly includes +05:00 offset
+    serialized = json_serializer(utc_dt)
+    assert serialized == "2026-09-01T15:00:00+05:00"
+
+    # 3. deduplicate_actions deduplicates by userId+timeKey+action+text
+    raw_actions = [
+        {"userId": 1, "createdAt": "2026-09-01T10:00:00Z", "action": "button", "text": "group|10|61|0"},
+        {"userId": 1, "createdAt": "2026-09-01T10:00:00Z", "action": "button", "text": "group|10|61|0"},
+        {"userId": 1, "createdAt": "2026-09-01T10:05:00Z", "action": "button", "text": "schedule|рус|6474|0"},
+    ]
+    actions, dupes = deduplicate_actions(raw_actions)
+    assert len(actions) == 2
+    assert dupes == 1
+
+

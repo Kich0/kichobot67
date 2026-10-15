@@ -5,13 +5,20 @@ from datetime import datetime, timezone
 import time
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from aiogram.types import CallbackQuery, Chat, Message, PhotoSize, User
+from aiogram.types import Animation, Audio, CallbackQuery, Chat, Document, Message, PhotoSize, Sticker, User, Voice
 
 from src.bot.middlewares.message_gate import MessageGateMiddleware
 from src.bot.middlewares.user_action_logger import (
     UserActionLoggingMiddleware,
+    describe_callback_query,
     format_capped_text,
     get_media_category,
+    register_department_name,
+    register_faculty_name,
+    register_group_name,
+    register_program_name,
+    register_teacher_name,
+    user_action_logging_middleware,
 )
 from src.database.models.black_list import BlackList
 from src.database.models.user_action import UserAction
@@ -219,3 +226,245 @@ async def test_user_action_logger_middleware(mock_db, dummy_user, dummy_chat):
     assert len(records2) == 2
     rec2 = [r for r in records2 if r.text == "ИС-21-1"][0]
     assert rec2.is_first is False
+
+
+def test_describe_callback_query_all_types():
+    register_faculty_name(10, "Физико-технический")
+    register_program_name(61, "Радиотехника")
+    register_group_name(6474, "РЭТ-21")
+    register_department_name(5, "Кафедра физики")
+    register_teacher_name(101, "Иванов И.И.")
+
+    # start, delete, nothing
+    act, text, _, _ = describe_callback_query("start")
+    assert act == "start_menu"
+    assert "главный экран" in text
+
+    act, text, _, _ = describe_callback_query("delete")
+    assert act == "delete_message"
+    assert "Удалил сообщение" in text
+
+    act, text, _, _ = describe_callback_query("nothing")
+    assert act == "nothing"
+
+    # faculty
+    act, text, fid, fname = describe_callback_query("faculty|0")
+    assert act == "faculty_menu"
+    assert "стр. 1" in text
+
+    # program
+    act, text, pid, pname = describe_callback_query("program|10|0")
+    assert act == "program_menu"
+    assert "Физико-технический" in text
+
+    # group
+    act, text, gid, gname = describe_callback_query("group|10|61|0")
+    assert act == "group_menu"
+    assert "Радиотехника" in text
+
+    # schedule & refresh_schedule
+    act, text, gid, gname = describe_callback_query("schedule|рус|6474|0")
+    assert act == "view_group"
+    assert "РЭТ-21" in text
+    assert "Понедельник" in text
+
+    act, text, gid, gname = describe_callback_query("refresh_schedule|рус|6474|1")
+    assert act == "refresh_group"
+    assert "РЭТ-21" in text
+    assert "Вторник" in text
+
+    # department
+    act, text, _, _ = describe_callback_query("department|1")
+    assert act == "department_menu"
+    assert "стр. 2" in text
+
+    # teacher
+    act, text, did, dname = describe_callback_query("teacher|5|0")
+    assert act == "teacher_menu"
+    assert "Кафедра физики" in text
+
+    # TeacherSchedule & refreshTeacherSchedule
+    act, text, tid, tname = describe_callback_query("TeacherSchedule|101|2")
+    assert act == "view_teacher"
+    assert "Иванов И.И." in text
+    assert "Среда" in text
+
+    act, text, tid, tname = describe_callback_query("refreshTeacherSchedule|101|3")
+    assert act == "refresh_teacher"
+    assert "Иванов И.И." in text
+    assert "Четверг" in text
+
+    # teacherImg, refreshteacherImg, teacherText, profile
+    act, text, tid, tname = describe_callback_query("teacherImg|101")
+    assert act == "view_teacher_image"
+    assert "Иванов И.И." in text
+
+    act, text, tid, tname = describe_callback_query("refreshteacherImg|101")
+    assert act == "refresh_teacher_image"
+    assert "Иванов И.И." in text
+
+    act, text, tid, tname = describe_callback_query("teacherText|101")
+    assert act == "view_teacher_text"
+    assert "Иванов И.И." in text
+
+    act, text, tid, tname = describe_callback_query("profile|101")
+    assert act == "view_profile"
+    assert "Иванов И.И." in text
+
+    # chooseScheduleLanguage
+    act, text, gid, gname = describe_callback_query("chooseScheduleLanguage|рус|6474|0")
+    assert act == "choose_schedule_language"
+    assert "РЭТ-21" in text
+
+    # searchGroup & searchTeacher
+    act, text, _, _ = describe_callback_query("searchGroup|ФИЗ|0")
+    assert act == "search_group_page"
+    assert "ФИЗ" in text
+
+    act, text, _, _ = describe_callback_query("searchTeacher|Ахметов|1")
+    assert act == "search_teacher_page"
+    assert "Ахметов" in text
+
+    # languageIs
+    act, text, _, _ = describe_callback_query("languageIskz")
+    assert act == "change_language"
+    assert "Қазақша" in text
+
+    act, text, _, _ = describe_callback_query("languageIsru")
+    assert act == "change_language"
+    assert "Русский" in text
+
+    # language_select
+    act, text, _, _ = describe_callback_query("language_select")
+    assert act == "language_menu"
+    assert "выбора языка" in text
+
+    # 2-part schedule and refreshschedule format
+    act, text, gid, gname = describe_callback_query("schedule|6474|0")
+    assert act == "view_group"
+    assert gid == 6474
+    assert "РЭТ-21" in text
+    assert "Понедельник" in text
+
+    act, text, gid, gname = describe_callback_query("refreshschedule|6474|1")
+    assert act == "refresh_group"
+    assert gid == 6474
+    assert "РЭТ-21" in text
+    assert "Вторник" in text
+
+    act, text, gid, gname = describe_callback_query("chooseScheduleLanguage|6474|0")
+    assert act == "choose_schedule_language"
+    assert gid == 6474
+    assert "РЭТ-21" in text
+
+    # String day name in callback
+    act, text, gid, gname = describe_callback_query("schedule|рус|6474|среда")
+    assert act == "view_group"
+    assert "Среда" in text
+
+    # refreshchooseScheduleLanguage
+    act, text, gid, gname = describe_callback_query("refreshchooseScheduleLanguage|рус|6474|2")
+    assert act == "refresh_group"
+    assert gid == 6474
+    assert "РЭТ-21" in text
+    assert "Среда" in text
+
+    # Case-insensitive callbacks
+    act, text, tid, tname = describe_callback_query("teacherschedule|101|1")
+    assert act == "view_teacher"
+    assert tid == 101
+    assert "Вторник" in text
+
+    act, text, tid, tname = describe_callback_query("refreshteacherschedule|101|2")
+    assert act == "refresh_teacher"
+    assert tid == 101
+    assert "Среда" in text
+
+    act, text, tid, tname = describe_callback_query("refreshTeacherImg|101")
+    assert act == "refresh_teacher_image"
+    assert tid == 101
+
+
+@pytest.mark.asyncio
+async def test_user_action_logging_menu_button_prefixes(dummy_user, dummy_chat):
+    from unittest.mock import patch
+    from src.bot.middlewares.user_action_logger import user_action_logging_middleware
+
+    handler = AsyncMock(return_value="OK")
+    with patch.object(user_action_logging_middleware, "log_action", AsyncMock()) as mock_log:
+        msg = make_message(dummy_user, dummy_chat, text="❓ Помощь")
+        await user_action_logging_middleware(handler, msg, {})
+        mock_log.assert_awaited_once()
+        args, _ = mock_log.call_args
+        assert args[2] == "menu_button"
+        assert args[3] == "❓ Помощь"
+async def test_message_gate_media_logging(dummy_user, dummy_chat):
+    gate = MessageGateMiddleware(throttle_interval=0.0)
+    handler = AsyncMock(return_value="OK")
+
+    from unittest.mock import patch
+    with patch.object(user_action_logging_middleware, "log_action", MagicMock()) as mock_log:
+        photo = [PhotoSize(file_id="p1", file_unique_id="pu1", width=100, height=100)]
+        msg = make_message(dummy_user, dummy_chat, text=None, photo=photo)
+        object.__setattr__(msg, "caption", "Мое фото")
+
+        res = await gate(handler, msg, {})
+        assert res is None
+        assert msg.answer.call_count == 1
+        assert "Бот принимает только текст" in msg.answer.call_args[0][0]
+        assert handler.call_count == 0
+        mock_log.assert_called_once()
+        args, _ = mock_log.call_args
+        assert args[0] == dummy_user.id
+        assert args[2] == "media_photo"
+        assert '[Медиа: фото] "Мое фото"' in args[3]
+
+
+@pytest.mark.asyncio
+async def test_message_gate_long_text_logging(dummy_user, dummy_chat):
+    gate = MessageGateMiddleware(throttle_interval=0.0, max_text_length=250)
+    handler = AsyncMock(return_value="OK")
+
+    from unittest.mock import patch
+    with patch.object(user_action_logging_middleware, "log_action", MagicMock()) as mock_log:
+        long_text = "Текст сообщения " * 20  # > 250 chars
+        msg = make_message(dummy_user, dummy_chat, text=long_text)
+
+        res = await gate(handler, msg, {})
+        assert res is None
+        assert msg.answer.call_count == 1
+        assert "Слишком длинное сообщение" in msg.answer.call_args[0][0]
+        assert handler.call_count == 0
+        mock_log.assert_called_once()
+        args, _ = mock_log.call_args
+        assert args[0] == dummy_user.id
+        assert args[2] == "long_text_rejected"
+        assert "[Слишком длинное сообщение" in args[3]
+
+
+@pytest.mark.asyncio
+async def test_message_gate_spam_ban_logging(dummy_user, dummy_chat):
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=10.0,
+        spam_max_requests=8,
+        ban_duration=60.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    from unittest.mock import patch
+    with patch.object(user_action_logging_middleware, "log_action", MagicMock()) as mock_log:
+        for i in range(8):
+            msg = make_message(dummy_user, dummy_chat, f"Сообщение {i}")
+            await gate(handler, msg, {})
+
+        msg_ban = make_message(dummy_user, dummy_chat, "Спам блокировка")
+        res = await gate(handler, msg_ban, {})
+        assert res is None
+        assert gate.is_user_banned(dummy_user.id)
+        mock_log.assert_called_once()
+        args, _ = mock_log.call_args
+        assert args[0] == dummy_user.id
+        assert args[2] == "spam_blocked"
+        assert "Временный бан на 60 сек" in args[3]
+

@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from aiogram.types import CallbackQuery, Chat, Message, User
+from aiogram.types import CallbackQuery, Chat, Message, ReplyKeyboardRemove, User
 
 from src.bot.handlers.admin_router import (
     handle_ahelp,
@@ -550,3 +550,69 @@ async def test_mongodb_pydantic_model_fallback_without_error(mock_db):
         assert cached_t["is_from_db"] is True
         assert isinstance(cached_t["data"], list)
         assert cached_t["data"][0]["day"] in ("Вторник", "Дүйсенбі")
+
+
+@pytest.mark.asyncio
+async def test_reply_menu_button_deletes_incoming_message_and_removes_keyboard(mock_db):
+    from src.bot.handlers.commands_router import handle_group_menu, handle_teacher_menu
+
+    # 1. '🗒 Новое расписание'
+    msg = make_message(text="🗒 Новое расписание")
+    await handle_new_schedule(msg)
+    msg.delete.assert_awaited_once()
+    assert msg.answer.call_count == 1
+    assert msg._bot.send_message.call_count == 1
+    bot_call_kwargs = msg._bot.send_message.call_args[1]
+    assert isinstance(bot_call_kwargs["reply_markup"], ReplyKeyboardRemove)
+
+    # 2. '🗓 Расписание студента'
+    msg_grp = make_message(text="🗓 Расписание студента")
+    await handle_group_menu(msg_grp)
+    msg_grp.delete.assert_awaited_once()
+    assert msg_grp._bot.send_message.call_count == 1
+    assert isinstance(msg_grp._bot.send_message.call_args[1]["reply_markup"], ReplyKeyboardRemove)
+
+    # 3. '🗓 Расписание преподавателя'
+    msg_tch = make_message(text="🗓 Расписание преподавателя")
+    await handle_teacher_menu(msg_tch)
+    msg_tch.delete.assert_awaited_once()
+    assert msg_tch._bot.send_message.call_count == 1
+    assert isinstance(msg_tch._bot.send_message.call_args[1]["reply_markup"], ReplyKeyboardRemove)
+
+
+@pytest.mark.asyncio
+async def test_help_command_deletes_incoming_message_and_attaches_reply_keyboard_remove(mock_db):
+    # /help
+    msg = make_message(text="/help")
+    await handle_help(msg)
+    msg.delete.assert_awaited_once()
+    assert msg.answer.call_count == 1
+    answer_kwargs = msg.answer.call_args[1]
+    assert isinstance(answer_kwargs["reply_markup"], ReplyKeyboardRemove)
+
+    # Reply button '❓ Помощь'
+    msg_btn = make_message(text="❓ Помощь")
+    await handle_help(msg_btn)
+    msg_btn.delete.assert_awaited_once()
+    assert msg_btn.answer.call_count == 1
+    assert isinstance(msg_btn.answer.call_args[1]["reply_markup"], ReplyKeyboardRemove)
+
+
+@pytest.mark.asyncio
+async def test_search_action_logging_integration(mock_db):
+    from src.bot.middlewares.user_action_logger import KNOWN_GROUPS, user_action_logging_middleware
+
+    grp = Group(id=5555, name="ЮР-21", language="ru")
+    await grp.insert()
+
+    msg = make_message(text="ЮР-21")
+    with patch.object(user_action_logging_middleware, "log_action", MagicMock()) as mock_log, \
+         patch("src.bot.handlers.callbacks_router.buketov_api_service.get_group_schedule", AsyncMock(return_value={"records": []})):
+        await handle_text_search(msg)
+        assert mock_log.call_count == 1
+        args, _ = mock_log.call_args
+        assert args[2] == "search_exact_group"
+        assert 'Поиск группы "ЮР-21": найдена группа "ЮР-21"' in args[3]
+        assert KNOWN_GROUPS.get(5555) == "ЮР-21"
+
+

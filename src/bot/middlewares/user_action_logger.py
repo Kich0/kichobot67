@@ -55,7 +55,387 @@ def get_media_category(msg: Message) -> tuple[str, str]:
     if msg.document:
         fname = f" {msg.document.file_name}" if msg.document.file_name else ""
         return "media_document", f"[Медиа: документ{fname}]"
+    if msg.contact:
+        return "media_contact", "[Медиа: контакт]"
+    if msg.location:
+        return "media_location", "[Медиа: геолокация]"
+    if msg.poll:
+        return "media_poll", "[Медиа: опрос]"
+    if msg.dice:
+        emoji_char = getattr(msg.dice, "emoji", "")
+        return "media_dice", f"[Медиа: эмодзи/кости {emoji_char}]".strip()
     return "media_other", "[Медиа: файл]"
+
+
+CALLBACK_DAY_NAMES = {
+    0: "Понедельник",
+    1: "Вторник",
+    2: "Среда",
+    3: "Четверг",
+    4: "Пятница",
+    5: "Суббота",
+    6: "Воскресенье",
+}
+
+DAY_NAME_LOOKUP = {
+    "0": "Понедельник", "1": "Вторник", "2": "Среда", "3": "Четверг", "4": "Пятница", "5": "Суббота", "6": "Воскресенье",
+    "понедельник": "Понедельник", "дүйсенбі": "Понедельник", "monday": "Понедельник", "mon": "Понедельник", "пн": "Понедельник",
+    "вторник": "Вторник", "сейсенбі": "Вторник", "tuesday": "Вторник", "tue": "Вторник", "вт": "Вторник",
+    "среда": "Среда", "сәрсенбі": "Среда", "wednesday": "Среда", "wed": "Среда", "ср": "Среда",
+    "четверг": "Четверг", "бейсенбі": "Четверг", "thursday": "Четверг", "thu": "Четверг", "чт": "Четверг",
+    "пятница": "Пятница", "жұма": "Пятница", "friday": "Пятница", "fri": "Пятница", "пт": "Пятница",
+    "суббота": "Суббота", "сенбі": "Суббота", "saturday": "Суббота", "sat": "Суббота", "сб": "Суббота",
+    "воскресенье": "Воскресенье", "жексенбі": "Воскресенье", "sunday": "Воскресенье", "sun": "Воскресенье", "вс": "Воскресенье",
+}
+
+
+def resolve_day_name(day_val: Any) -> str:
+    """Safely maps day numbers (0..6) or localized day name strings to standard Russian day names."""
+    if day_val is None:
+        return "Понедельник"
+    if isinstance(day_val, int):
+        return CALLBACK_DAY_NAMES.get(day_val, f"День {day_val + 1}")
+    val_str = str(day_val).strip().lower()
+    if val_str in DAY_NAME_LOOKUP:
+        return DAY_NAME_LOOKUP[val_str]
+    if val_str.isdigit():
+        idx = int(val_str)
+        return CALLBACK_DAY_NAMES.get(idx, f"День {idx + 1}")
+    return str(day_val)
+
+KNOWN_GROUPS: dict[int, str] = {}
+KNOWN_TEACHERS: dict[int, str] = {}
+KNOWN_FACULTIES: dict[int, str] = {}
+KNOWN_PROGRAMS: dict[int, str] = {}
+KNOWN_DEPARTMENTS: dict[int, str] = {}
+
+
+def register_group_name(group_id: int | str | None, name: str | None) -> None:
+    """Registers or updates human-readable group name for ID."""
+    if group_id is not None and name:
+        try:
+            KNOWN_GROUPS[int(group_id)] = str(name).strip()
+        except Exception:
+            pass
+
+
+def register_teacher_name(teacher_id: int | str | None, name: str | None) -> None:
+    """Registers or updates human-readable teacher name for ID."""
+    if teacher_id is not None and name:
+        try:
+            KNOWN_TEACHERS[int(teacher_id)] = str(name).strip()
+        except Exception:
+            pass
+
+
+def register_faculty_name(faculty_id: int | str | None, name: str | None) -> None:
+    """Registers or updates human-readable faculty name for ID."""
+    if faculty_id is not None and name:
+        try:
+            KNOWN_FACULTIES[int(faculty_id)] = str(name).strip()
+        except Exception:
+            pass
+
+
+def register_program_name(program_id: int | str | None, name: str | None) -> None:
+    """Registers or updates human-readable educational program name for ID."""
+    if program_id is not None and name:
+        try:
+            KNOWN_PROGRAMS[int(program_id)] = str(name).strip()
+        except Exception:
+            pass
+
+
+def register_department_name(department_id: int | str | None, name: str | None) -> None:
+    """Registers or updates human-readable department name for ID."""
+    if department_id is not None and name:
+        try:
+            KNOWN_DEPARTMENTS[int(department_id)] = str(name).strip()
+        except Exception:
+            pass
+
+
+def describe_callback_query(
+    call_data: str,
+    group_map: dict[int, str] | None = None,
+    teacher_map: dict[int, str] | None = None,
+    faculty_map: dict[int, str] | None = None,
+    program_map: dict[int, str] | None = None,
+    department_map: dict[int, str] | None = None,
+) -> tuple[str, str, int | None, str | None]:
+    """Translates technical callback string into a clear human-readable Russian description.
+
+    Returns:
+        tuple of (action_code, descriptive_text, entity_id, entity_name)
+    """
+    if not call_data:
+        return ("button_click", "Нажатие кнопки", None, None)
+
+    raw = str(call_data).strip()
+
+    # If already a human-readable action description, return as is
+    if (
+        raw.startswith("[")
+        or raw.startswith("🆕")
+        or raw.startswith("Открыл")
+        or raw.startswith("Обновил")
+        or raw.startswith("Выбор")
+        or raw.startswith("Сменил")
+        or raw.startswith("Удалил")
+        or raw.startswith("Вернулся")
+        or raw.startswith("Переключился")
+        or raw.startswith("Поиск")
+    ):
+        return ("button_click", raw, None, None)
+
+    raw_lower = raw.lower()
+
+    if raw == "start":
+        return ("start_menu", "Вернулся на главный экран выбора расписания", None, None)
+
+    if raw == "delete":
+        return ("delete_message", "Удалил сообщение бота", None, None)
+
+    if raw == "nothing":
+        return ("nothing", "Нажатие на пустой разделитель", None, None)
+
+    if raw == "language_select":
+        return ("language_menu", "Открыл меню выбора языка", None, None)
+
+    if raw.startswith("languageIs"):
+        code = raw.replace("languageIs", "").strip()
+        code_lower = code.lower()
+        lang_name = "Русский" if code_lower == "ru" else ("Қазақша" if code_lower == "kz" else code)
+        return ("change_language", f"Сменил язык на {lang_name}", None, code)
+
+    if raw.startswith("faculty|"):
+        parts = raw.split("|")
+        page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        return ("faculty_menu", f"Выбор факультета (стр. {page + 1})", None, None)
+
+    if raw.startswith("program|"):
+        parts = raw.split("|")
+        fac_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        fac_name = (
+            (faculty_map.get(fac_id) if faculty_map and fac_id in faculty_map else KNOWN_FACULTIES.get(fac_id))
+            if fac_id is not None
+            else None
+        )
+        fac_str = f'факультет "{fac_name}"' if fac_name else (f"факультет ID {fac_id}" if fac_id else "факультет")
+        return ("program_menu", f"Выбор специальности ({fac_str}, стр. {page + 1})", fac_id, fac_name)
+
+    if raw.startswith("group|"):
+        parts = raw.split("|")
+        fac_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        prog_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+        page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+        prog_name = (
+            (program_map.get(prog_id) if program_map and prog_id in program_map else KNOWN_PROGRAMS.get(prog_id))
+            if prog_id is not None
+            else None
+        )
+        prog_str = (
+            f'специальность "{prog_name}"'
+            if prog_name
+            else (f"специальность ID {prog_id}" if prog_id else "специальность")
+        )
+        return ("group_menu", f"Выбор группы ({prog_str}, стр. {page + 1})", prog_id, prog_name)
+
+    if (
+        raw_lower.startswith("refreshschedule|")
+        or raw_lower.startswith("refresh_schedule|")
+        or raw_lower.startswith("refreshchooseschedulelanguage|")
+        or raw_lower.startswith("refresh_chooseschedulelanguage|")
+    ):
+        m = re.match(r"^refresh(?:_)?(?:schedule|chooseschedulelanguage)\|", raw, re.IGNORECASE)
+        prefix_len = len(m.group(0)) if m else raw.find("|") + 1
+        clean = raw[prefix_len:]
+        parts = [p for p in clean.split("|") if p != ""]
+        lang_val = ""
+        g_id = None
+        day_val: Any = 0
+        if len(parts) >= 2 and parts[0].isdigit():
+            g_id = int(parts[0])
+            day_val = parts[1]
+        elif len(parts) >= 3 and parts[1].isdigit():
+            lang_val = parts[0]
+            g_id = int(parts[1])
+            day_val = parts[2]
+        elif len(parts) == 1 and parts[0].isdigit():
+            g_id = int(parts[0])
+
+        day_name = resolve_day_name(day_val)
+        g_name = (
+            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
+            if g_id is not None
+            else None
+        )
+        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
+        desc = f"Обновил расписание группы {grp_label} ({day_name})" if grp_label else f"Обновил расписание ({day_name})"
+        return ("refresh_group", desc, g_id, g_name)
+
+    if raw.startswith("chooseScheduleLanguage|"):
+        parts = [p for p in raw.split("|")[1:] if p != ""]
+        lang_val = ""
+        g_id = None
+        day_val: Any = 0
+        if len(parts) >= 2 and parts[0].isdigit():
+            g_id = int(parts[0])
+            day_val = parts[1]
+        elif len(parts) >= 3 and parts[1].isdigit():
+            lang_val = parts[0]
+            g_id = int(parts[1])
+            day_val = parts[2]
+        elif len(parts) == 1 and parts[0].isdigit():
+            g_id = int(parts[0])
+
+        g_name = (
+            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
+            if g_id is not None
+            else None
+        )
+        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
+        desc = f"Выбор языка расписания (группа {grp_label})" if grp_label else "Выбор языка расписания"
+        return ("choose_schedule_language", desc, g_id, g_name or lang_val or None)
+
+    if raw.startswith("schedule|"):
+        parts = [p for p in raw.split("|")[1:] if p != ""]
+        lang_val = ""
+        g_id = None
+        day_val: Any = 0
+        if len(parts) >= 2 and parts[0].isdigit():
+            g_id = int(parts[0])
+            day_val = parts[1]
+        elif len(parts) >= 3 and parts[1].isdigit():
+            lang_val = parts[0]
+            g_id = int(parts[1])
+            day_val = parts[2]
+        elif len(parts) == 1 and parts[0].isdigit():
+            g_id = int(parts[0])
+
+        day_name = resolve_day_name(day_val)
+        g_name = (
+            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
+            if g_id is not None
+            else None
+        )
+        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
+        desc = f"Открыл расписание группы {grp_label} ({day_name})" if grp_label else f"Открыл расписание ({day_name})"
+        return ("view_group", desc, g_id, g_name)
+
+    if raw.startswith("department|"):
+        parts = raw.split("|")
+        page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        return ("department_menu", f"Выбор кафедры (стр. {page + 1})", None, None)
+
+    if raw.startswith("teacher|"):
+        parts = raw.split("|")
+        dept_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        dept_name = (
+            (
+                department_map.get(dept_id)
+                if department_map and dept_id in department_map
+                else KNOWN_DEPARTMENTS.get(dept_id)
+            )
+            if dept_id is not None
+            else None
+        )
+        dept_str = f'кафедра "{dept_name}"' if dept_name else (f"кафедра ID {dept_id}" if dept_id else "кафедра")
+        return ("teacher_menu", f"Выбор преподавателя ({dept_str}, стр. {page + 1})", dept_id, dept_name)
+
+    if raw_lower.startswith("refreshteacherschedule|") or raw_lower.startswith("refresh_teacherschedule|"):
+        parts = raw.split("|")
+        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        day_val = parts[2] if len(parts) > 2 else 0
+        day_name = resolve_day_name(day_val)
+        t_name = (
+            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
+            if t_id is not None
+            else None
+        )
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Обновил расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Обновил расписание преподавателя ({day_name})"
+        return ("refresh_teacher", desc, t_id, t_name)
+
+    if raw_lower.startswith("teacherschedule|"):
+        parts = raw.split("|")
+        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        day_val = parts[2] if len(parts) > 2 else 0
+        day_name = resolve_day_name(day_val)
+        t_name = (
+            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
+            if t_id is not None
+            else None
+        )
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
+        return ("view_teacher", desc, t_id, t_name)
+
+    if raw_lower.startswith("refreshteacherimg|") or raw_lower.startswith("refresh_teacherimg|"):
+        parts = raw.split("|")
+        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        t_name = (
+            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
+            if t_id is not None
+            else None
+        )
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Обновил таблицу недели преподавателя {tch_label}" if tch_label else "Обновил таблицу недели преподавателя"
+        return ("refresh_teacher_image", desc, t_id, t_name)
+
+    if raw_lower.startswith("teacherimg|"):
+        parts = raw.split("|")
+        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        t_name = (
+            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
+            if t_id is not None
+            else None
+        )
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Открыл таблицу недели преподавателя {tch_label}" if tch_label else "Открыл таблицу недели преподавателя"
+        return ("view_teacher_image", desc, t_id, t_name)
+
+    if raw_lower.startswith("teachertext|"):
+        parts = raw.split("|")
+        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        day_val = parts[2] if len(parts) > 2 else 0
+        day_name = resolve_day_name(day_val)
+        t_name = (
+            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
+            if t_id is not None
+            else None
+        )
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Переключился на текстовый вид преподавателя {tch_label} ({day_name})" if tch_label else f"Переключился на текстовый вид ({day_name})"
+        return ("view_teacher_text", desc, t_id, t_name)
+
+    if raw.startswith("profile|"):
+        parts = raw.split("|")
+        p_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        p_name = (
+            (teacher_map.get(p_id) if teacher_map and p_id in teacher_map else KNOWN_TEACHERS.get(p_id))
+            if p_id is not None
+            else None
+        )
+        p_label = f'"{p_name}"' if p_name else (f"ID {p_id}" if p_id else "")
+        desc = f"Открыл профиль преподавателя {p_label}" if p_label else "Открыл профиль преподавателя"
+        return ("view_profile", desc, p_id, p_name)
+
+    if raw.startswith("searchGroup|"):
+        parts = raw.split("|")
+        name = parts[1] if len(parts) > 1 else ""
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        return ("search_group_page", f'Пагинация поиска групп: "{name}" (стр. {page + 1})', None, name)
+
+    if raw.startswith("searchTeacher|"):
+        parts = raw.split("|")
+        name = parts[1] if len(parts) > 1 else ""
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        return ("search_teacher_page", f'Пагинация поиска преподавателей: "{name}" (стр. {page + 1})', None, name)
+
+    return ("button_click", raw, None, None)
 
 
 class UserActionLoggingMiddleware(BaseMiddleware):
@@ -201,7 +581,18 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         safe_action = (action or "action").strip()
         raw_text = format_capped_text(text) or safe_action
 
-        is_button_action = safe_action not in ("command", "chat_input", "first_message") and not safe_action.startswith("media_")
+        NON_BUTTON_ACTIONS = (
+            "command",
+            "chat_input",
+            "first_message",
+            "long_text_rejected",
+            "spam_blocked",
+        )
+        is_button_action = (
+            safe_action not in NON_BUTTON_ACTIONS
+            and not safe_action.startswith("media_")
+            and not safe_action.startswith("search_")
+        )
 
         is_first_action = False
         is_first_button = False
@@ -266,7 +657,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                 event.text
                 and (
                     event.text.startswith("/")
-                    or any(event.text.startswith(p) for p in ("🗒", "🗓", "Г ", "Т ", "П ", "О "))
+                    or any(event.text.startswith(p) for p in ("🗒", "🗓", "❓", "💡", "Г ", "Т ", "П ", "О "))
                 )
             )
 
@@ -278,7 +669,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             if event.text:
                 if event.text.startswith("/"):
                     action = "command"
-                elif any(event.text.startswith(p) for p in ("🗒", "🗓", "Г ", "Т ", "П ", "О ")):
+                elif any(event.text.startswith(p) for p in ("🗒", "🗓", "❓", "💡", "Г ", "Т ", "П ", "О ")):
                     action = "menu_button"
                 else:
                     action = "chat_input"
@@ -292,7 +683,17 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
         elif isinstance(event, CallbackQuery):
             call_data = event.data or "callback"
-            await self.log_action(user_id, username, "button_click", call_data)
+            if call_data == "nothing":
+                return await handler(event, data)
+            action, desc, entity_id, entity_name = describe_callback_query(call_data)
+            await self.log_action(
+                user_id,
+                username,
+                action,
+                desc,
+                entity_id=entity_id,
+                entity_name=entity_name,
+            )
 
         return await handler(event, data)
 
@@ -301,8 +702,22 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 user_action_logging_middleware = UserActionLoggingMiddleware()
 
 __all__ = [
+    "CALLBACK_DAY_NAMES",
+    "DAY_NAME_LOOKUP",
+    "KNOWN_DEPARTMENTS",
+    "KNOWN_FACULTIES",
+    "KNOWN_GROUPS",
+    "KNOWN_PROGRAMS",
+    "KNOWN_TEACHERS",
     "UserActionLoggingMiddleware",
+    "describe_callback_query",
     "format_capped_text",
     "get_media_category",
+    "register_department_name",
+    "register_faculty_name",
+    "register_group_name",
+    "register_program_name",
+    "register_teacher_name",
+    "resolve_day_name",
     "user_action_logging_middleware",
 ]

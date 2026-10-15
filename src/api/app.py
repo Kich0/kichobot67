@@ -46,6 +46,7 @@ from src.cron import (
     get_scheduler,
     run_daily_data_update,
     setup_all_crons,
+    smart_warmup_engine,
     start_scheduler,
     stop_scheduler,
     warmup_top_schedules,
@@ -137,10 +138,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error starting APScheduler: {e}")
 
+    # Start SmartWarmupEngine (paced background warmup: TOP-150 groups, TOP-30 teachers)
+    try:
+        smart_warmup_engine.start()
+    except Exception as e:
+        logger.error(f"Error starting SmartWarmupEngine: {e}")
+
     yield
 
     # === SHUTDOWN ===
     logger.info("Shutting down Kichobot services...")
+    try:
+        await smart_warmup_engine.stop_async()
+    except Exception as e:
+        logger.warning(f"Error stopping SmartWarmupEngine: {e}")
+
     try:
         stop_scheduler()
     except Exception as e:

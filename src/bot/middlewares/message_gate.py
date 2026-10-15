@@ -138,6 +138,20 @@ class MessageGateMiddleware(BaseMiddleware):
                 if not self._ban_warning_sent.get(user_id):
                     self._ban_warning_sent[user_id] = True
                     ban_sec = int(self.ban_duration)
+                    try:
+                        from src.bot.middlewares.user_action_logger import (
+                            user_action_logging_middleware,
+                        )
+
+                        await user_action_logging_middleware.log_action(
+                            user_id,
+                            user.username,
+                            "spam_blocked",
+                            f"🚫 Временный бан на {ban_sec} секунд за спам ({len(timestamps)} сообщ. за {int(self.spam_window)}с)",
+                        )
+                    except Exception as e:
+                        logger.debug(f"Error logging spam ban: {e}")
+
                     warning_text = (
                         f"🚫 <b>Блокировка на {ban_sec} секунд</b>\n\n"
                         "Вы отправили слишком много сообщений.\n"
@@ -158,6 +172,24 @@ class MessageGateMiddleware(BaseMiddleware):
             # Reject non-text messages
             if not event.text:
                 try:
+                    from src.bot.middlewares.user_action_logger import (
+                        get_media_category,
+                        user_action_logging_middleware,
+                    )
+
+                    act, label = get_media_category(event)
+                    if event.caption:
+                        label += f' "{event.caption}"'
+                    await user_action_logging_middleware.log_action(
+                        user_id,
+                        user.username,
+                        act,
+                        label,
+                    )
+                except Exception as e:
+                    logger.debug(f"Error logging media rejection: {e}")
+
+                try:
                     await event.answer(
                         "⛔ <b>Бот принимает только текст</b>\n\n"
                         "Стикеры, фото, видео, файлы и голосовые\nне поддерживаются.\n\n"
@@ -170,6 +202,22 @@ class MessageGateMiddleware(BaseMiddleware):
 
             # Reject messages exceeding maximum character limit
             if len(event.text) > self.max_text_length and not event.text.startswith("/"):
+                try:
+                    from src.bot.middlewares.user_action_logger import (
+                        user_action_logging_middleware,
+                    )
+
+                    preview = event.text[:200]
+                    log_text = f'[Слишком длинное сообщение ({len(event.text)} симв.)] "{preview}..."'
+                    await user_action_logging_middleware.log_action(
+                        user_id,
+                        user.username,
+                        "long_text_rejected",
+                        log_text,
+                    )
+                except Exception as e:
+                    logger.debug(f"Error logging long text rejection: {e}")
+
                 try:
                     await event.answer(
                         f"⛔ <b>Слишком длинное сообщение</b>\n\n"

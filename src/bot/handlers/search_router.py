@@ -19,6 +19,11 @@ from src.bot.keyboards.inline import (
     get_search_results_keyboard,
     get_teacher_table_keyboard,
 )
+from src.bot.middlewares.user_action_logger import (
+    register_group_name,
+    register_teacher_name,
+    user_action_logging_middleware,
+)
 from src.core.i18n import t
 from src.core.logging import get_logger
 from src.services.smart_search import (
@@ -69,11 +74,31 @@ async def handle_text_search(message: Message) -> None:
 
     result: SmartSearchResult = await smart_search_service.search(text, user_language=lang)
 
+    user = message.from_user
+    user_id = user.id if user else 0
+    username = user.username if user else None
+
     # 1. Exact Group Match -> direct display of schedule
     if result.result_type == SearchResultType.EXACT_GROUP and result.exact_group:
         g = result.exact_group
         g_id = g.get("id") or g.get("group_id")
+        g_name = g.get("name")
         g_lang = g.get("language") or ("kz" if lang == "kz" else "ru")
+
+        if g_id and g_name:
+            register_group_name(g_id, g_name)
+
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "search_exact_group",
+                f'Поиск группы "{text}": найдена группа "{g_name}"',
+                entity_id=g_id,
+                entity_name=g_name,
+            )
+        except Exception:
+            pass
 
         from src.bot.handlers.callbacks_router import (
             get_current_day_number,
@@ -87,7 +112,7 @@ async def handle_text_search(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
-            group_name=g.get("name"),
+            group_name=g_name,
         )
         return
 
@@ -95,6 +120,22 @@ async def handle_text_search(message: Message) -> None:
     if result.result_type == SearchResultType.EXACT_TEACHER and result.exact_teacher:
         tch = result.exact_teacher
         t_id = tch.get("id") or tch.get("teacher_id")
+        t_name = tch.get("fullName") or tch.get("name")
+
+        if t_id and t_name:
+            register_teacher_name(t_id, t_name)
+
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "search_exact_teacher",
+                f'Поиск преподавателя "{text}": найден преподаватель "{t_name}"',
+                entity_id=t_id,
+                entity_name=t_name,
+            )
+        except Exception:
+            pass
 
         from src.bot.handlers.callbacks_router import (
             get_current_day_number,
@@ -107,7 +148,7 @@ async def handle_text_search(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
-            teacher_name=tch.get("fullName") or tch.get("name"),
+            teacher_name=t_name,
         )
         return
 
@@ -117,6 +158,27 @@ async def handle_text_search(message: Message) -> None:
         SearchResultType.TEACHERS_LIST,
         SearchResultType.COMBINED,
     ):
+        for grp in (result.groups or []):
+            gid = grp.get("id") or grp.get("group_id")
+            gname = grp.get("name")
+            if gid and gname:
+                register_group_name(gid, gname)
+        for tch in (result.teachers or []):
+            tid = tch.get("id") or tch.get("teacher_id")
+            tname = tch.get("fullName") or tch.get("name")
+            if tid and tname:
+                register_teacher_name(tid, tname)
+
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "search_results",
+                f'Поиск "{text}": предложен список ({len(result.groups or [])} групп, {len(result.teachers or [])} препод.)',
+            )
+        except Exception:
+            pass
+
         total_matches = len(result.groups) + len(result.teachers)
         heading = (
             f"✨ По вашему запросу: <b>{text}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
@@ -132,6 +194,31 @@ async def handle_text_search(message: Message) -> None:
 
     # 4. Fuzzy Suggestions ("Did you mean?")
     if result.result_type == SearchResultType.FUZZY_SUGGESTIONS and result.fuzzy_suggestions:
+        for s in result.fuzzy_suggestions:
+            s_type = getattr(s, "type", None) or (s.get("type") if isinstance(s, dict) else None)
+            item = getattr(s, "item", None) or (s.get("item") if isinstance(s, dict) else None)
+            if item:
+                if s_type == "group":
+                    gid = item.get("id") or item.get("group_id")
+                    gname = item.get("name")
+                    if gid and gname:
+                        register_group_name(gid, gname)
+                else:
+                    tid = item.get("id") or item.get("teacher_id")
+                    tname = item.get("fullName") or item.get("name")
+                    if tid and tname:
+                        register_teacher_name(tid, tname)
+
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "search_fuzzy",
+                f'Поиск "{text}": опечатка, предложены варианты',
+            )
+        except Exception:
+            pass
+
         prompt = (
             f"🔍 По запросу <b>{text}</b> ничего точного не найдено.\n\n"
             "Возможно, вы имели в виду:"
@@ -141,6 +228,16 @@ async def handle_text_search(message: Message) -> None:
         return
 
     # 5. Not found fallback
+    try:
+        await user_action_logging_middleware.log_action(
+            user_id,
+            username,
+            "search_not_found",
+            f'Поиск "{text}": ничего не найдено',
+        )
+    except Exception:
+        pass
+
     not_found_msg = (
         f"🔍 К сожалению, по запросу <b>{text}</b> ничего не найдено.\n\n"
         "✍️ Проверьте правильность написания фамилии преподавателя или названия группы.\n"

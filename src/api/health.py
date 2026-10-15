@@ -19,7 +19,18 @@ logger = get_logger("health_monitor")
 
 def get_process_memory_mb() -> float:
     """Returns the process RSS memory in megabytes."""
-    # 1. Try resource module (Linux / Unix / Render)
+    # 1. Try reading real-time VmRSS from /proc/self/status on Linux (Render)
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return round(float(parts[1]) / 1024.0, 2)
+    except Exception:
+        pass
+
+    # 2. Try resource module (Linux / Unix / Render fallback)
     try:
         import resource
 
