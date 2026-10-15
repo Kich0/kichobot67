@@ -42,9 +42,10 @@ class TeacherScheduleService {
         try {
             const { TeacherSchedule } = await import("../../bot/models/teacherSchedule.js");
             const dbDoc = await TeacherSchedule.findOne({ teacherId: numId }).lean().catch(() => null);
-            if (dbDoc && Array.isArray(dbDoc.data) && dbDoc.data.length > 0) {
+            const scheduleData = dbDoc?.data || dbDoc?.schedule;
+            if (Array.isArray(scheduleData) && scheduleData.length > 0) {
                 log.info(`[TeacherSchedule] Использован кэш MongoDB для преподавателя id=${id}`);
-                const schedule = dbDoc.data;
+                const schedule = scheduleData;
                 schedule._fromDb = true;
                 if (dbDoc.updatedAt) {
                     schedule._updatedAt = dbDoc.updatedAt;

@@ -6,7 +6,7 @@ import { searchGroupMenuCache } from "../searchGroupCommandController.js";
 
 export async function updateGroupsCommandController(hard = false) {
     try {
-        log.info("Начинаю быстрое обновление списка групп (Axios+Cheerio). hard = " + hard);
+        log.info("Начинаю быстрое обновление списка групп. hard = " + hard);
 
         const startTime = Date.now();
         const old_groups = await groupService.getAll();

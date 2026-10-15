@@ -4,6 +4,7 @@ import http from "http";
 import BuketovApiService from "../../bot/services/buketovApiService.js";
 import ScheduleApiAdapter from "../../bot/services/scheduleApiAdapter.js";
 import { Group } from "../../bot/models/group.js";
+import groupService from "../../bot/services/groupService.js";
 
 export function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -32,11 +33,12 @@ class ScheduleService {
      * ОСНОВНОЙ МЕТОД — вызывается из бота.
      */
     get_schedule_by_groupId = async (id, language) => {
+        const numId = Number(id) || id;
         let currentGroup = null;
 
         // 1. Приоритетный путь: официальный API КарУ
         try {
-            currentGroup = await Group.findOne({ id }).catch(() => null);
+            currentGroup = await groupService.getById(numId).catch(() => null) || await Group.findOne({ id: numId }).catch(() => null);
             if (currentGroup && currentGroup.name) {
                 const apiData = await BuketovApiService.getGroupSchedule(currentGroup.name);
                 if (apiData && Array.isArray(apiData.records)) {
@@ -63,7 +65,7 @@ class ScheduleService {
         // 2. Резервный Fallback: кэш из базы данных MongoDB
         try {
             const { Schedule } = await import("../../bot/models/schedule.js");
-            const dbDoc = await Schedule.findOne({ groupId: id }).lean().catch(() => null);
+            const dbDoc = await Schedule.findOne({ groupId: numId }).lean().catch(() => null);
             const scheduleData = dbDoc?.data || dbDoc?.schedule;
             if (Array.isArray(scheduleData) && scheduleData.length > 0) {
                 const hasSubjects = scheduleData.some(day => Array.isArray(day.subjects) && day.subjects.some(s => s && s.subject && s.subject.trim() !== ''));
