@@ -360,9 +360,27 @@ class TeacherDirectoryService:
             raw_name = teacher_dict.get("name") or teacher_dict.get("fullName") or ""
             dept_id = teacher_dict.get("department") or teacher_dict.get("departmentId")
         else:
-            raw_name = getattr(teacher, "name", None) or getattr(teacher, "full_name", "")
-            teacher_dict = {"name": raw_name}
-            dept_id = getattr(teacher, "department", None)
+            if hasattr(teacher, "model_dump"):
+                teacher_dict = teacher.model_dump(by_alias=True)
+                raw_name = teacher_dict.get("name") or teacher_dict.get("fullName") or ""
+                dept_id = teacher_dict.get("department") or teacher_dict.get("departmentId")
+                if hasattr(teacher, "teacher_id"):
+                    teacher_dict["id"] = teacher.teacher_id
+                    teacher_dict["teacher_id"] = teacher.teacher_id
+                elif "id" in teacher_dict and (isinstance(teacher_dict["id"], int) or (isinstance(teacher_dict["id"], str) and teacher_dict["id"].isdigit())):
+                    teacher_dict["teacher_id"] = int(teacher_dict["id"])
+            else:
+                raw_name = getattr(teacher, "name", None) or getattr(teacher, "full_name", "")
+                teacher_dict = {"name": raw_name}
+                if hasattr(teacher, "teacher_id"):
+                    teacher_dict["id"] = teacher.teacher_id
+                    teacher_dict["teacher_id"] = teacher.teacher_id
+                elif hasattr(teacher, "id"):
+                    val = getattr(teacher, "id")
+                    if isinstance(val, int) or (isinstance(val, str) and val.isdigit()):
+                        teacher_dict["id"] = int(val)
+                        teacher_dict["teacher_id"] = int(val)
+                dept_id = getattr(teacher, "department", None)
 
         if not raw_name:
             return teacher_dict

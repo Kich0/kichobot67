@@ -110,7 +110,7 @@ async def test_commands_start_registers_user(mock_db):
 
     assert msg.answer.call_count == 1
     args, kwargs = msg.answer.call_args
-    assert "Добро пожаловать" in args[0]
+    assert "Выберите язык интерфейса" in args[0]
     assert "reply_markup" in kwargs
 
     # Verify user saved in DB
@@ -154,7 +154,7 @@ async def test_commands_settings_and_new(mock_db):
     msg_new = make_message(user_id=88003, text="/new")
     await handle_new_schedule(msg_new)
     assert msg_new.answer.call_count == 1
-    assert "Выбор факультета" in msg_new.answer.call_args[0][0]
+    assert "Чье расписание тебе нужно?" in msg_new.answer.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -178,8 +178,9 @@ async def test_callbacks_navigation_and_language(mock_db):
     # Test language switch callback
     call_lang = make_callback(user_id=88004, data="languageIskz")
     await handle_set_language(call_lang)
-    assert call_lang.message.edit_text.call_count == 1
-    assert "Тіл қазақшаға ауыстырылды" in call_lang.message.edit_text.call_args[0][0]
+    assert call_lang.message.delete.call_count == 1
+    assert call_lang.message.answer.call_count == 1
+    assert "Сәлем!" in call_lang.message.answer.call_args[0][0]
 
     # Verify updated in DB
     user_doc = await UserModel.find_one({"userId": 88004})
@@ -407,7 +408,7 @@ async def test_commands_schedule_routing(mock_db):
     msg = make_message(user_id=88022, text="/schedule")
     await handle_schedule_command(msg)
     assert msg.answer.call_count == 1
-    assert "Выбор факультета" in msg.answer.call_args[0][0]
+    assert "Чье расписание тебе нужно?" in msg.answer.call_args[0][0]
 
 
 @pytest.mark.asyncio

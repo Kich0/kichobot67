@@ -21,11 +21,13 @@ from src.bot.keyboards.inline import (
 def test_language_keyboard():
     kb = get_language_keyboard()
     assert isinstance(kb, InlineKeyboardMarkup)
-    assert len(kb.inline_keyboard) == 1
-    row = kb.inline_keyboard[0]
-    assert len(row) == 2
-    assert row[0].callback_data == "languageIsru"
-    assert row[1].callback_data == "languageIskz"
+    assert len(kb.inline_keyboard) == 3
+    assert kb.inline_keyboard[0][0].callback_data == "languageIsRu"
+    assert kb.inline_keyboard[0][0].text == "Русский"
+    assert kb.inline_keyboard[1][0].callback_data == "languageIsKz"
+    assert kb.inline_keyboard[1][0].text == "Қазақ"
+    assert kb.inline_keyboard[2][1].callback_data == "delete"
+    assert kb.inline_keyboard[2][1].text == "❌"
 
 
 def test_new_schedule_keyboard():
@@ -34,7 +36,8 @@ def test_new_schedule_keyboard():
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
     assert "faculty|0" in callbacks
     assert "department|0" in callbacks
-    assert "language_select" in callbacks
+    assert "delete" in callbacks
+    assert "nothing" in callbacks
 
 
 def test_faculties_keyboard_single_and_multi_page():

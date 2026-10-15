@@ -30,6 +30,7 @@ from src.bot.keyboards.inline import (
     get_teacher_text_keyboard,
     get_teachers_keyboard,
 )
+from src.bot.keyboards.reply import get_main_reply_keyboard
 from src.core.constants import (
     COOLDOWN_STUDENT_REFRESH,
     COOLDOWN_TEACHER_IMAGE_REFRESH,
@@ -140,8 +141,9 @@ async def handle_back_to_start(call: CallbackQuery) -> None:
     lang = await user_service.get_user_language(user_id)
 
     prompt = (
-        f"<i>{t('new_schedule_menu_content', lang)}</i>\n\n"
-        f"💡 {t('new_schedule_menu_hint', lang)}"
+        f"👋 {t('new_schedule_menu_content', lang)}\n"
+        f"<i>{t('new_schedule_menu_hint', lang)}</i>\n"
+        f"{t('new_schedule_menu_hint2', lang)}"
     )
 
     if call.message:
@@ -163,28 +165,35 @@ async def handle_back_to_start(call: CallbackQuery) -> None:
 async def handle_language_select_menu(call: CallbackQuery) -> None:
     """Opens language selection menu."""
     await call.answer()
+    prompt = (
+        "🌍 Выберите язык интерфейса. \n"
+        "🌍 Интерфейстің тіл тандаңыз. "
+    )
     if call.message:
         await call.message.edit_text(
-            "Тілді таңдаңыз / Выберите язык интерфейса:",
+            prompt,
             reply_markup=get_language_keyboard(),
         )
 
 
 @callbacks_router.callback_query(F.data.startswith("languageIs"))
 async def handle_set_language(call: CallbackQuery) -> None:
-    """Changes user preferred language."""
+    """Changes user preferred language and redirects to welcome page with main reply keyboard."""
     await call.answer()
     code = (call.data or "").replace("languageIs", "").lower()
     user_id = call.from_user.id if call.from_user else 0
     await user_service.set_user_language(user_id, code)
 
     lang = "kz" if code == "kz" else "ru"
-    ack_text = "Тіл қазақшаға ауыстырылды! 🇰🇿" if lang == "kz" else "Язык переключен на русский! 🇷🇺"
-
+    msg_text = t("welcome_page", lang)
     if call.message:
-        await call.message.edit_text(
-            f"{ack_text}\n\n<i>{t('new_schedule_menu_content', lang)}</i>",
-            reply_markup=get_new_schedule_keyboard(lang),
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+        await call.message.answer(
+            msg_text,
+            reply_markup=get_main_reply_keyboard(lang),
             parse_mode="HTML",
         )
 
@@ -210,7 +219,7 @@ async def handle_faculty_menu(call: CallbackQuery) -> None:
 
     markup = get_faculties_keyboard(faculties, page=page, lang=lang)
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(faculties) + 9) // 10))
-    msg_text = f"📍 {t('faculty_pick', lang)}\n{page_text}"
+    msg_text = f"{t('faculty_pick', lang)} \n{page_text}"
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
@@ -240,7 +249,7 @@ async def handle_program_menu(call: CallbackQuery) -> None:
 
     markup = get_programs_keyboard(programs, faculty_id=faculty_id, page=page, lang=lang)
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(programs) + 9) // 10))
-    msg_text = f"📍 {t('program_pick', lang)}\n🎓 {t('faculty', lang, faculty=faculty_name)}\n{page_text}"
+    msg_text = f"{t('program_pick', lang)}\n{t('faculty', lang, faculty=faculty_name)}\n{page_text}"
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
@@ -279,7 +288,7 @@ async def handle_group_menu(call: CallbackQuery) -> None:
         current_day=curr_day,
     )
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(groups) + 9) // 10))
-    msg_text = f"📍 {t('group_pick', lang)}\n📘 {t('program', lang, program=program_name)}\n{page_text}"
+    msg_text = f"{t('group_pick', lang)}\n{t('program', lang, program=program_name)}\n{page_text}"
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
@@ -372,15 +381,31 @@ async def build_student_day_schedule_view(
     ]
 
     grp_name = group_name or f"Группа {group_id}"
-    if not group_name:
-        try:
-            from src.database.models.group import Group
+    back_callback = "faculty|0"
+    try:
+        from src.database.models.group import Group
 
-            g_doc = await Group.find_one({"id": group_id})
-            if g_doc and g_doc.name:
+        num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+        g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+        if g_doc:
+            if not group_name and getattr(g_doc, "name", None):
                 grp_name = g_doc.name
-        except Exception:
-            pass
+            prog_id = getattr(g_doc, "program", None)
+            fac_id = getattr(g_doc, "faculty", None)
+            if prog_id:
+                if not fac_id:
+                    from src.database.models.program import Program
+
+                    num_p_id = int(prog_id) if str(prog_id).isdigit() else prog_id
+                    p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
+                    if p_doc and getattr(p_doc, "faculty", None):
+                        fac_id = p_doc.faculty
+                fac_id = fac_id or 0
+                back_callback = f"group|{fac_id}|{prog_id}|0"
+            elif fac_id:
+                back_callback = f"program|{fac_id}|0"
+    except Exception as e:
+        logger.debug(f"Error resolving group schedule back callback: {e}")
 
     group_header = f"👥 <b>{grp_name}</b>\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n\n"
 
@@ -406,7 +431,6 @@ async def build_student_day_schedule_view(
     full_text = group_header + body + footer
 
     pre_callback = f"schedule|{sch_lang}|{group_id}"
-    back_callback = "faculty|0"
     markup = get_schedule_pagination_keyboard(pre_callback, day_num, back_callback, ui_lang)
     return full_text, markup
 
@@ -535,7 +559,9 @@ async def handle_department_menu(call: CallbackQuery) -> None:
 
     markup = get_departments_keyboard(departments, page=page, lang=lang)
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(departments) + 9) // 10))
-    msg_text = f"📍 {t('department_pick', lang)}\n{page_text}"
+    current_menu_text = f"📌 {t('department_pick', lang)}"
+    menu_hint = t("department_pick_hint", lang)
+    msg_text = f"{current_menu_text}\n{menu_hint}\n{page_text}"
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
@@ -552,11 +578,19 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
     dept_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
     page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
 
+    if dept_id == 0:
+        await handle_department_menu(call)
+        return
+
     try:
         from src.database.models.department import Department
         from src.database.models.teacher import Teacher
 
-        teachers = await Teacher.find({"department": dept_id}).sort("name").to_list()
+        raw_teachers = await Teacher.find({"department": dept_id}).sort("name").to_list()
+        teachers = [
+            teacher_directory_service.enrich(t.model_dump(by_alias=True) if hasattr(t, "model_dump") else t)
+            for t in raw_teachers
+        ]
         dept = await Department.find_one({"id": dept_id})
         dept_name = dept.name if dept else f"ID {dept_id}"
     except Exception:
@@ -565,7 +599,7 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
 
     markup = get_teachers_keyboard(teachers, department_id=dept_id, page=page, lang=lang)
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(teachers) + 9) // 10))
-    msg_text = f"📍 {t('teacher_pick', lang)}\n🏛 {t('department', lang, departmentName=dept_name)}\n{page_text}"
+    msg_text = f"📌 {t('teacher_pick', lang)}\n📘 {t('department', lang, departmentName=dept_name)}\n{page_text}"
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
@@ -666,17 +700,19 @@ async def build_teacher_day_text_view(
     ]
 
     tch_name = teacher_name or f"ID {teacher_id}"
-    if not teacher_name:
-        try:
-            from src.database.models.teacher import Teacher
+    dept_id = 0
+    try:
+        from src.database.models.teacher import Teacher
 
-            num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-            t_doc = await Teacher.find_one({"id": num_id})
-            if t_doc:
-                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
+        num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+        t_doc = await Teacher.find_one({"id": num_id})
+        if t_doc:
+            enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
+            if not teacher_name:
                 tch_name = enriched.get("fullName") or t_doc.name
-        except Exception:
-            pass
+            dept_id = t_doc.department or 0
+    except Exception:
+        pass
 
     header = f"👨‍🏫 <b>{tch_name}</b>\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n\n"
 
@@ -702,7 +738,7 @@ async def build_teacher_day_text_view(
     )
 
     full_text = header + body + footer
-    markup = get_teacher_text_keyboard(teacher_id, day_num, department_id=0, lang=ui_lang)
+    markup = get_teacher_text_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
     return full_text, markup
 
 
@@ -762,6 +798,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     # Teacher profile resolution
     teacher_name = f"ID {teacher_id}"
     t_doc = None
+    dept_id = 0
     try:
         from src.database.models.teacher import Teacher
 
@@ -769,6 +806,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         if t_doc:
             enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
             teacher_name = enriched.get("fullName") or t_doc.name
+            dept_id = t_doc.department or 0
     except Exception:
         pass
 
@@ -784,7 +822,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                     f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
                     f"{t('for_help', ui_lang)}"
                 )
-                markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=0, lang=ui_lang)
+                markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
                 await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
             except Exception:
                 pass
@@ -850,7 +888,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
         f"{t('for_help', ui_lang)}"
     )
-    markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=0, lang=ui_lang)
+    markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
 
     bot = call.bot
     if not bot:

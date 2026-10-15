@@ -15,6 +15,90 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from src.core.i18n import t
 
 
+def _is_int_like(val: Any) -> bool:
+    """Checks whether a value is an integer, whole float, or a string composed purely of digits."""
+    if isinstance(val, bool):
+        return False
+    if isinstance(val, int):
+        return True
+    if isinstance(val, float):
+        return val.is_integer()
+    if isinstance(val, str) and val.isdigit():
+        return True
+    return False
+
+
+def get_domain_id(item: Any, specific_attr: str = "") -> int:
+    """Safely extracts integer domain ID from dict, Beanie Document, or object.
+
+    Prevents Beanie's ObjectId from being mistakenly picked up as domain ID.
+    Prefers specific domain attributes (faculty_id/facultyId, program_id/programId, etc.) and item_id descriptor.
+    """
+    if item is None:
+        return 0
+
+    if isinstance(item, dict):
+        candidates: list[str] = []
+        if specific_attr:
+            candidates.append(specific_attr)
+            if "_" in specific_attr:
+                parts = specific_attr.split("_")
+                candidates.append(parts[0] + "".join(p.capitalize() for p in parts[1:]))
+        candidates.extend([
+            "item_id",
+            "id",
+            "group_id", "groupId",
+            "teacher_id", "teacherId",
+            "department_id", "departmentId",
+            "faculty_id", "facultyId",
+            "program_id", "programId",
+        ])
+        for key in candidates:
+            if key in item:
+                val = item.get(key)
+                if _is_int_like(val):
+                    return int(val)
+        return 0
+
+    if specific_attr and hasattr(item, specific_attr):
+        val = getattr(item, specific_attr)
+        if _is_int_like(val):
+            return int(val)
+        if "_" in specific_attr:
+            parts = specific_attr.split("_")
+            camel = parts[0] + "".join(p.capitalize() for p in parts[1:])
+            if hasattr(item, camel):
+                c_val = getattr(item, camel)
+                if _is_int_like(c_val):
+                    return int(c_val)
+
+    if hasattr(item, "item_id"):
+        try:
+            val = item.item_id
+            if _is_int_like(val):
+                return int(val)
+        except Exception:
+            pass
+
+    for attr in (
+        "faculty_id", "facultyId",
+        "program_id", "programId",
+        "group_id", "groupId",
+        "department_id", "departmentId",
+        "teacher_id", "teacherId",
+    ):
+        if hasattr(item, attr):
+            try:
+                val = getattr(item, attr)
+                if _is_int_like(val):
+                    return int(val)
+            except Exception:
+                pass
+
+    val = getattr(item, "id", None)
+    return int(val) if _is_int_like(val) else 0
+
+
 def _get_attr(obj: Any, key: str, default: Any = None) -> Any:
     """Helper to retrieve attributes from dicts, Beanie documents, or objects."""
     if isinstance(obj, dict):
@@ -23,38 +107,40 @@ def _get_attr(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def get_language_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard for selecting bot interface language."""
+    """Keyboard for selecting bot interface language (matches Node.js commit 153)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="Русский", callback_data="languageIsRu")],
+            [InlineKeyboardButton(text="Қазақ", callback_data="languageIsKz")],
             [
-                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="languageIsru"),
-                InlineKeyboardButton(text="🇰🇿 Қазақша", callback_data="languageIskz"),
-            ]
+                InlineKeyboardButton(text="\u00A0", callback_data="nothing"),
+                InlineKeyboardButton(text="❌", callback_data="delete"),
+                InlineKeyboardButton(text="\u00A0", callback_data="nothing"),
+            ],
         ]
     )
 
 
 def get_new_schedule_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
-    """Root schedule selector keyboard: student vs teacher vs search."""
+    """Root schedule selector keyboard: student vs teacher vs close (commit 153 parity)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"🎓 {t('student_schedule', lang)}",
+                    text=f"🤓 {t('student', lang)}",
                     callback_data="faculty|0",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"👨‍🏫 {t('teacher_schedule', lang)}",
+                    text=f"👩‍🏫 {t('teacher', lang)}",
                     callback_data="department|0",
                 )
             ],
             [
-                InlineKeyboardButton(
-                    text="🌐 Тіл / Язык",
-                    callback_data="language_select",
-                )
+                InlineKeyboardButton(text="\u00A0", callback_data="nothing"),
+                InlineKeyboardButton(text="❌", callback_data="delete"),
+                InlineKeyboardButton(text="\u00A0", callback_data="nothing"),
             ],
         ]
     )
@@ -76,7 +162,7 @@ def get_faculties_keyboard(
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
-        f_id = _get_attr(item, "id") or _get_attr(item, "faculty_id")
+        f_id = get_domain_id(item, "faculty_id")
         f_name = _get_attr(item, "name") or f"Факультет {f_id}"
         buttons.append([InlineKeyboardButton(text=str(f_name), callback_data=f"program|{f_id}|0")])
 
@@ -96,7 +182,7 @@ def get_faculties_keyboard(
         )
 
     # Return to root menu
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="start")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -117,7 +203,7 @@ def get_programs_keyboard(
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
-        p_id = _get_attr(item, "id") or _get_attr(item, "program_id")
+        p_id = get_domain_id(item, "program_id")
         p_name = _get_attr(item, "name") or f"Программа {p_id}"
         buttons.append([InlineKeyboardButton(text=str(p_name), callback_data=f"group|{faculty_id}|{p_id}|0")])
 
@@ -135,7 +221,7 @@ def get_programs_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="faculty|0")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="faculty|0")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -158,7 +244,7 @@ def get_groups_keyboard(
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
-        g_id = _get_attr(item, "id") or _get_attr(item, "group_id")
+        g_id = get_domain_id(item, "group_id")
         g_name = _get_attr(item, "name") or f"Группа {g_id}"
         g_lang = _get_attr(item, "language") or "ru"
         buttons.append([
@@ -188,7 +274,7 @@ def get_groups_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data=f"program|{faculty_id}|0")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=f"program|{faculty_id}|0")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -208,7 +294,7 @@ def get_departments_keyboard(
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
-        d_id = _get_attr(item, "id") or _get_attr(item, "department_id")
+        d_id = get_domain_id(item, "department_id")
         d_name = _get_attr(item, "name") or f"Кафедра {d_id}"
         buttons.append([InlineKeyboardButton(text=str(d_name), callback_data=f"teacher|{d_id}|0")])
 
@@ -226,7 +312,7 @@ def get_departments_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="start")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -247,7 +333,7 @@ def get_teachers_keyboard(
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
-        t_id = _get_attr(item, "id") or _get_attr(item, "teacher_id")
+        t_id = get_domain_id(item, "teacher_id")
         t_name = _get_attr(item, "fullName") or _get_attr(item, "name") or f"Преподаватель {t_id}"
         buttons.append([InlineKeyboardButton(text=str(t_name), callback_data=f"teacherImg|{t_id}|0")])
 
@@ -265,7 +351,7 @@ def get_teachers_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="department|0")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="department|0")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -287,7 +373,7 @@ def get_schedule_pagination_keyboard(
                 InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"{pre_callback}|{next_day}"),
             ],
             [
-                InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data=back_callback)
+                InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_callback)
             ],
         ]
     )
@@ -300,6 +386,7 @@ def get_teacher_table_keyboard(
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     """Controls for teacher table PNG image: switch to text, refresh, back."""
+    back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -316,8 +403,8 @@ def get_teacher_table_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🔙 {t('go_prev_menu', lang)}",
-                    callback_data=f"teacher|{department_id}|0",
+                    text=t("go_prev_menu", lang),
+                    callback_data=back_cb,
                 )
             ],
         ]
@@ -333,6 +420,7 @@ def get_teacher_text_keyboard(
     """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, back."""
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
+    back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -358,8 +446,8 @@ def get_teacher_text_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🔙 {t('go_prev_menu', lang)}",
-                    callback_data=f"teacher|{department_id}|0",
+                    text=t("go_prev_menu", lang),
+                    callback_data=back_cb,
                 )
             ],
         ]
@@ -376,7 +464,7 @@ def get_search_results_keyboard(
 
     if groups:
         for g in groups[:8]:
-            g_id = g.get("id") or g.get("group_id")
+            g_id = get_domain_id(g, "group_id")
             g_name = g.get("name") or f"Группа {g_id}"
             g_lang = g.get("language") or "ru"
             buttons.append([
@@ -388,7 +476,7 @@ def get_search_results_keyboard(
 
     if teachers:
         for t_item in teachers[:8]:
-            t_id = t_item.get("id") or t_item.get("teacher_id")
+            t_id = get_domain_id(t_item, "teacher_id")
             t_name = t_item.get("fullName") or t_item.get("name") or f"Преподаватель {t_id}"
             buttons.append([
                 InlineKeyboardButton(
@@ -397,7 +485,7 @@ def get_search_results_keyboard(
                 )
             ])
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="start")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -411,7 +499,7 @@ def get_fuzzy_suggestions_keyboard(
         s_type = _get_attr(s, "type")
         item = _get_attr(s, "item")
         if s_type == "group":
-            g_id = _get_attr(item, "id") or _get_attr(item, "group_id")
+            g_id = get_domain_id(item, "group_id")
             g_name = _get_attr(item, "name") or f"Группа {g_id}"
             g_lang = _get_attr(item, "language") or "ru"
             buttons.append([
@@ -421,7 +509,7 @@ def get_fuzzy_suggestions_keyboard(
                 )
             ])
         else:
-            t_id = _get_attr(item, "id") or _get_attr(item, "teacher_id")
+            t_id = get_domain_id(item, "teacher_id")
             t_name = _get_attr(item, "fullName") or _get_attr(item, "name") or f"Преподаватель {t_id}"
             buttons.append([
                 InlineKeyboardButton(
@@ -430,12 +518,13 @@ def get_fuzzy_suggestions_keyboard(
                 )
             ])
 
-    buttons.append([InlineKeyboardButton(text=f"🔙 {t('go_prev_menu', lang)}", callback_data="start")])
+    buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 __all__ = [
     "get_departments_keyboard",
+    "get_domain_id",
     "get_faculties_keyboard",
     "get_fuzzy_suggestions_keyboard",
     "get_groups_keyboard",

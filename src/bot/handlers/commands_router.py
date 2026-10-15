@@ -25,7 +25,7 @@ commands_router = Router(name="commands_router")
 
 @commands_router.message(CommandStart())
 async def handle_start(message: Message) -> None:
-    """Handles /start command with user registration and greeting."""
+    """Handles /start command: sends bilingual language selector with inline keyboard."""
     user = message.from_user
     if not user:
         return
@@ -38,18 +38,14 @@ async def handle_start(message: Message) -> None:
         last_name=user.last_name,
     )
 
-    lang = await user_service.get_user_language(user.id)
-    greeting = (
-        f"👋 <b>Сәлем, {user.first_name or 'дос'}!</b>\n"
-        f"Бөкетов атындағы ҚарУ ресми сабақ кестесі ботына қош келдіңіз!\n\n"
-        f"👋 <b>Привет, {user.first_name or 'друг'}!</b>\n"
-        f"Добро пожаловать в официальный бот расписания КарУ им. Букетова!\n\n"
-        f"<i>{t('new_schedule_menu_content', lang)}</i>"
+    msg_text = (
+        "🌍 Выберите язык интерфейса. \n"
+        "🌍 Интерфейстің тіл тандаңыз. "
     )
 
     await message.answer(
-        greeting,
-        reply_markup=get_new_schedule_keyboard(lang),
+        msg_text,
+        reply_markup=get_language_keyboard(),
         parse_mode="HTML",
     )
 
@@ -60,12 +56,7 @@ async def handle_help(message: Message) -> None:
     """Handles /help command and help text triggers."""
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
-    help_text = t("help_command_content", lang)
-    compare_link = t("official_site_compare", lang)
-    feedback_info = t("for_help", lang)
-
-    full_text = f"{help_text}\n\n{compare_link}\n{feedback_info}"
-    await message.answer(full_text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.answer(t("help_command_content", lang), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @commands_router.message(Command("profile"))
@@ -158,40 +149,74 @@ async def handle_schedule_command(message: Message) -> None:
 @commands_router.message(Command("settings"))
 async def handle_settings(message: Message) -> None:
     """Handles /settings command for language switching."""
-    user_id = message.from_user.id if message.from_user else 0
-    lang = await user_service.get_user_language(user_id)
-
-    prompt = "Тілді таңдаңыз / Выберите язык интерфейса:"
-    await message.answer(prompt, reply_markup=get_language_keyboard())
+    prompt = (
+        "🌍 Выберите язык интерфейса. \n"
+        "🌍 Интерфейстің тіл тандаңыз. "
+    )
+    await message.answer(prompt, reply_markup=get_language_keyboard(), parse_mode="HTML")
 
 
 @commands_router.message(Command("new"))
 @commands_router.message(F.text.regexp(r"^🗒\s*(?:Новое расписание|Жаңа кесте)", flags=2))
 async def handle_new_schedule(message: Message) -> None:
-    """Handles /new command opening the root faculties catalog."""
+    """Handles /new and '🗒 Новое расписание' / '🗒 Жаңа кесте' command, opening student vs teacher picker."""
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
 
-    try:
-        from src.database.models.faculty import Faculty
+    msg_text = (
+        f"👋 {t('new_schedule_menu_content', lang)}\n"
+        f"<i>{t('new_schedule_menu_hint', lang)}</i>\n"
+        f"{t('new_schedule_menu_hint2', lang)}"
+    )
 
-        faculties = await Faculty.find().sort("id").to_list()
-    except Exception:
-        faculties = []
-
-    markup = get_faculties_keyboard(faculties, page=0, lang=lang)
-    page_text = t("page_text", lang, page=1, pageCount=max(1, (len(faculties) + 9) // 10))
-    msg_text = f"📍 {t('faculty_pick', lang)}\n{page_text}"
-
-    await message.answer(msg_text, reply_markup=markup, parse_mode="HTML")
+    await message.answer(
+        msg_text,
+        reply_markup=get_new_schedule_keyboard(lang),
+        parse_mode="HTML",
+    )
 
 
 @commands_router.message(Command("teacher"))
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание преподавателя|Оқытушының кестесі)|[Пп]реподаватель|[Оо]қытушы)$"))
 async def handle_teacher_menu(message: Message) -> None:
-    """Handles /teacher command opening the department catalog."""
+    """Handles /teacher and '🗓 Расписание преподавателя' / '🗓 Оқытушының кестесі'."""
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
+    user_doc = await user_service.get_or_create_user(user_id)
+
+    if user_doc and user_doc.teacher:
+        from src.bot.handlers.callbacks_router import (
+            get_current_day_number,
+            render_teacher_day_schedule_message,
+        )
+        from src.database.models.teacher import Teacher
+        from src.services.teacher_directory import teacher_directory_service
+
+        tch_name = None
+        t_doc = None
+        try:
+            num_t_id = int(user_doc.teacher) if str(user_doc.teacher).isdigit() else user_doc.teacher
+            t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
+            if t_doc:
+                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
+                tch_name = enriched.get("fullName") or t_doc.name
+        except Exception:
+            pass
+
+        if not t_doc:
+            await message.answer(t("teacher_not_found", lang), parse_mode="HTML")
+            return
+
+        curr_day = get_current_day_number()
+        await render_teacher_day_schedule_message(
+            target_msg=message,
+            teacher_id=user_doc.teacher,
+            day_num=curr_day,
+            ui_lang=lang,
+            is_edit=False,
+            teacher_name=tch_name,
+        )
+        return
 
     try:
         from src.database.models.department import Department
@@ -204,7 +229,9 @@ async def handle_teacher_menu(message: Message) -> None:
 
     markup = get_departments_keyboard(departments, page=0, lang=lang)
     page_text = t("page_text", lang, page=1, pageCount=max(1, (len(departments) + 9) // 10))
-    msg_text = f"📍 {t('department_pick', lang)}\n{page_text}"
+    current_menu_text = f"📌 {t('department_pick', lang)}"
+    menu_hint = t("department_pick_hint", lang)
+    msg_text = f"{current_menu_text}\n{menu_hint}\n{page_text}"
 
     await message.answer(msg_text, reply_markup=markup, parse_mode="HTML")
 
@@ -212,8 +239,59 @@ async def handle_teacher_menu(message: Message) -> None:
 @commands_router.message(Command("group"))
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание студента|Студенттің кестесі)|[Гг]руппа|[Тт]обы)$"))
 async def handle_group_menu(message: Message) -> None:
-    """Handles /group command opening the faculty catalog for students."""
-    await handle_new_schedule(message)
+    """Handles /group and '🗓 Расписание студента' / '🗓 Студенттің кестесі'."""
+    user_id = message.from_user.id if message.from_user else 0
+    lang = await user_service.get_user_language(user_id)
+    user_doc = await user_service.get_or_create_user(user_id)
+
+    if user_doc and user_doc.group:
+        from src.bot.handlers.callbacks_router import (
+            get_current_day_number,
+            render_student_day_schedule_message,
+        )
+        from src.database.models.group import Group
+
+        grp_name = None
+        grp_lang = None
+        g_doc = None
+        try:
+            num_g_id = int(user_doc.group) if str(user_doc.group).isdigit() else user_doc.group
+            g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+            if g_doc:
+                grp_name = g_doc.name
+                grp_lang = g_doc.language
+        except Exception:
+            pass
+
+        if not g_doc:
+            await message.answer(t("group_not_found", lang), parse_mode="HTML")
+            return
+
+        sch_lang = grp_lang or ("kz" if lang == "kz" else "ru")
+        curr_day = get_current_day_number()
+        await render_student_day_schedule_message(
+            target_msg=message,
+            group_id=user_doc.group,
+            sch_lang=sch_lang,
+            day_num=curr_day,
+            ui_lang=lang,
+            is_edit=False,
+            group_name=grp_name,
+        )
+        return
+
+    try:
+        from src.database.models.faculty import Faculty
+
+        faculties = await Faculty.find().sort("id").to_list()
+    except Exception:
+        faculties = []
+
+    markup = get_faculties_keyboard(faculties, page=0, lang=lang)
+    page_text = t("page_text", lang, page=1, pageCount=max(1, (len(faculties) + 9) // 10))
+    msg_text = f"{t('faculty_pick', lang)} \n{page_text}"
+
+    await message.answer(msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 # Search prefix triggers: 'Г <group>', 'Т <group>', 'Г', 'Т', 'Группа <group>', 'Тобы <group>'
