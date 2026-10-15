@@ -26,6 +26,11 @@ from src.services.smart_search import (
     calculate_similarity,
     smart_search_service,
 )
+from src.services.black_list_service import (
+    BlackListService,
+    RestrictionRecord,
+    black_list_service,
+)
 from src.services.teacher_directory import (
     TeacherDirectoryService,
     clean_titles,
@@ -54,8 +59,10 @@ from src.services.table_image import (
 )
 
 __all__ = [
+    "BlackListService",
     "BuketovApiError",
     "BuketovApiService",
+    "black_list_service",
     "COLORS",
     "CacheEntry",
     "CircuitBreakerError",

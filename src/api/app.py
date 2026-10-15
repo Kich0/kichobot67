@@ -88,6 +88,11 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Kichobot services in lifespan manager...")
     try:
         await init_db()
+        from src.services.black_list_service import black_list_service
+        from src.services.user_toll_service import user_toll_service
+
+        await black_list_service.ensure_loaded()
+        await user_toll_service.ensure_loaded()
     except Exception as e:
         logger.error(f"Database initialization error during startup: {e}")
 

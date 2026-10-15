@@ -70,12 +70,16 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         self._max_queue_size = 2000
         self._is_flushing = False
         self._flush_lock = asyncio.Lock()
+        self._flush_task: asyncio.Task[None] | None = None
 
     def clear_cache(self) -> None:
         """Clears in-memory active user sets and queue."""
         self._known_active_users.clear()
         self._known_button_users.clear()
         self._queue.clear()
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+        self._flush_task = None
 
     async def flush(self) -> None:
         """Flushes enqueued action records to MongoDB."""
@@ -124,17 +128,20 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                     pass
 
     async def _save_record(self, record: dict[str, Any]) -> None:
-        """Enqueues record and triggers flush if batch threshold is met."""
+        """Enqueues record and triggers debounced background flush."""
         self._queue.append(record)
         if len(self._queue) > self._max_queue_size:
             # Drop oldest records to prevent unbounded RAM growth
             self._queue.pop(0)
 
         if len(self._queue) >= self._batch_threshold:
-            await self.flush()
-        else:
-            # Schedule immediate background flush so records are written without delaying handler
             asyncio.create_task(self.flush())
+        elif self._flush_task is None or self._flush_task.done():
+            async def _debounced() -> None:
+                await asyncio.sleep(0.02)
+                await self.flush()
+
+            self._flush_task = asyncio.create_task(_debounced())
 
     async def _check_has_prior_action(self, user_id: int) -> bool:
         """Checks whether user has performed any prior interaction in queue or DB."""

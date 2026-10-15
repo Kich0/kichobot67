@@ -110,6 +110,11 @@ class BuketovApiService:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.REQUEST_TIMEOUT_SECONDS),
+                limits=httpx.Limits(
+                    max_keepalive_connections=20,
+                    max_connections=50,
+                    keepalive_expiry=60.0,
+                ),
                 headers={
                     "Accept": "application/json",
                     "Accept-Encoding": "gzip",

@@ -26,7 +26,7 @@ def get_main_reply_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
             ],
         ],
         resize_keyboard=True,
-        one_time_keyboard=False,
+        one_time_keyboard=True,
     )
 
 

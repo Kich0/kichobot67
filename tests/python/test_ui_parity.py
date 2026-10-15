@@ -59,7 +59,7 @@ def test_main_reply_keyboard_ru_and_kz():
     # Russian reply keyboard
     kb_ru = get_main_reply_keyboard(lang="ru")
     assert kb_ru.resize_keyboard is True
-    assert kb_ru.one_time_keyboard is False
+    assert kb_ru.one_time_keyboard is True
     assert not getattr(kb_ru, "is_persistent", False)
     assert len(kb_ru.keyboard) == 2
     # Row 1
@@ -72,7 +72,7 @@ def test_main_reply_keyboard_ru_and_kz():
     # Kazakh reply keyboard
     kb_kz = get_main_reply_keyboard(lang="kz")
     assert kb_kz.resize_keyboard is True
-    assert kb_kz.one_time_keyboard is False
+    assert kb_kz.one_time_keyboard is True
     assert not getattr(kb_kz, "is_persistent", False)
     assert len(kb_kz.keyboard) == 2
     # Row 1

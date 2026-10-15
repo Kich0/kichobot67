@@ -565,11 +565,13 @@ async def handle_ban_command(message: Message) -> None:
         await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
-    from src.database.models.black_list import BlackList
+    from src.services.black_list_service import black_list_service
 
-    await BlackList.find_one({"userId": target_user.user_id}).upsert(
-        {"$set": {"userId": target_user.user_id, "type": "ban", "reason": reason, "username": target_user.username}},
-        on_insert=BlackList(userId=target_user.user_id, type="ban", reason=reason, username=target_user.username),
+    await black_list_service.add_ban(
+        user_id=target_user.user_id,
+        reason=reason,
+        username=target_user.username,
+        banned_by=message.from_user.id if message.from_user else None,
     )
     await message.answer(f"⛔ Пользователь {target_user.user_id} заблокирован.")
 
@@ -593,11 +595,13 @@ async def handle_mute_command(message: Message) -> None:
         await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
-    from src.database.models.black_list import BlackList
+    from src.services.black_list_service import black_list_service
 
-    await BlackList.find_one({"userId": target_user.user_id}).upsert(
-        {"$set": {"userId": target_user.user_id, "type": "mute", "reason": reason, "username": target_user.username}},
-        on_insert=BlackList(userId=target_user.user_id, type="mute", reason=reason, username=target_user.username),
+    await black_list_service.add_mute(
+        user_id=target_user.user_id,
+        reason=reason,
+        username=target_user.username,
+        banned_by=message.from_user.id if message.from_user else None,
     )
     await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут.")
 
@@ -619,11 +623,10 @@ async def handle_unban_command(message: Message) -> None:
         await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
-    from src.database.models.black_list import BlackList
+    from src.services.black_list_service import black_list_service
 
-    res = await BlackList.find_one({"userId": target_user.user_id})
-    if res:
-        await res.delete()
+    had_entry = await black_list_service.remove(target_user.user_id)
+    if had_entry:
         await message.answer(f"✅ Ограничения с пользователя {target_user.user_id} сняты.")
     else:
         await message.answer(f"Пользователь {target_user.user_id} не был заблокирован.")
@@ -641,9 +644,10 @@ async def handle_bans_list(message: Message) -> None:
     if not await _check_admin(message):
         return
 
-    from src.database.models.black_list import BlackList
+    from src.services.black_list_service import black_list_service
 
-    restrictions = await BlackList.find().to_list()
+    await black_list_service.ensure_loaded()
+    restrictions = black_list_service.get_all()
     if not restrictions:
         await message.answer("Активных блокировок и мутов нет.")
         return

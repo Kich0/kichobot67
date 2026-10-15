@@ -49,6 +49,12 @@ class MessageGateMiddleware(BaseMiddleware):
         self._user_request_timestamps: dict[int, list[float]] = {}
         self._banned_users: dict[int, float] = {}
         self._ban_warning_sent: dict[int, bool] = {}
+        try:
+            from src.services.black_list_service import black_list_service
+
+            black_list_service.clear_cache()
+        except Exception:
+            pass
 
     def is_user_banned(self, user_id: int) -> bool:
         """Returns True if user is currently under temporary spam ban."""
@@ -67,6 +73,12 @@ class MessageGateMiddleware(BaseMiddleware):
         self._user_request_timestamps.clear()
         self._banned_users.clear()
         self._ban_warning_sent.clear()
+        try:
+            from src.services.black_list_service import black_list_service
+
+            black_list_service.clear_cache()
+        except Exception:
+            pass
 
     async def __call__(
         self,
@@ -86,30 +98,27 @@ class MessageGateMiddleware(BaseMiddleware):
         if isinstance(event, Message) and self.is_user_banned(user_id):
             return None
 
-        # 2. Check BlackList in MongoDB (admin ban/mute)
+        # 2. Check BlackList via O(1) in-memory service (no MongoDB network latency)
         try:
-            from src.database.models.black_list import BlackList
+            from src.services.black_list_service import black_list_service
 
-            restriction = await BlackList.find_one({"userId": user_id})
-            if restriction:
-                is_expired = restriction.until and restriction.until.timestamp() < now
-                if not is_expired:
-                    if restriction.type == "ban":
-                        if isinstance(event, CallbackQuery):
-                            await event.answer(
-                                "⛔ Ваш доступ к боту заблокирован администратором.",
-                                show_alert=True,
-                            )
-                        elif isinstance(event, Message) and event.chat.type == "private":
-                            await event.answer(
-                                "⛔ <b>Ваш доступ к боту заблокирован администратором.</b>",
-                                parse_mode="HTML",
-                            )
-                        return None
-                    elif restriction.type == "mute":
-                        if isinstance(event, CallbackQuery):
-                            await event.answer("🔇 Вам выдан мут администратором.", show_alert=True)
-                        return None
+            await black_list_service.ensure_loaded()
+            if black_list_service.is_banned(user_id):
+                if isinstance(event, CallbackQuery):
+                    await event.answer(
+                        "⛔ Ваш доступ к боту заблокирован администратором.",
+                        show_alert=True,
+                    )
+                elif isinstance(event, Message) and event.chat.type == "private":
+                    await event.answer(
+                        "⛔ <b>Ваш доступ к боту заблокирован администратором.</b>",
+                        parse_mode="HTML",
+                    )
+                return None
+            elif black_list_service.is_muted(user_id):
+                if isinstance(event, CallbackQuery):
+                    await event.answer("🔇 Вам выдан мут администратором.", show_alert=True)
+                return None
         except Exception as e:
             logger.debug(f"BlackList check skipped or errored: {e}")
 

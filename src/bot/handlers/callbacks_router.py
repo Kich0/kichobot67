@@ -20,7 +20,8 @@ import time
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from cachetools import TTLCache
 
 from src.services.group_sorting import sort_groups, sort_teachers
 
@@ -54,15 +55,15 @@ from src.services.user_service import user_service
 logger = get_logger("callbacks_router")
 callbacks_router = Router(name="callbacks_router")
 
-# In-memory RAM caches for schedule viewing
+# In-memory RAM caches for schedule viewing (bounded LRU with TTL matching AGENTS.md §4)
 # Key: f"{group_id}_{lang}" -> {"data": [...], "timestamp": float, "group": Any, "is_from_db": bool}
-student_schedule_cache: dict[str, dict[str, Any]] = {}
+student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=150, ttl=1800.0)
 
 # Key: f"{teacher_id}_{lang}" -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
-teacher_text_cache: dict[str, dict[str, Any]] = {}
+teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=150, ttl=1800.0)
 
 # Key: str(teacher_id) -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
-teacher_table_cache: dict[str, dict[str, Any]] = {}
+teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=100, ttl=1200.0)
 
 
 def clear_schedule_caches() -> None:
@@ -203,6 +204,55 @@ def format_subject_with_lesson_type(subject: str, lesson_type: str | None = None
     return clean_subject.strip()
 
 
+async def safe_edit_or_replace_message(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: str = "HTML",
+    disable_web_page_preview: bool = True,
+) -> None:
+    """Safely edits text message in-place, or deletes photo/stale message and sends a new one."""
+    if not message:
+        return
+
+    # If message contains photo/media, edit_text is forbidden by Telegram Bot API
+    if message.photo:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await message.answer(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+        return
+
+    try:
+        await message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except Exception as e:
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return
+        # If editing text failed (e.g. photo without message.photo populated or deleted message), delete and send fresh
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await message.answer(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+
+
 # === Basic Navigation Callbacks ===
 
 @callbacks_router.callback_query(F.data == "nothing")
@@ -235,19 +285,13 @@ async def handle_back_to_start(call: CallbackQuery) -> None:
         f"{t('new_schedule_menu_hint2', lang)}"
     )
 
-    if call.message:
-        try:
-            await call.message.edit_text(
-                prompt,
-                reply_markup=get_new_schedule_keyboard(lang),
-                parse_mode="HTML",
-            )
-        except Exception:
-            await call.message.answer(
-                prompt,
-                reply_markup=get_new_schedule_keyboard(lang),
-                parse_mode="HTML",
-            )
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(
+            call.message,
+            prompt,
+            reply_markup=get_new_schedule_keyboard(lang),
+            parse_mode="HTML",
+        )
 
 
 @callbacks_router.callback_query(F.data == "language_select")
@@ -258,8 +302,9 @@ async def handle_language_select_menu(call: CallbackQuery) -> None:
         "🌍 Выберите язык интерфейса. \n"
         "🌍 Интерфейстің тіл тандаңыз. "
     )
-    if call.message:
-        await call.message.edit_text(
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(
+            call.message,
             prompt,
             reply_markup=get_language_keyboard(),
         )
@@ -310,8 +355,8 @@ async def handle_faculty_menu(call: CallbackQuery) -> None:
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(faculties) + 9) // 10))
     msg_text = f"{t('faculty_pick', lang)} \n{page_text}"
 
-    if call.message:
-        await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 @callbacks_router.callback_query(F.data.startswith("program|"))
@@ -340,8 +385,8 @@ async def handle_program_menu(call: CallbackQuery) -> None:
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(programs) + 9) // 10))
     msg_text = f"{t('program_pick', lang)}\n{t('faculty', lang, faculty=faculty_name)}\n{page_text}"
 
-    if call.message:
-        await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 @callbacks_router.callback_query(F.data.startswith("group|"))
@@ -380,8 +425,8 @@ async def handle_group_menu(call: CallbackQuery) -> None:
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(groups) + 9) // 10))
     msg_text = f"{t('group_pick', lang)}\n{t('program', lang, program=program_name)}\n{page_text}"
 
-    if call.message:
-        await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -> None:
@@ -736,8 +781,8 @@ async def handle_department_menu(call: CallbackQuery) -> None:
     menu_hint = t("department_pick_hint", lang)
     msg_text = f"{current_menu_text}\n{menu_hint}\n{page_text}"
 
-    if call.message:
-        await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 @callbacks_router.callback_query(F.data.startswith("teacher|"))
@@ -775,8 +820,8 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(teachers) + 9) // 10))
     msg_text = f"📌 {t('teacher_pick', lang)}\n📘 {t('department', lang, departmentName=dept_name)}\n{page_text}"
 
-    if call.message:
-        await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+    if call.message and isinstance(call.message, Message):
+        await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
 async def get_or_fetch_teacher_text_schedule(
@@ -1256,6 +1301,7 @@ __all__ = [
     "get_or_fetch_teacher_text_schedule",
     "render_student_day_schedule_message",
     "render_teacher_day_schedule_message",
+    "safe_edit_or_replace_message",
     "student_schedule_cache",
     "teacher_table_cache",
     "teacher_text_cache",
