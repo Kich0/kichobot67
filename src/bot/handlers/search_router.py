@@ -1,0 +1,152 @@
+"""Smart Search message router.
+
+Routes free-text messages through SmartSearchService using RapidFuzz
+and phonetic Cyrillic/Kazakh normalization for instantaneous schedule lookup,
+disambiguation menus, and typo-tolerant suggestions.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from aiogram import F, Router
+from aiogram.types import Message
+
+from src.bot.keyboards.inline import (
+    get_fuzzy_suggestions_keyboard,
+    get_schedule_pagination_keyboard,
+    get_search_results_keyboard,
+    get_teacher_table_keyboard,
+)
+from src.core.i18n import t
+from src.core.logging import get_logger
+from src.services.smart_search import (
+    SearchResultType,
+    SmartSearchResult,
+    smart_search_service,
+)
+from src.services.teacher_directory import is_kazakh_text
+from src.services.user_service import user_service
+
+logger = get_logger("search_router")
+search_router = Router(name="search_router")
+
+# Prefixes that represent commands and should be ignored by free-text search
+COMMAND_PREFIXES = (
+    "/",
+    "🗒",
+    "🗓",
+    "💡",
+    "❓",
+    "⚠️",
+)
+
+
+@search_router.message(F.text)
+async def handle_text_search(message: Message) -> None:
+    """Processes free-text message as a smart search query."""
+    text = (message.text or "").strip()
+    if not text:
+        return
+
+    # Skip commands and button labels
+    if any(text.startswith(p) for p in COMMAND_PREFIXES):
+        return
+
+    user_id = message.from_user.id if message.from_user else 0
+    lang = await user_service.get_user_language(user_id)
+    if is_kazakh_text(text):
+        lang = "kz"
+
+    # Validation: reject queries shorter than 2 chars or with no alphanumeric characters
+    if len(text) < 2 or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", text):
+        await message.answer(
+            f"ℹ️ {t('search_command_content', lang)}",
+            parse_mode="HTML",
+        )
+        return
+
+    result: SmartSearchResult = await smart_search_service.search(text, user_language=lang)
+
+    # 1. Exact Group Match -> direct display of schedule
+    if result.result_type == SearchResultType.EXACT_GROUP and result.exact_group:
+        g = result.exact_group
+        g_id = g.get("id") or g.get("group_id")
+        g_lang = g.get("language") or ("kz" if lang == "kz" else "ru")
+
+        from src.bot.handlers.callbacks_router import (
+            get_current_day_number,
+            render_student_day_schedule_message,
+        )
+        curr_day = get_current_day_number()
+        await render_student_day_schedule_message(
+            target_msg=message,
+            group_id=g_id,
+            sch_lang=g_lang,
+            day_num=curr_day,
+            ui_lang=lang,
+            is_edit=False,
+            group_name=g.get("name"),
+        )
+        return
+
+    # 2. Exact Teacher Match -> direct display of teacher schedule
+    if result.result_type == SearchResultType.EXACT_TEACHER and result.exact_teacher:
+        tch = result.exact_teacher
+        t_id = tch.get("id") or tch.get("teacher_id")
+
+        from src.bot.handlers.callbacks_router import (
+            get_current_day_number,
+            render_teacher_day_schedule_message,
+        )
+        curr_day = get_current_day_number()
+        await render_teacher_day_schedule_message(
+            target_msg=message,
+            teacher_id=t_id,
+            day_num=curr_day,
+            ui_lang=lang,
+            is_edit=False,
+            teacher_name=tch.get("fullName") or tch.get("name"),
+        )
+        return
+
+    # 3. Disambiguation list (multiple groups, multiple teachers, or combined)
+    if result.result_type in (
+        SearchResultType.GROUPS_LIST,
+        SearchResultType.TEACHERS_LIST,
+        SearchResultType.COMBINED,
+    ):
+        total_matches = len(result.groups) + len(result.teachers)
+        heading = (
+            f"✨ По вашему запросу: <b>{text}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
+            "Выберите нужный вариант из списка:"
+        )
+        markup = get_search_results_keyboard(
+            groups=result.groups,
+            teachers=result.teachers,
+            lang=lang,
+        )
+        await message.answer(heading, reply_markup=markup, parse_mode="HTML")
+        return
+
+    # 4. Fuzzy Suggestions ("Did you mean?")
+    if result.result_type == SearchResultType.FUZZY_SUGGESTIONS and result.fuzzy_suggestions:
+        prompt = (
+            f"🔍 По запросу <b>{text}</b> ничего точного не найдено.\n\n"
+            "Возможно, вы имели в виду:"
+        )
+        markup = get_fuzzy_suggestions_keyboard(result.fuzzy_suggestions, lang=lang)
+        await message.answer(prompt, reply_markup=markup, parse_mode="HTML")
+        return
+
+    # 5. Not found fallback
+    not_found_msg = (
+        f"🔍 К сожалению, по запросу <b>{text}</b> ничего не найдено.\n\n"
+        "✍️ Проверьте правильность написания фамилии преподавателя или названия группы.\n"
+        "💡 Подробнее о поиске: /search"
+    )
+    await message.answer(not_found_msg, parse_mode="HTML")
+
+
+__all__ = ["search_router"]

@@ -1,16 +1,20 @@
 services:
   - type: web
     name: kichobot
-    runtime: node
+    runtime: python
     plan: free
     region: frankfurt
-    buildCommand: npm install
-    startCommand: node --max-old-space-size=350 --expose-gc server.js
+    buildCommand: pip install uv && uv pip install --system -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
     envVars:
       - key: TZ
         value: Asia/Almaty
-      - key: NODE_ENV
-        value: production
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: "65536"
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: PORT
         sync: false
       - key: DB_URI
@@ -19,9 +23,13 @@ services:
         sync: false
       - key: LOG_CHANEL_ID
         sync: false
+      - key: MEDIA_DUMP_CHANNEL_ID
+        sync: false
       - key: LOGGER_TG_TOKEN
         sync: false
       - key: BOT_ID
+        sync: false
+      - key: SCHEDULE_API_KEY
         sync: false
       - key: KSU_DOMAIN
         sync: false

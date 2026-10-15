@@ -1,0 +1,29 @@
+# Core Frameworks
+aiogram>=3.17.0,<4.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.34.0,<1.0.0
+
+# Settings & Serialization
+pydantic>=2.10.0,<3.0.0
+pydantic-settings>=2.7.0,<3.0.0
+orjson>=3.10.0,<4.0.0
+python-dotenv>=1.0.1
+
+# Database (Async MongoDB ODM)
+beanie>=1.29.0,<2.0.0
+motor>=3.6.0,<4.0.0
+
+# HTTP & Background Tasks
+httpx>=0.28.0,<1.0.0
+apscheduler>=3.10.4,<4.0.0
+
+# Image & Search Utilities
+resvg-py>=0.2.1
+rapidfuzz>=3.10.0,<4.0.0
+cachetools>=5.5.0,<6.0.0
+loguru>=0.7.2,<1.0.0
+
+# Testing
+pytest>=8.3.0
+pytest-asyncio>=0.25.0
+mongomock-motor>=0.0.32

@@ -1,0 +1,255 @@
+"""Schedule API Adapter for Buketov KarU.
+
+Converts raw REST API responses into normalized daily schedules
+for student groups and teachers, grouping subgroups with '📚'
+and localizing days of the week into Russian or Kazakh.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from src.services.teacher_directory import teacher_directory_service
+
+
+class ScheduleApiAdapter:
+    """Transforms raw university API records into bot schedule formats."""
+
+    def __init__(self) -> None:
+        self.days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+        self.days_kz = ["Дүйсенбі", "Сейсенбі", "Сәрсенбі", "Бейсенбі", "Жұма", "Сенбі"]
+
+    def get_day_index(self, record: dict[str, Any]) -> int:
+        """Determines 1-based day index (1=Mon ... 7=Sun) from record."""
+        day_idx = record.get("dayIndex")
+        if day_idx is not None:
+            try:
+                idx = int(day_idx)
+                if 1 <= idx <= 7:
+                    return idx
+            except (ValueError, TypeError):
+                pass
+
+        raw_day = str(record.get("day") or "").strip().lower()
+        day_map = {
+            "понедельник": 1,
+            "дүйсенбі": 1,
+            "monday": 1,
+            "вторник": 2,
+            "сейсенбі": 2,
+            "tuesday": 2,
+            "среда": 3,
+            "сәрсенбі": 3,
+            "wednesday": 3,
+            "четверг": 4,
+            "бейсенбі": 4,
+            "thursday": 4,
+            "пятница": 5,
+            "жұма": 5,
+            "friday": 5,
+            "суббота": 6,
+            "сенбі": 6,
+            "saturday": 6,
+            "воскресенье": 7,
+            "жексенбі": 7,
+            "sunday": 7,
+        }
+        return day_map.get(raw_day, 0)
+
+    def normalize_time(self, t: str | None) -> str:
+        """Normalizes time string (e.g., '08:30-09:20' -> '8.30-9.20')."""
+        if not t:
+            return ""
+        s = re.sub(r"\s+", "", str(t))
+        s = s.replace(":", ".")
+        s = re.sub(r"[-–—]", "-", s)
+        s = re.sub(r"(^|-)0(\d)", r"\1\2", s)
+        return s
+
+    def format_lesson_type(self, lesson_type: str | None) -> str:
+        """Formats lesson type badge with slashes (e.g. '/Лекция/')."""
+        if not lesson_type:
+            return ""
+        lower = str(lesson_type).lower().strip()
+        if "лекц" in lower or lower == "лек":
+            return "/Лекция/"
+        if "прак" in lower or "семин" in lower or lower == "пр":
+            return "/Прак.зан./"
+        if "лаб" in lower:
+            return "/Лаб.раб./"
+        if "сроп" in lower:
+            return "/СРОП/"
+        return f"/{str(lesson_type).strip()}/"
+
+    def format_lesson_type_badge(self, lesson_type: str | None) -> str:
+        """Formats plain text lesson type (e.g. 'Лекция')."""
+        if not lesson_type:
+            return ""
+        lower = str(lesson_type).lower().strip()
+        if "лекц" in lower or lower == "лек":
+            return "Лекция"
+        if "прак" in lower or "семин" in lower or lower == "пр":
+            return "Прак.зан."
+        if "лаб" in lower:
+            return "Лаб.раб."
+        if "сроп" in lower:
+            return "СРОП"
+        return str(lesson_type).strip()
+
+    def format_room(self, room: str | None, building: str | None) -> str:
+        """Formats classroom and university building string."""
+        if not room and not building:
+            return ""
+        clean_room = re.sub(r"^Ауд\.?\s*", "", str(room or ""), flags=re.IGNORECASE).strip()
+        clean_building = re.sub(r"^Корп(?:ус)?\.?\s*", "", str(building or ""), flags=re.IGNORECASE).strip()
+        if clean_room and clean_building:
+            if clean_room.endswith(f"/{clean_building}"):
+                return f"Ауд.{clean_room}"
+            return f"Ауд.{clean_room}/{clean_building}"
+        return f"Ауд.{clean_room or clean_building}"
+
+    def adapt_group_schedule(
+        self,
+        records: list[dict[str, Any]] | None = None,
+        language: str = "рус",
+    ) -> list[dict[str, Any]]:
+        """Adapts raw Buketov API records into student group schedule."""
+        records = records or []
+        norm_lang = str(language or "").lower().strip()
+        is_kz = norm_lang in ("каз", "kz", "kaz", "қаз")
+        days_list = self.days_kz if is_kz else self.days_ru
+        schedule: list[dict[str, Any]] = []
+
+        for day_num in range(1, 7):
+            day_name = days_list[day_num - 1]
+            day_records = [r for r in records if self.get_day_index(r) == day_num]
+            day_records.sort(key=lambda r: r.get("slot") or 0)
+
+            time_slot_map: dict[str, str] = {}
+
+            for r in day_records:
+                time_slot_label = r.get("time") or (f"Пара {r['slot']}" if r.get("slot") else "")
+                time_val = self.normalize_time(time_slot_label)
+                if not time_val:
+                    continue
+
+                # 1. Subject and lesson type
+                raw_subj = (r.get("subject") or r.get("discipline") or "").strip()
+                subject_line = ""
+                if raw_subj:
+                    type_badge = self.format_lesson_type(r.get("type") or r.get("lessonType"))
+                    if type_badge and type_badge.lower() not in raw_subj.lower():
+                        subject_line = f"{raw_subj} {type_badge}".strip()
+                    else:
+                        subject_line = raw_subj
+
+                # 2. Teacher name and classroom
+                teacher_full = ""
+                if r.get("teacher"):
+                    teacher_full = teacher_directory_service.format_teacher_for_student(
+                        r["teacher"], language
+                    )
+                room_str = self.format_room(r.get("room"), r.get("building"))
+
+                detail_line = ""
+                if teacher_full and room_str:
+                    if len(teacher_full) > 26 or (len(teacher_full) + len(room_str) + 1 > 35):
+                        detail_line = f"{teacher_full}\n{room_str}"
+                    else:
+                        detail_line = f"{teacher_full} {room_str}"
+                elif teacher_full:
+                    detail_line = teacher_full
+                elif room_str:
+                    detail_line = room_str
+
+                item_lines = [line for line in [subject_line, detail_line] if line]
+                if not item_lines:
+                    continue
+                lesson_block = "\n".join(item_lines)
+
+                if time_val in time_slot_map:
+                    time_slot_map[time_val] += f"\n📚 {lesson_block}"
+                else:
+                    time_slot_map[time_val] = lesson_block
+
+            subjects = [{"time": t, "subject": subj} for t, subj in time_slot_map.items()]
+            schedule.append({"day": day_name, "subjects": subjects})
+
+        return schedule
+
+    def adapt_teacher_schedule(
+        self,
+        records: list[dict[str, Any]] | None = None,
+        language: str = "рус",
+    ) -> list[dict[str, Any]]:
+        """Adapts raw Buketov API records into teacher schedule."""
+        records = records or []
+        norm_lang = str(language or "").lower().strip()
+        is_kz = norm_lang in ("каз", "kz", "kaz", "қаз")
+        days_list = self.days_kz if is_kz else self.days_ru
+        schedule: list[dict[str, Any]] = []
+
+        for day_num in range(1, 7):
+            day_name = days_list[day_num - 1]
+            day_records = [r for r in records if self.get_day_index(r) == day_num]
+            day_records.sort(key=lambda r: r.get("slot") or 0)
+
+            time_slot_map: dict[str, dict[str, Any]] = {}
+
+            for r in day_records:
+                time_slot_label = r.get("time") or (f"Пара {r['slot']}" if r.get("slot") else "")
+                time_val = self.normalize_time(time_slot_label)
+                if not time_val:
+                    continue
+
+                room = r.get("room") or ""
+                building = r.get("building") or ""
+                group_name = r.get("group") or "Занятие"
+
+                if time_val in time_slot_map:
+                    slot_data = time_slot_map[time_val]
+                    # Retain room/building from whichever record provides them
+                    if not slot_data.get("room") and room:
+                        slot_data["room"] = room
+                    if not slot_data.get("building") and building:
+                        slot_data["building"] = building
+                    eff_room = slot_data.get("room") or room
+                    eff_bld = slot_data.get("building") or building
+                    eff_room_str = f" ({eff_room}/{eff_bld})" if (eff_room or eff_bld) else ""
+
+                    if "groupsList" not in slot_data:
+                        existing_clean = re.sub(r"\s*\([^)]*\)", "", slot_data.get("group", "")).strip()
+                        slot_data["groupsList"] = [existing_clean]
+
+                    if group_name not in slot_data["groupsList"]:
+                        slot_data["groupsList"].append(group_name)
+                    slot_data["group"] = f"{', '.join(slot_data['groupsList'])}{eff_room_str}"
+
+                    if not slot_data.get("subject") and (r.get("subject") or r.get("discipline")):
+                        slot_data["subject"] = (r.get("subject") or r.get("discipline") or "").strip()
+
+                    if not slot_data.get("lessonType") and (r.get("type") or r.get("lessonType")):
+                        slot_data["lessonType"] = self.format_lesson_type_badge(
+                            r.get("type") or r.get("lessonType")
+                        )
+                else:
+                    room_str = f" ({room}/{building})" if (room or building) else ""
+                    time_slot_map[time_val] = {
+                        "time": time_val,
+                        "group": f"{group_name}{room_str}",
+                        "groupsList": [group_name],
+                        "subject": (r.get("subject") or r.get("discipline") or "").strip(),
+                        "lessonType": self.format_lesson_type_badge(r.get("type") or r.get("lessonType")),
+                        "room": room,
+                        "building": building,
+                    }
+
+            groups = list(time_slot_map.values())
+            schedule.append({"day": day_name, "groups": groups})
+
+        return schedule
+
+
+# Singleton instance
+schedule_api_adapter = ScheduleApiAdapter()
