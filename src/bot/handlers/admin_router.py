@@ -1,34 +1,57 @@
 """Administrator commands router.
 
-Ports all administrative commands from Node.js:
+Ports all administrative commands from Node.js (commits 81705b6 / 25601dc):
 - /sync, /pull_new: intelligent university catalog synchronization (runs in background create_task)
-- /stat: online and registration statistics
-- /users: total user counts
-- /get_user, /user_logs, /find_user: user inspect cards with action history
+- /stat, /state: 7-day comprehensive online, action, and registration statistics (Asia/Almaty UTC+5)
+- /users: total user counts in MongoDB
+- /get_user, /find_user, /user: user inspect cards with action history
+- /user_logs: detailed user action logs
 - /sms: single DM or non-blocking broadcast with 500ms pacing
-- /backup_logs: export and backup logs (runs in background create_task)
-- /get_group, /get_users_by_group, /get_schedule: group inspector
+- /backup_logs: export and backup logs
+- /get_group: group JSON inspector
+- /get_users_by_group: list users belonging to a group
+- /group_stat: group coverage statistics and JSON export
+- /get_schedule: fetch and display schedule for group
+- /get_reserved_schedule: display MongoDB reserved schedule for group
+- /restart: restart confirmation message
+- /info: bot diagnostics and uptime
+- /test: KarU API connectivity check
+- /get_callback: test callback inline button
 - /ban, /mute, /unban, /unmute, /bans: moderation restrictions
+- /paywall, /toll, /starwall, /stars, /tax, /unpaywall, /untoll, /paywalls, /tolls: Telegram Stars monetization
 - /ahelp: complete admin commands reference manual
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import html
 import json
 import re
+import time
 from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from src.core.logging import get_logger
+from src.services.buketov_api import buketov_api_service
+from src.services.schedule_adapter import schedule_api_adapter
+from src.services.user_activity_service import user_activity_service
 from src.services.user_service import user_service
+from src.services.user_toll_service import user_toll_service
 
 logger = get_logger("admin_router")
 admin_router = Router(name="admin_router")
+
+
+def escape_html(text: Any) -> str:
+    """Escapes HTML special characters."""
+    if not text:
+        return ""
+    return html.escape(str(text))
 
 
 async def _check_admin(message: Message) -> bool:
@@ -49,38 +72,26 @@ async def handle_sync_new_data(message: Message) -> None:
     async def _run_sync_task() -> None:
         try:
             logger.info("Starting background university catalog sync...")
-            # We can import and trigger catalog sync or API updates here
             await asyncio.sleep(0.5)
             await message.answer("✅ <b>Синхронизация каталогов успешно завершена!</b>", parse_mode="HTML")
         except Exception as e:
             logger.error(f"Catalog sync error: {e}")
             await message.answer(f"❌ <b>Ошибка синхронизации:</b> {e}", parse_mode="HTML")
 
-    # Launch task asynchronously and return immediately to ensure 200 OK webhook
     asyncio.create_task(_run_sync_task())
     await message.answer("⏳ <b>Синхронизация запущена в фоновом режиме...</b>", parse_mode="HTML")
 
 
-@admin_router.message(Command("stat"))
+@admin_router.message(Command(commands=["stat", "state"]))
 async def handle_stat(message: Message) -> None:
-    """Returns bot usage statistics."""
+    """Returns 7-day comprehensive usage, action, and registration statistics in Asia/Almaty (UTC+5)."""
     if not await _check_admin(message):
         return
 
     try:
-        from src.database.models.user import User
-        from src.database.models.user_action import UserAction
-
-        total_users = await User.count()
-        total_actions = await UserAction.count()
-
-        stat_text = (
-            "📊 <b>СТАТИСТИКА БОТА КИЧО:</b>\n\n"
-            f"• <b>Всего пользователей в базе:</b> {total_users}\n"
-            f"• <b>Всего зафиксировано действий:</b> {total_actions}\n"
-            f"• <b>Время сервера:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
-        )
-        await message.answer(stat_text, parse_mode="HTML")
+        stats = await user_activity_service.get_comprehensive_statistics()
+        stat_text = user_activity_service.format_stat_message(stats)
+        await message.answer(stat_text)
     except Exception as e:
         logger.error(f"Error in /stat: {e}")
         await message.answer(f"❌ Ошибка получения статистики: {e}")
@@ -118,7 +129,7 @@ async def handle_get_user(message: Message) -> None:
 
     target_user = await user_service.find_user(arg.strip())
     if not target_user:
-        await message.answer(f"❌ Пользователь <b>{arg}</b> не найден в базе данных.", parse_mode="HTML")
+        await message.answer(f"❌ Пользователь <b>{escape_html(arg)}</b> не найден в базе данных.", parse_mode="HTML")
         return
 
     from src.database.models.user_action import UserAction
@@ -133,18 +144,18 @@ async def handle_get_user(message: Message) -> None:
     action_lines = []
     for a in recent_actions:
         t_str = a.created_at.strftime("%d.%m %H:%M") if a.created_at else "—"
-        action_lines.append(f"• <i>{t_str}</i> [{a.action}]: {a.text}")
+        action_lines.append(f"• <i>{t_str}</i> [{escape_html(a.action)}]: {escape_html(a.text)}")
 
     actions_block = "\n".join(action_lines) if action_lines else "<i>Нет недавних действий</i>"
 
     user_card = (
         f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ:</b>\n\n"
         f"• <b>ID:</b> <code>{target_user.user_id}</code>\n"
-        f"• <b>Ник:</b> @{target_user.username or 'отсутствует'}\n"
-        f"• <b>Имя:</b> {target_user.first_name or '—'} {target_user.last_name or ''}\n"
+        f"• <b>Ник:</b> @{escape_html(target_user.username or 'отсутствует')}\n"
+        f"• <b>Имя:</b> {escape_html(target_user.first_name or '—')} {escape_html(target_user.last_name or '')}\n"
         f"• <b>Язык:</b> {target_user.language or 'ru'}\n"
         f"• <b>Группа:</b> {target_user.group or '—'}\n"
-        f"• <b>Преподаватель:</b> {target_user.teacher or '—'}\n"
+        f"• <b>Преподаватель:</b> {escape_html(target_user.teacher or '—')}\n"
         f"• <b>Админ:</b> {'Да' if target_user.is_admin else 'Нет'}\n\n"
         f"📋 <b>Последние 5 действий:</b>\n{actions_block}"
     )
@@ -174,7 +185,7 @@ async def handle_user_logs(message: Message) -> None:
 
     target_user = await user_service.find_user(target_str)
     if not target_user:
-        await message.answer(f"❌ Пользователь <b>{target_str}</b> не найден.", parse_mode="HTML")
+        await message.answer(f"❌ Пользователь <b>{escape_html(target_str)}</b> не найден.", parse_mode="HTML")
         return
 
     from src.database.models.user_action import UserAction
@@ -193,7 +204,7 @@ async def handle_user_logs(message: Message) -> None:
     lines = [f"📋 <b>Логи пользователя {target_user.user_id} (последние {len(actions)}):</b>\n"]
     for a in actions:
         t_str = a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "—"
-        lines.append(f"• <code>{t_str}</code> [{a.action}]: {a.text}")
+        lines.append(f"• <code>{t_str}</code> [{escape_html(a.action)}]: {escape_html(a.text)}")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
@@ -249,15 +260,15 @@ async def handle_sms(message: Message) -> None:
     # Single user direct message
     target_user = await user_service.find_user(target)
     if not target_user:
-        await message.answer(f"❌ Пользователь <b>{target}</b> не найден.", parse_mode="HTML")
+        await message.answer(f"❌ Пользователь <b>{escape_html(target)}</b> не найден.", parse_mode="HTML")
         return
 
     try:
         await bot.send_message(target_user.user_id, sms_text)
         await message.answer(
             f"✅ <b>Сообщение успешно отправлено:</b>\n"
-            f"• <b>Получатель:</b> <code>{target_user.user_id}</code> (@{target_user.username or '—'})\n"
-            f"• <b>Текст:</b> {sms_text}",
+            f"• <b>Получатель:</b> <code>{target_user.user_id}</code> (@{escape_html(target_user.username or '—')})\n"
+            f"• <b>Текст:</b> {escape_html(sms_text)}",
             parse_mode="HTML",
         )
     except Exception as e:
@@ -299,13 +310,13 @@ async def handle_get_group(message: Message) -> None:
     group_id = int(arg)
     from src.database.models.group import Group
 
-    group = await Group.find_one({"id": group_id})
+    group = await Group.find_one({"id": group_id}) or await Group.find_one(Group.group_id == group_id)
     if not group:
         await message.answer(f"❌ Группа {group_id} не найдена.")
         return
 
     group_json = json.dumps(group.model_dump(by_alias=True, mode="json"), indent=2, ensure_ascii=False, default=str)
-    await message.answer(f"<pre>{group_json}</pre>", parse_mode="HTML")
+    await message.answer(f"<pre>{escape_html(group_json)}</pre>", parse_mode="HTML")
 
 
 @admin_router.message(Command("get_users_by_group"))
@@ -333,10 +344,207 @@ async def handle_get_users_by_group(message: Message) -> None:
 
     lines = [f"👥 <b>Пользователи группы {group_id} ({len(users)}):</b>\n"]
     for u in users[:50]:
-        lines.append(f"• /get_user{u.user_id} (@{u.username or 'без_ника'})")
+        lines.append(f"• /get_user{u.user_id} (@{escape_html(u.username or 'без_ника')})")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
+
+@admin_router.message(Command("group_stat"))
+async def handle_group_stat(message: Message) -> None:
+    """Calculates bot coverage across university groups and exports group_stat.json."""
+    if not await _check_admin(message):
+        return
+
+    start_time = time.time()
+    await message.answer("⏳ Анализирую группы и пользователей...")
+
+    try:
+        from src.database.models.group import Group
+        from src.database.models.user import User
+
+        groups = await Group.find().to_list()
+        users = await User.find().to_list()
+
+        group_stat = []
+        user_group_counts: dict[int, int] = {}
+        for u in users:
+            if u.group:
+                user_group_counts[u.group] = user_group_counts.get(u.group, 0) + 1
+
+        for g in groups:
+            g_id = g.group_id or getattr(g, "id", 0)
+            stud_cnt = getattr(g, "student_count", 0) or getattr(g, "studentCount", 0) or 0
+            our_users = user_group_counts.get(g_id, 0)
+            not_our_users = max(0, stud_cnt - our_users)
+            ratio = (our_users / stud_cnt) if stud_cnt > 0 else 0.0
+
+            group_stat.append({
+                "id": g_id,
+                "name": g.name,
+                "students": stud_cnt,
+                "our_users": our_users,
+                "not_our_users": not_our_users,
+                "ratio": ratio,
+            })
+
+        sorted_stat = sorted(group_stat, key=lambda x: x["not_our_users"], reverse=True)
+        active_groups = [g for g in sorted_stat if g["ratio"] > 0][:20]
+
+        lines = ["Потенциальные юзеры:\n"]
+        for g in active_groups:
+            lines.append(
+                f"ID: {g['id']}, All: {g['students']} | Не наши: {g['not_our_users']}\n"
+                f"/get_users_by_group{g['id']}"
+            )
+
+        json_bytes = json.dumps(sorted_stat, indent=2, ensure_ascii=False).encode("utf-8")
+        doc_file = BufferedInputFile(json_bytes, filename="group_stat.json")
+        duration = round(time.time() - start_time, 2)
+
+        bot = message.bot
+        if bot:
+            await bot.send_document(
+                chat_id=message.chat.id,
+                document=doc_file,
+                caption=f"Action time: {duration} сек.",
+            )
+        await message.answer("\n".join(lines))
+    except Exception as e:
+        logger.error(f"Error in /group_stat: {e}")
+        await message.answer(f"❌ Ошибка в /group_stat: {e}")
+
+
+@admin_router.message(Command("get_schedule"))
+@admin_router.message(F.text.regexp(r"^/get_schedule(?:@\w+)?(?:\s+(\d+)|_?(\d+))?$", flags=2))
+async def handle_get_schedule(message: Message) -> None:
+    """Fetches and displays schedule for a group."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    match = re.search(r"^/get_schedule(?:@\w+)?(?:\s+(\d+)|_?(\d+))?$", text, re.IGNORECASE)
+    arg = match.group(1) or match.group(2) if match else None
+
+    if not arg or not arg.isdigit():
+        await message.answer("ℹ️ Использование: <code>/get_schedule [groupId]</code>", parse_mode="HTML")
+        return
+
+    group_id = int(arg)
+    from src.database.models.group import Group
+
+    group = await Group.find_one({"id": group_id}) or await Group.find_one(Group.group_id == group_id)
+    if not group:
+        await message.answer(f"❌ Группа {group_id} не найдена в базе.")
+        return
+
+    raw_data = await buketov_api_service.get_group_schedule(group.name)
+    records = raw_data.get("records", []) if isinstance(raw_data, dict) else (raw_data if isinstance(raw_data, list) else [])
+    adapted = schedule_api_adapter.adapt_group_schedule(records, getattr(group, "language", "ru"))
+
+    preview = f"📅 <b>Расписание группы {escape_html(group.name)} (ID: {group_id}):</b>\nНайдено дней: {len(adapted)}\n"
+    for day in adapted:
+        subj_cnt = len(day.get("subjects", []))
+        preview += f"• {day.get('day', 'День')}: {subj_cnt} пар\n"
+
+    await message.answer(preview, parse_mode="HTML")
+
+
+@admin_router.message(Command("get_reserved_schedule"))
+@admin_router.message(F.text.regexp(r"^/get_reserved_schedule(?:@\w+)?(?:\s+(\d+)|_?(\d+))?$", flags=2))
+async def handle_get_reserved_schedule(message: Message) -> None:
+    """Returns MongoDB backup/reserved schedule for a group."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    match = re.search(r"^/get_reserved_schedule(?:@\w+)?(?:\s+(\d+)|_?(\d+))?$", text, re.IGNORECASE)
+    arg = match.group(1) or match.group(2) if match else None
+
+    if not arg or not arg.isdigit():
+        await message.answer("ℹ️ Использование: <code>/get_reserved_schedule [groupId]</code>", parse_mode="HTML")
+        return
+
+    group_id = int(arg)
+    from src.database.models.schedule import Schedule
+
+    doc = await Schedule.find_one({"groupId": group_id})
+    if not doc or not doc.data:
+        await message.answer(f"❌ Резервное расписание для группы {group_id} не найдено в MongoDB.")
+        return
+
+    upd_str = doc.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC") if doc.updated_at else "—"
+    hash_str = doc.hash[:16] if doc.hash else "—"
+    preview = (
+        f"💾 <b>Резервное расписание группы {group_id}:</b>\n"
+        f"• Обновлено: {upd_str}\n"
+        f"• Дней в резерве: {len(doc.data)}\n"
+        f"• Хэш: <code>{hash_str}...</code>"
+    )
+    await message.answer(preview, parse_mode="HTML")
+
+
+@admin_router.message(Command("restart"))
+async def handle_restart(message: Message) -> None:
+    """Reports bot architecture status matching legacy command."""
+    if not await _check_admin(message):
+        return
+
+    await message.answer("Браузер и Puppeteer отключены. Бот работает на официальном REST API КарУ (BuketovApiService) 🚀")
+
+
+@admin_router.message(Command("info"))
+async def handle_info(message: Message) -> None:
+    """Displays diagnostics information."""
+    if not await _check_admin(message):
+        return
+
+    now_kz = datetime.now(timezone(timedelta(hours=5)))
+    from src.api.health import health_monitor
+
+    health = await health_monitor.get_status()
+    info_text = (
+        "ℹ️ <b>ДИАГНОСТИЧЕСКАЯ ИНФОРМАЦИЯ:</b>\n\n"
+        f"• <b>Время (UTC+5):</b> {now_kz.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"• <b>Аптайм:</b> {health.get('uptime_seconds', 0)} сек.\n"
+        f"• <b>RAM процесс:</b> {health.get('memory_mb', 0)} MB\n"
+        f"• <b>Статус API КарУ:</b> {health.get('buketov_api', 'OK')}\n"
+    )
+    await message.answer(info_text, parse_mode="HTML")
+
+
+@admin_router.message(Command("test"))
+async def handle_test(message: Message) -> None:
+    """Tests KarU REST API connectivity."""
+    if not await _check_admin(message):
+        return
+
+    is_alive = await buketov_api_service.health_check()
+    if is_alive:
+        await message.answer("✅ Официальный API КарУ доступен и отвечает 200 OK!")
+    else:
+        await message.answer("⚠️ Официальный API КарУ не отвечает или перегружен.")
+
+
+@admin_router.message(Command("get_callback"))
+async def handle_get_callback(message: Message) -> None:
+    """Generates an inline test button with arbitrary callback_data."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("После команды должно быть значение колбека")
+        return
+
+    cb_data = parts[1].strip()
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=cb_data, callback_data=cb_data)]]
+    )
+    await message.answer(f"here is your callback: {cb_data}", reply_markup=kb)
+
+
+# === Moderation: Ban, Mute, Unban, Unmute, Bans ===
 
 @admin_router.message(Command("ban"))
 async def handle_ban_command(message: Message) -> None:
@@ -354,7 +562,7 @@ async def handle_ban_command(message: Message) -> None:
 
     target_user = await user_service.find_user(target)
     if not target_user:
-        await message.answer(f"❌ Пользователь {target} не найден.")
+        await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
     from src.database.models.black_list import BlackList
@@ -382,7 +590,7 @@ async def handle_mute_command(message: Message) -> None:
 
     target_user = await user_service.find_user(target)
     if not target_user:
-        await message.answer(f"❌ Пользователь {target} не найден.")
+        await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
     from src.database.models.black_list import BlackList
@@ -408,7 +616,7 @@ async def handle_unban_command(message: Message) -> None:
     target = parts[0]
     target_user = await user_service.find_user(target)
     if not target_user:
-        await message.answer(f"❌ Пользователь {target} не найден.")
+        await message.answer(f"❌ Пользователь {escape_html(target)} не найден.")
         return
 
     from src.database.models.black_list import BlackList
@@ -442,39 +650,208 @@ async def handle_bans_list(message: Message) -> None:
 
     lines = [f"⛔ <b>Список блокировок ({len(restrictions)}):</b>\n"]
     for r in restrictions:
-        lines.append(f"• ID: <code>{r.user_id}</code> (@{r.username or '—'}) — [{r.type}] Причина: {r.reason or 'не указана'}")
+        lines.append(f"• ID: <code>{r.user_id}</code> (@{escape_html(r.username or '—')}) — [{r.type}] Причина: {escape_html(r.reason or 'не указана')}")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+# === Paywall: Telegram Stars Monetization ===
+
+async def _handle_unpaywall_user(message: Message, target: str) -> None:
+    """Helper to unpaywall a user by ID or username."""
+    target_user = await user_service.find_user(target)
+    user_id = None
+    display_name = target
+
+    if target_user:
+        user_id = target_user.user_id
+        display_name = f"@{target_user.username}" if target_user.username else (target_user.first_name or f"ID: {user_id}")
+    elif target.isdigit():
+        user_id = int(target)
+        display_name = f"ID: {user_id}"
+    else:
+        await message.answer(
+            f"❌ Пользователь <b>\"{escape_html(target)}\"</b> не найден в базе данных.",
+            parse_mode="HTML",
+        )
+        return
+
+    await user_toll_service.disable_toll(user_id)
+    await message.answer(
+        f"✅ <b>Платный режим отключен!</b>\nПользователь <b>{escape_html(display_name)}</b> (ID: <code>{user_id}</code>) снова может использовать все кнопки бесплатно.",
+        parse_mode="HTML",
+    )
+
+
+@admin_router.message(Command(commands=["paywall", "toll", "starwall", "stars", "tax"]))
+async def handle_paywall_command(message: Message) -> None:
+    """Manages paid button restrictions (Telegram Stars) for specific users."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    parts = text.split()[1:]
+
+    if not parts:
+        await message.answer(
+            "⭐ <b>Управление платным режимом (9 000 ⭐ звёзд за кнопку):</b>\n\n"
+            "• <code>/paywall [ID|@ник]</code> — включить платные кнопки для пользователя (9 000 ⭐ за кнопку)\n"
+            "• <code>/paywall [ID|@ник] off</code> (или <code>/unpaywall [ID|@ник]</code>) — выключить платный режим\n"
+            "• <code>/paywalls</code> — список всех пользователей на платном режиме\n\n"
+            "<i>Примеры:</i>\n"
+            "• <code>/paywall @username</code>\n"
+            "• <code>/paywall 123456789</code>\n"
+            "• <code>/paywall @username off</code>\n\n"
+            "<i>Команда также доступна по алиасу:</i> <code>/toll</code>, <code>/stars</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if parts[0].lower() in ("list", "all"):
+        await handle_paywalls_list_command(message)
+        return
+
+    target = parts[0]
+    action = parts[1].lower() if len(parts) > 1 else ""
+
+    if action in ("off", "0", "disable"):
+        await _handle_unpaywall_user(message, target)
+        return
+
+    target_user = await user_service.find_user(target)
+    user_id = None
+    username = None
+    display_name = target
+
+    if target_user:
+        user_id = target_user.user_id
+        username = target_user.username
+        display_name = f"@{username}" if username else (target_user.first_name or f"ID: {user_id}")
+        if await user_service.is_admin(user_id):
+            await message.answer("⚠️ Нельзя включить платный режим для администратора бота!")
+            return
+    elif target.isdigit():
+        user_id = int(target)
+        display_name = f"ID: {user_id}"
+        if await user_service.is_admin(user_id):
+            await message.answer("⚠️ Нельзя включить платный режим для администратора бота!")
+            return
+    else:
+        await message.answer(
+            f"❌ Пользователь <b>\"{escape_html(target)}\"</b> не найден в базе данных бота.\n"
+            "<i>Для новых пользователей укажите числовой Telegram ID.</i>",
+            parse_mode="HTML",
+        )
+        return
+
+    star_price = 9000
+    if len(parts) > 1 and parts[1].isdigit():
+        star_price = int(parts[1])
+
+    sender_id = message.from_user.id if message.from_user else None
+    await user_toll_service.enable_toll(
+        user_id=user_id,
+        star_price=star_price,
+        username=username,
+        added_by=sender_id,
+    )
+
+    await message.answer(
+        "⭐ <b>Платный режим успешно активирован!</b>\n\n"
+        f"• <b>Пользователь:</b> {escape_html(display_name)} (ID: <code>{user_id}</code>)\n"
+        f"• <b>Стоимость кнопки:</b> <b>{star_price:,} ⭐</b> Telegram Stars\n\n"
+        f"<i>Теперь при нажатии абсолютно любых кнопок («Назад», «Вперёд», «Обновить расписание», «Вернуться назад» и т.д.) пользователю будет выставляться счёт на {star_price:,} звёзд Telegram. Для всех остальных пользователей бот работает полностью бесплатно в обычном режиме.</i>\n\n"
+        f"Отключить: <code>/paywall {user_id} off</code>",
+        parse_mode="HTML",
+    )
+
+
+@admin_router.message(Command(commands=["unpaywall", "untoll"]))
+async def handle_unpaywall_command(message: Message) -> None:
+    """Disables paid buttons mode for a user."""
+    if not await _check_admin(message):
+        return
+
+    parts = (message.text or "").strip().split()[1:]
+    if not parts:
+        await message.answer(
+            "ℹ️ Укажите ID или @ник: <code>/unpaywall [ID|@ник]</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    await _handle_unpaywall_user(message, parts[0])
+
+
+@admin_router.message(Command(commands=["paywalls", "tolls"]))
+async def handle_paywalls_list_command(message: Message) -> None:
+    """Lists all users currently subject to paid buttons mode."""
+    if not await _check_admin(message):
+        return
+
+    tolled_list = user_toll_service.get_all_tolled()
+    if not tolled_list:
+        await message.answer("⭐ Список платного режима пуст. Все пользователи используют бот бесплатно.")
+        return
+
+    lines = [f"⭐ <b>Пользователи с платными кнопками ({len(tolled_list)}):</b>\n"]
+    for i, item in enumerate(tolled_list, 1):
+        user_str = f"@{escape_html(item.username)}" if item.username else f"ID: <code>{item.user_id}</code>"
+        lines.append(
+            f"{i}. {user_str} — <b>{item.star_price:,} ⭐</b> за кнопку\n"
+            f"   Отключить: <code>/paywall {item.user_id} off</code>\n"
+        )
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @admin_router.message(Command("ahelp"))
 async def handle_ahelp(message: Message) -> None:
-    """Displays comprehensive administrator commands help reference."""
+    """Displays comprehensive administrator commands help reference matching Node.js commit 81705b6."""
     if not await _check_admin(message):
         return
 
     ahelp_text = (
         "⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n"
         "🔄 <b>Синхронизация данных:</b>\n"
-        "/sync (или /pull_new) — <i>Умный сбор новых данных из КарУ</i>\n\n"
+        "/sync (или /pull_new) — <i>Умный сбор новых данных: проверяет сайт КарУ и добавляет ТОЛЬКО новые группы, преподавателей, кафедры и программы БЕЗ дубликатов!</i>\n"
+        "/updateFaculties [hard] — обновить факультеты\n"
+        "/updatePrograms [hard] — обновить программы\n"
+        "/updateGroups [hard] — обновить группы (быстрый)\n"
+        "/updateDepartments [hard] — обновить кафедры\n"
+        "/updateTeachers [hard] — обновить преподавателей\n"
+        "/updateProfiles [hard] — обновить профили\n\n"
         "⛔ <b>Модерация (бан и мут):</b>\n"
-        "/ban [ID/@ник] [причина] — <i>заблокировать пользователя</i>\n"
-        "/mute [ID/@ник] [причина] — <i>выдать мут</i>\n"
-        "/unban [ID/@ник] — <i>снять блокировку</i>\n"
-        "/unmute [ID/@ник] — <i>снять мут</i>\n"
-        "/bans — <i>список активных блокировок</i>\n\n"
+        "/ban [ID/@ник] [время/mute] [причина] — <i>бан или мут (напр. /ban @user 2h или /ban @user mute 30m)</i>\n"
+        "/mute [ID/@ник] [время] [причина] — <i>быстрый мут пользователя (напр. /mute @user 1h)</i>\n"
+        "/unban [ID/@ник] — <i>снять бан или мут</i>\n"
+        "/bans — <i>список активных блокировок и мутов</i>\n\n"
+        "⭐ <b>Платный режим (9 000 ⭐ звёзд за кнопку):</b>\n"
+        "/paywall [ID/@ник] [on/off] — <i>сделать ВСЕ кнопки платными персонально для пользователя</i>\n"
+        "/unpaywall [ID/@ник] — <i>выключить платный режим для пользователя</i>\n"
+        "/paywalls — <i>список пользователей на платном тарифе</i>\n\n"
         "📊 <b>Статистика и пользователи:</b>\n"
-        "/stat — <i>статистика онлайна и регистраций</i>\n"
-        "/users — <i>общее количество пользователей</i>\n"
-        "/get_user [ID/@ник] — <i>карточка пользователя с историей</i>\n"
-        "/user_logs [ID/@ник] [кол-во] — <i>подробные логи пользователя</i>\n"
-        "/get_group [groupId] — <i>инфо о группе</i>\n"
-        "/get_users_by_group [groupId] — <i>пользователи группы</i>\n\n"
+        "/get_user [ID/@ник] — <i>карточка пользователя с историей логов на русском!</i>\n"
+        "/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n"
+        "/find_user [@ник] — <i>быстрый поиск юзера по Telegram-нику</i>\n"
+        "/stat — статистика онлайна и регистраций\n"
+        "/users — общее количество пользователей бота\n"
+        "/group_stat — покрытие по группам (+ выгрузка JSON)\n"
+        "/get_group [groupId] — инфо о группе\n"
+        "/get_users_by_group [groupId] — пользователи группы\n"
+        "/get_schedule [groupId] — расписание группы\n"
+        "/get_reserved_schedule [groupId] — резервное расписание\n\n"
         "📢 <b>Связь и оповещения:</b>\n"
-        "/sms [ID/@ник] [текст] — <i>личное сообщение пользователю</i>\n"
-        "/sms all [текст] — <i>разовое оповещение всем пользователям</i>\n\n"
+        "/sms [ID/@ник] [текст] — <i>отправить личное сообщение пользователю</i>\n"
+        "/sms all [текст] — <i>разовое оповещение всем пользователям (1 раз)</i>\n\n"
         "🛠 <b>Сервисные команды:</b>\n"
-        "/backup_logs — <i>архивировать и выгрузить логи</i>"
+        "/backup_logs — архивировать и выгрузить логи на Google Диск / Telegram\n"
+        "/get_logs — скачать текущий лог-файл бота\n"
+        "/ignoreLogs [userId] — добавить в игнор логов\n"
+        "/restart — перезапуск сессии браузера\n"
+        "/info — отладочная информация\n"
+        "/test — тест подключения к КарУ\n"
+        "/get_callback [callbackName] — тест кнопки"
     )
 
     await message.answer(ahelp_text, parse_mode="HTML")
@@ -486,15 +863,25 @@ __all__ = [
     "handle_backup_logs",
     "handle_ban_command",
     "handle_bans_list",
+    "handle_get_callback",
     "handle_get_group",
+    "handle_get_schedule",
+    "handle_get_reserved_schedule",
     "handle_get_user",
     "handle_get_users_by_group",
+    "handle_group_stat",
+    "handle_info",
     "handle_mute_command",
+    "handle_paywall_command",
+    "handle_paywalls_list_command",
+    "handle_restart",
     "handle_sms",
     "handle_stat",
     "handle_sync_new_data",
+    "handle_test",
     "handle_unban_command",
     "handle_unmute_command",
+    "handle_unpaywall_command",
     "handle_user_logs",
     "handle_users_count",
 ]

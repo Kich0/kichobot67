@@ -13,7 +13,7 @@ from src.core.i18n import t
 
 
 def get_main_reply_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
-    """Returns persistent main reply keyboard matching Node.js commit 153."""
+    """Returns main reply keyboard matching Node.js commit 25601dc."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -26,7 +26,7 @@ def get_main_reply_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
             ],
         ],
         resize_keyboard=True,
-        is_persistent=True,
+        one_time_keyboard=False,
     )
 
 

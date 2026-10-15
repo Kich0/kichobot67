@@ -305,7 +305,7 @@ async def test_admin_router_commands_as_admin(mock_db):
     msg_stat = make_message(user_id=admin_id, text="/stat")
     await handle_stat(msg_stat)
     assert msg_stat.answer.call_count == 1
-    assert "СТАТИСТИКА БОТА КИЧО" in msg_stat.answer.call_args[0][0]
+    assert "Статистика ежедневного онлайна:" in msg_stat.answer.call_args[0][0]
 
     # /users
     msg_users = make_message(user_id=admin_id, text="/users")

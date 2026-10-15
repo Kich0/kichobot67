@@ -82,16 +82,8 @@ class MessageGateMiddleware(BaseMiddleware):
 
         user_id = user.id
 
-        # 1. Check temporary spam ban
-        if self.is_user_banned(user_id):
-            if isinstance(event, CallbackQuery):
-                try:
-                    await event.answer(
-                        "🚫 Бот временно заблокирован из-за спама. Подождите окончания блокировки.",
-                        show_alert=True,
-                    )
-                except Exception:
-                    pass
+        # 1. Check temporary spam ban (applies strictly to incoming text messages)
+        if isinstance(event, Message) and self.is_user_banned(user_id):
             return None
 
         # 2. Check BlackList in MongoDB (admin ban/mute)
@@ -121,44 +113,36 @@ class MessageGateMiddleware(BaseMiddleware):
         except Exception as e:
             logger.debug(f"BlackList check skipped or errored: {e}")
 
-        # 3. Sliding window spam detection
-        timestamps = self._user_request_timestamps.setdefault(user_id, [])
-        timestamps.append(now)
-        timestamps = [t for t in timestamps if now - t < self.spam_window]
-        self._user_request_timestamps[user_id] = timestamps
+        # 3. Sliding window spam detection (STRICTLY for Message text spam; button clicks do not cause 60s bans)
+        if isinstance(event, Message):
+            timestamps = self._user_request_timestamps.setdefault(user_id, [])
+            timestamps.append(now)
+            timestamps = [t for t in timestamps if now - t < self.spam_window]
+            self._user_request_timestamps[user_id] = timestamps
 
-        if len(timestamps) > self.spam_max_requests:
-            self._banned_users[user_id] = now + self.ban_duration
-            logger.warning(
-                f"[GATE] User {user_id} BANNED for {int(self.ban_duration)}s "
-                f"({len(timestamps)} msgs in {self.spam_window}s)"
-            )
-            if not self._ban_warning_sent.get(user_id):
-                self._ban_warning_sent[user_id] = True
-                ban_sec = int(self.ban_duration)
-                warning_text = (
-                    f"🚫 <b>Блокировка на {ban_sec} секунд</b>\n\n"
-                    "Вы отправили слишком много сообщений.\n"
-                    "⏳ Бот будет игнорировать вас до окончания блокировки.\n\n"
-                    "<i>Пожалуйста, не спамьте.</i>"
+            if len(timestamps) > self.spam_max_requests:
+                self._banned_users[user_id] = now + self.ban_duration
+                logger.warning(
+                    f"[GATE] User {user_id} BANNED for {int(self.ban_duration)}s "
+                    f"({len(timestamps)} msgs in {self.spam_window}s)"
                 )
-                if isinstance(event, Message):
+                if not self._ban_warning_sent.get(user_id):
+                    self._ban_warning_sent[user_id] = True
+                    ban_sec = int(self.ban_duration)
+                    warning_text = (
+                        f"🚫 <b>Блокировка на {ban_sec} секунд</b>\n\n"
+                        "Вы отправили слишком много сообщений.\n"
+                        "⏳ Бот будет игнорировать вас до окончания блокировки.\n\n"
+                        "<i>Пожалуйста, не спамьте.</i>"
+                    )
                     await event.answer(warning_text, parse_mode="HTML")
-                elif isinstance(event, CallbackQuery) and event.message:
-                    await event.message.answer(warning_text, parse_mode="HTML")
-            return None
+                return None
 
-        # 4. Rate-limit throttle (silent drop within 500ms)
-        last_interaction = self._user_last_interaction.get(user_id)
-        if last_interaction and (now - last_interaction < self.throttle_interval):
-            if isinstance(event, CallbackQuery):
-                try:
-                    await event.answer()
-                except Exception:
-                    pass
-            return None
-
-        self._user_last_interaction[user_id] = now
+            # 4. Message throttle interval
+            last_interaction = self._user_last_interaction.get(user_id)
+            if last_interaction and (now - last_interaction < self.throttle_interval):
+                return None
+            self._user_last_interaction[user_id] = now
 
         # 5. Media & message length validations for private messages
         if isinstance(event, Message) and event.chat.type == "private":

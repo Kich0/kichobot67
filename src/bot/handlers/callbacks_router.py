@@ -11,12 +11,18 @@ Handles inline button clicks:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+import hashlib
+import json
+import re
 import time
 from typing import Any
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery
+
+from src.services.group_sorting import sort_groups, sort_teachers
 
 from src.bot.keyboards.inline import (
     get_departments_keyboard,
@@ -112,6 +118,89 @@ def format_timestamp_clock(timestamp: float) -> str:
     """Formats clock string HH:MM:SS in Asia/Almaty timezone."""
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(TIMEZONE)
     return dt.strftime("%H:%M:%S")
+
+
+def transform_group_string(input_string: str) -> str:
+    """Transforms group string replacing (room/building) with (Ауд. room | building корпус).
+
+    Replicates Node.js commit 25601dc TeacherScheduleController.transformGroupString.
+    """
+    if not input_string:
+        return ""
+    regex = r"\s*\(([^/]+)/([^)]+)\)"
+    result_string = re.sub(regex, r" (Ауд. \1 | \2 корпус)", input_string)
+    parts = result_string.split(") ")
+    if len(parts) > 1:
+        for i in range(len(parts) - 1):
+            parts[i] += ")\n"
+        result_string = "".join(parts)
+    return result_string.strip()
+
+
+def add_symbol_to_each_line(input_string: str, symbol: str) -> str:
+    """Prefixes each line with symbol. Replicates Node.js addSymbolToEachLine."""
+    if not input_string:
+        return ""
+    lines = input_string.split("\n")
+    return "\n".join(f"{symbol} {line}" for line in lines)
+
+
+def format_subject_with_lesson_type(subject: str, lesson_type: str | None = None) -> str:
+    """Standardizes subject and lesson type badge matching Node.js commit 25601dc."""
+    if not subject:
+        return ""
+    clean_subject = subject.strip()
+
+    clean_subject = re.sub(r"\s*\((?:лекц?|лек)\)", " /Лекция/", clean_subject, flags=re.IGNORECASE)
+    clean_subject = re.sub(r"\s*/(?:лекц?|лек)/", " /Лекция/", clean_subject, flags=re.IGNORECASE)
+    clean_subject = re.sub(
+        r"\s*\((?:прак(?:тическое)?|семин(?:ар)?|пр)\)",
+        " /Прак.зан./",
+        clean_subject,
+        flags=re.IGNORECASE,
+    )
+    clean_subject = re.sub(
+        r"\s*/(?:прак(?:тическое)?|семин(?:ар)?|пр)/",
+        " /Прак.зан./",
+        clean_subject,
+        flags=re.IGNORECASE,
+    )
+    clean_subject = re.sub(
+        r"\s*\((?:лаб(?:ораторное)?|лаб)\)",
+        " /Лаб.раб./",
+        clean_subject,
+        flags=re.IGNORECASE,
+    )
+    clean_subject = re.sub(
+        r"\s*/(?:лаб(?:ораторное)?|лаб)/",
+        " /Лаб.раб./",
+        clean_subject,
+        flags=re.IGNORECASE,
+    )
+    clean_subject = re.sub(r"\s*\((?:сроп)\)", " /СРОП/", clean_subject, flags=re.IGNORECASE)
+    clean_subject = re.sub(r"\s*/(?:сроп)/", " /СРОП/", clean_subject, flags=re.IGNORECASE)
+
+    has_type_already = bool(
+        re.search(r"/(?:Лекция|Прак\.зан\.|Лаб\.раб\.|СРОП)/", clean_subject, flags=re.IGNORECASE)
+    )
+    if not has_type_already and lesson_type:
+        lower = lesson_type.lower().strip()
+        type_badge = ""
+        if "лекц" in lower or lower == "лек":
+            type_badge = "/Лекция/"
+        elif "прак" in lower or "семин" in lower or lower == "пр":
+            type_badge = "/Прак.зан./"
+        elif "лаб" in lower:
+            type_badge = "/Лаб.раб./"
+        elif "сроп" in lower:
+            type_badge = "/СРОП/"
+        elif lesson_type.strip():
+            type_badge = f"/{lesson_type.strip()}/"
+
+        if type_badge:
+            clean_subject = f"{clean_subject} {type_badge}"
+
+    return clean_subject.strip()
 
 
 # === Basic Navigation Callbacks ===
@@ -271,7 +360,8 @@ async def handle_group_menu(call: CallbackQuery) -> None:
         from src.database.models.group import Group
         from src.database.models.program import Program
 
-        groups = await Group.find({"program": program_id}).sort("name").to_list()
+        raw_groups = await Group.find({"program": program_id}).to_list()
+        groups = sort_groups(raw_groups)
         program = await Program.find_one({"id": program_id})
         program_name = program.name if program else f"ID {program_id}"
     except Exception:
@@ -292,6 +382,70 @@ async def handle_group_menu(call: CallbackQuery) -> None:
 
     if call.message:
         await call.message.edit_text(msg_text, reply_markup=markup, parse_mode="HTML")
+
+
+async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -> None:
+    """Quietly saves fresh student schedule into MongoDB Schedule collection as emergency fallback."""
+    if not group_id or not adapted_data:
+        return
+    try:
+        from src.database.models.schedule import Schedule
+
+        data_json = json.dumps(adapted_data, ensure_ascii=False, sort_keys=True, default=str)
+        sch_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
+        now_dt = datetime.now(timezone.utc)
+
+        num_id = int(group_id) if str(group_id).isdigit() else group_id
+        doc = await Schedule.find_one({"groupId": num_id})
+        if doc:
+            doc.data = adapted_data
+            doc.hash = sch_hash
+            doc.checked_at = now_dt
+            doc.updated_at = now_dt
+            await doc.save()
+        else:
+            new_doc = Schedule(
+                groupId=num_id,
+                data=adapted_data,
+                hash=sch_hash,
+                checkedAt=now_dt,
+                updatedAt=now_dt,
+            )
+            await new_doc.insert()
+    except Exception as e:
+        logger.debug(f"Background student schedule persistence error: {e}")
+
+
+async def _bg_persist_teacher_schedule(teacher_id: int | str, adapted_data: list[Any]) -> None:
+    """Quietly saves fresh teacher schedule into MongoDB TeacherSchedule collection."""
+    if not teacher_id or not adapted_data:
+        return
+    try:
+        from src.database.models.teacher_schedule import TeacherSchedule
+
+        data_json = json.dumps(adapted_data, ensure_ascii=False, sort_keys=True, default=str)
+        sch_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
+        now_dt = datetime.now(timezone.utc)
+
+        num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+        doc = await TeacherSchedule.find_one({"teacherId": num_id})
+        if doc:
+            doc.data = adapted_data
+            doc.hash = sch_hash
+            doc.checked_at = now_dt
+            doc.updated_at = now_dt
+            await doc.save()
+        else:
+            new_doc = TeacherSchedule(
+                teacherId=num_id,
+                data=adapted_data,
+                hash=sch_hash,
+                checkedAt=now_dt,
+                updatedAt=now_dt,
+            )
+            await new_doc.insert()
+    except Exception as e:
+        logger.debug(f"Background teacher schedule persistence error: {e}")
 
 
 async def get_or_fetch_student_schedule(
@@ -335,6 +489,8 @@ async def get_or_fetch_student_schedule(
                     "is_from_db": bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False,
                 }
                 student_schedule_cache[cache_key] = cached
+                if not cached["is_from_db"] and adapted:
+                    asyncio.create_task(_bg_persist_student_schedule(group_id, adapted))
             except Exception as e:
                 logger.warning(f"Error fetching schedule for group {grp_name} (id={group_id}): {e}")
 
@@ -373,7 +529,12 @@ async def build_student_day_schedule_view(
     else:
         day_info = days[day_num]
 
-    day_name = day_info.get("day", "День") if isinstance(day_info, dict) else getattr(day_info, "day", "День")
+    days_list = schedule_api_adapter.days_kz if ui_lang in ("kz", "каз") else schedule_api_adapter.days_ru
+    day_name = (
+        days_list[day_num]
+        if (0 <= day_num < len(days_list))
+        else (day_info.get("day", "День") if isinstance(day_info, dict) else getattr(day_info, "day", "День"))
+    )
     raw_subjects = day_info.get("subjects", []) if isinstance(day_info, dict) else getattr(day_info, "subjects", [])
     active_subjects = [
         s for s in raw_subjects
@@ -382,11 +543,14 @@ async def build_student_day_schedule_view(
 
     grp_name = group_name or f"Группа {group_id}"
     back_callback = "faculty|0"
+    g_doc = None
     try:
         from src.database.models.group import Group
 
         num_g_id = int(group_id) if str(group_id).isdigit() else group_id
         g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+        if not g_doc and group_name:
+            g_doc = await Group.find_one(Group.name == group_name) or await Group.find_one({"name": group_name})
         if g_doc:
             if not group_name and getattr(g_doc, "name", None):
                 grp_name = g_doc.name
@@ -407,10 +571,19 @@ async def build_student_day_schedule_view(
     except Exception as e:
         logger.debug(f"Error resolving group schedule back callback: {e}")
 
-    group_header = f"👥 <b>{grp_name}</b>\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n\n"
+    if g_doc and getattr(g_doc, "age", None):
+        group_header = (
+            f"{t('group_and_year', ui_lang, groupName=grp_name, groupYear=g_doc.age)}\n"
+            f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+        )
+    else:
+        group_header = (
+            f"👥 <b>{grp_name}</b>\n"
+            f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+        )
 
     if not active_subjects:
-        body = f"<b>{t('vacation', ui_lang, default='Выходной / Пар нет 🎉')}</b>\n\n"
+        body = f"<b>{t('vacation', ui_lang)}</b>\n\n"
     else:
         items = []
         for s in active_subjects:
@@ -425,7 +598,7 @@ async def build_student_day_schedule_view(
     footer = (
         f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
         f"{t('for_help', ui_lang)}\n"
-        f"{t('official_site_compare', ui_lang)}"
+        f"{t('official_site_compare', ui_lang)}\n"
     )
 
     full_text = group_header + body + footer
@@ -500,7 +673,7 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
 
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
-        await call.answer("✅ Расписание актуально", show_alert=False)
+        await call.answer()
         text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
         if call.message:
             try:
@@ -586,11 +759,12 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
         from src.database.models.department import Department
         from src.database.models.teacher import Teacher
 
-        raw_teachers = await Teacher.find({"department": dept_id}).sort("name").to_list()
+        raw_teachers = await Teacher.find({"department": dept_id}).to_list()
         teachers = [
             teacher_directory_service.enrich(t.model_dump(by_alias=True) if hasattr(t, "model_dump") else t)
             for t in raw_teachers
         ]
+        teachers = sort_teachers(teachers)
         dept = await Department.find_one({"id": dept_id})
         dept_name = dept.name if dept else f"ID {dept_id}"
     except Exception:
@@ -647,6 +821,8 @@ async def get_or_fetch_teacher_text_schedule(
                     "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
                 }
                 teacher_text_cache[cache_key] = cached
+                if not cached["is_from_db"] and adapted:
+                    asyncio.create_task(_bg_persist_teacher_schedule(teacher_id, adapted))
             except Exception as e:
                 logger.warning(f"Error fetching text schedule for teacher {tch_name} (id={teacher_id}): {e}")
 
@@ -692,49 +868,100 @@ async def build_teacher_day_text_view(
         if (isinstance(days, list) and len(days) > day_num)
         else {"day": "Понедельник", "groups": []}
     )
-    day_name = day_info.get("day", "День") if isinstance(day_info, dict) else getattr(day_info, "day", "День")
+    days_list = schedule_api_adapter.days_kz if ui_lang in ("kz", "каз") else schedule_api_adapter.days_ru
+    day_name = (
+        days_list[day_num]
+        if (0 <= day_num < len(days_list))
+        else (day_info.get("day", "День") if isinstance(day_info, dict) else getattr(day_info, "day", "День"))
+    )
     slots = day_info.get("groups", []) if isinstance(day_info, dict) else getattr(day_info, "groups", [])
     active_slots = [
         s for s in slots
         if (s.get("group", "").strip() if isinstance(s, dict) else getattr(s, "group", "").strip())
     ]
 
+    # Deduplicate slots by time matching Node.js commit 25601dc
+    deduplicated = []
+    seen_times: dict[str, dict[str, Any]] = {}
+    for s in active_slots:
+        item = s if isinstance(s, dict) else (s.model_dump() if hasattr(s, "model_dump") else vars(s))
+        raw_time = item.get("time", "")
+        norm_t = schedule_api_adapter.normalize_time(raw_time) if hasattr(schedule_api_adapter, "normalize_time") else raw_time
+        if norm_t and norm_t in seen_times:
+            existing = seen_times[norm_t]
+            g = item.get("group", "")
+            if g and g not in existing.get("group", ""):
+                existing["group"] = f"{existing.get('group', '')}, {g}"
+            if not existing.get("subject") and item.get("subject"):
+                existing["subject"] = item.get("subject")
+                existing["lessonType"] = item.get("lessonType")
+        else:
+            copy_item = dict(item)
+            if norm_t:
+                seen_times[norm_t] = copy_item
+            deduplicated.append(copy_item)
+
     tch_name = teacher_name or f"ID {teacher_id}"
     dept_id = 0
+    job_title = ""
+    is_head = False
     try:
         from src.database.models.teacher import Teacher
 
         num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-        t_doc = await Teacher.find_one({"id": num_id})
+        t_doc = await Teacher.find_one(Teacher.teacher_id == num_id) or await Teacher.find_one({"id": num_id})
+        if not t_doc and teacher_name:
+            t_doc = await Teacher.find_one(Teacher.name == teacher_name) or await Teacher.find_one({"name": teacher_name})
         if t_doc:
             enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
             if not teacher_name:
                 tch_name = enriched.get("fullName") or t_doc.name
             dept_id = t_doc.department or 0
+            is_head = bool(enriched.get("isHead") or getattr(t_doc, "is_head", False) or getattr(t_doc, "isHead", False))
+            job_title = enriched.get("jobTitle") or getattr(t_doc, "job_title", "") or getattr(t_doc, "jobTitle", "")
     except Exception:
         pass
 
-    header = f"👨‍🏫 <b>{tch_name}</b>\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n\n"
+    if not is_head and not job_title and teacher_id:
+        matched = teacher_directory_service.find_match(str(teacher_id)) or teacher_directory_service.find_match(tch_name)
+        if matched:
+            enriched = teacher_directory_service.enrich(matched)
+            if not teacher_name and enriched.get("fullName"):
+                tch_name = enriched.get("fullName")
+            is_head = is_head or bool(enriched.get("isHead"))
+            job_title = job_title or enriched.get("jobTitle") or ""
 
-    if not active_slots:
-        body = f"<b>{t('vacation', ui_lang, default='Пар нет 🎉')}</b>\n\n"
+    if is_head and not job_title:
+        job_title = "Кафедра меңгерушісі" if ui_lang in ("kz", "каз") else "Заведующий кафедрой"
+
+    title_part = f" ({job_title})" if job_title else ""
+    header = f"👥 <b>{tch_name}</b>{title_part}\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+
+    if not deduplicated:
+        body = f"🥳 <b>{t('vacation', ui_lang)}</b>\n\n"
     else:
-        items = []
-        for s in active_slots:
-            grp_name = s.get("group", "") if isinstance(s, dict) else getattr(s, "group", "")
-            subj_name = s.get("subject", "") if isinstance(s, dict) else getattr(s, "subject", "")
-            slot_time = s.get("time", "") if isinstance(s, dict) else getattr(s, "time", "")
-            grp_line = f"👥 {grp_name}"
-            subj_line = f"📚 {subj_name}" if subj_name else ""
-            items.append(f"⌚️ {slot_time}\n{grp_line}\n{subj_line}".strip())
-        body = "\n\n".join(items) + "\n\n"
+        formatted_items = []
+        for item in deduplicated:
+            slot_time = item.get("time", "")
+            grp_name = item.get("group", "")
+            subj_name = item.get("subject", "")
+            l_type = item.get("lessonType", "")
+
+            text = f"⌚️ {slot_time}\n"
+            formatted_group = transform_group_string(grp_name)
+            text += add_symbol_to_each_line(formatted_group, "👥") + "\n"
+            if subj_name:
+                formatted_subj = format_subject_with_lesson_type(subj_name, l_type)
+                text += f"📖 <i>{formatted_subj}</i>\n"
+            formatted_items.append(text.rstrip())
+        body = "\n\n".join(formatted_items) + "\n\n"
 
     elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
     clock = format_timestamp_clock(cached["timestamp"])
     footer = (
-        f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
+        f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
         f"{t('for_help', ui_lang)}\n"
-        f"{t('official_site_compare', ui_lang)}"
+        f"{t('official_site_compare', ui_lang)}\n"
     )
 
     full_text = header + body + footer
@@ -812,15 +1039,14 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
 
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
-        await call.answer("✅ Расписание актуально", show_alert=False)
+        await call.answer()
         if call.message and call.message.photo:
             try:
                 elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
                 clock = format_timestamp_clock(cached["timestamp"])
                 caption = (
-                    f"📊 <b>Загруженность: {teacher_name}</b>\n\n"
-                    f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
-                    f"{t('for_help', ui_lang)}"
+                    f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
+                    f"🕒 <i><b>{elapsed} || {clock}</b></i>"
                 )
                 markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
                 await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
@@ -847,6 +1073,8 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                 "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
             }
             teacher_table_cache[t_id_str] = cached
+            if not cached["is_from_db"] and adapted:
+                asyncio.create_task(_bg_persist_teacher_schedule(teacher_id, adapted))
         except Exception as e:
             logger.warning(f"Error fetching schedule for teacher {teacher_id}: {e}")
             if not cached:
@@ -884,9 +1112,8 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
     clock = format_timestamp_clock(cached["timestamp"])
     caption = (
-        f"📊 <b>Загруженность: {teacher_name}</b>\n\n"
-        f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
-        f"{t('for_help', ui_lang)}"
+        f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
+        f"🕒 <i><b>{elapsed} || {clock}</b></i>"
     )
     markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
 
@@ -972,7 +1199,7 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
     cached = teacher_text_cache.get(cache_key)
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
-        await call.answer("✅ Расписание актуально", show_alert=False)
+        await call.answer()
         text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
         if call.message:
             try:
@@ -1022,6 +1249,7 @@ __all__ = [
     "callbacks_router",
     "clear_schedule_caches",
     "format_elapsed_time",
+    "format_subject_with_lesson_type",
     "format_timestamp_clock",
     "get_current_day_number",
     "get_or_fetch_student_schedule",
@@ -1031,4 +1259,5 @@ __all__ = [
     "student_schedule_cache",
     "teacher_table_cache",
     "teacher_text_cache",
+    "transform_group_string",
 ]

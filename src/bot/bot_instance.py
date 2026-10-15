@@ -19,11 +19,13 @@ from src.bot.handlers import (
     admin_router,
     callbacks_router,
     commands_router,
+    payment_router,
     search_router,
 )
 from src.bot.middlewares import (
     MessageGateMiddleware,
     user_action_logging_middleware,
+    user_toll_middleware,
 )
 from src.core.config import settings
 
@@ -56,15 +58,15 @@ def create_dispatcher(
     dp.message.middleware(gate)
     dp.callback_query.middleware(gate)
 
-    # 2. Audit Trail Middleware
+    # 2. Audit Trail & Toll Middlewares
     dp.message.middleware(user_action_logging_middleware)
     dp.callback_query.middleware(user_action_logging_middleware)
+    dp.callback_query.middleware(user_toll_middleware)
 
-    # 3. Handlers and Routers (priority order: admin -> commands -> callbacks -> free-text search)
-    dp.include_router(admin_router)
-    dp.include_router(commands_router)
-    dp.include_router(callbacks_router)
-    dp.include_router(search_router)
+    # 3. Handlers and Routers (priority order: admin -> payment -> commands -> callbacks -> free-text search)
+    for r in (admin_router, payment_router, commands_router, callbacks_router, search_router):
+        r._parent_router = None
+        dp.include_router(r)
 
     return dp
 
