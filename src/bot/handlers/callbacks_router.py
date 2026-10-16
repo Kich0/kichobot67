@@ -1084,6 +1084,12 @@ async def get_or_fetch_teacher_text_schedule(
 ) -> dict[str, Any] | None:
     """Retrieves teacher schedule from RAM cache, Buketov API, or MongoDB fallback with multi-key aliasing."""
     canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        smart_warmup_engine.touch_teacher(canonical_id or teacher_id, tch_name or teacher_name)
+    except Exception:
+        pass
     norm_lang = _norm_cache_lang(ui_lang)
 
     # Collect all alias keys
@@ -1285,6 +1291,12 @@ async def render_teacher_day_schedule_message(
     teacher_name: str | None = None,
 ) -> None:
     """Helper to render teacher text schedule directly into a Message."""
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        smart_warmup_engine.touch_teacher(teacher_id, teacher_name)
+    except Exception:
+        pass
     cached = await get_or_fetch_teacher_text_schedule(teacher_id, ui_lang, teacher_name=teacher_name)
     if not cached or not cached.get("data"):
         text = (
@@ -1329,6 +1341,12 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
 
     now = time.time()
     canonical_id, teacher_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id)
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        smart_warmup_engine.touch_teacher(canonical_id or teacher_id, teacher_name or lookup_name)
+    except Exception:
+        pass
     t_id_str = str(canonical_id)
     cached = (
         teacher_table_cache.get(t_id_str)
@@ -1498,6 +1516,12 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
     user_id = call.from_user.id if call.from_user else 0
     ui_lang = await user_service.get_user_language(user_id)
     canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id)
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        smart_warmup_engine.touch_teacher(canonical_id or teacher_id, tch_name or lookup_name)
+    except Exception:
+        pass
     if user_id and canonical_id:
         asyncio.create_task(user_service.set_user_schedule_preference(user_id, "teacher", teacher=canonical_id))
 

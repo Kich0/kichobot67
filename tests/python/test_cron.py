@@ -248,17 +248,17 @@ def test_smart_warmup_engine_pacing_and_intervals():
     """Validates SmartWarmupEngine pacing math and API rate limit headroom."""
     engine = SmartWarmupEngine()
     assert engine.GROUP_INTERVAL_SEC == 4.0
-    assert engine.TEACHER_INTERVAL_SEC == 10.0
+    assert engine.TEACHER_INTERVAL_SEC == 5.0
     assert engine.TOP_GROUPS_LIMIT == 150
-    assert engine.TOP_TEACHERS_LIMIT == 30
+    assert engine.TOP_TEACHERS_LIMIT == 60
     assert engine.HEADROOM == 5
 
     group_req_per_min = 60.0 / engine.GROUP_INTERVAL_SEC  # 15 req/min
-    teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 6 req/min
-    total_req_per_min = group_req_per_min + teacher_req_per_min  # 21 req/min
+    teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 12 req/min
+    total_req_per_min = group_req_per_min + teacher_req_per_min  # 27 req/min
 
-    assert total_req_per_min == 21.0
-    # Must consume around 19% of university 110 req/min limit, leaving 81% free
+    assert total_req_per_min == 27.0
+    # Must consume around 24.5% of university 110 req/min limit, leaving 75.5% free
     assert total_req_per_min <= 110.0 * 0.25
 
 

@@ -2,8 +2,8 @@
 
 Manages continuous, pacing-controlled schedule pre-fetching:
 - TOP-150 student groups cycled every 10 minutes (1 req / 4.0s = 15 req/min).
-- TOP-30 teachers cycled every 5 minutes (1 req / 10.0s = 6 req/min).
-- Combined background rate: 21 req/min (19% of 110 req/min limit, leaving 89 req/min free).
+- TOP-60 teachers cycled every 5 minutes (1 req / 5.0s = 12 req/min).
+- Combined background rate: 27 req/min (24.5% of 110 req/min limit, leaving 83 req/min free).
 - Active window: 06:30 to 01:00 (Asia/Almaty, UTC+5).
 - Night sleep: 01:00 to 06:30 (zero outbound network requests).
 - Rate limiter headroom guard: skips tick if live user load reaches 105 req/min.
@@ -13,7 +13,7 @@ Manages continuous, pacing-controlled schedule pre-fetching:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone, timedelta
 import time
 from typing import Any
 import zoneinfo
@@ -55,9 +55,9 @@ class SmartWarmupEngine:
 
     # Pacing and sizing constants
     GROUP_INTERVAL_SEC: float = 4.0  # 150 groups over 600s (10 min) = 15 req/min
-    TEACHER_INTERVAL_SEC: float = 10.0  # 30 teachers over 300s (5 min) = 6 req/min
+    TEACHER_INTERVAL_SEC: float = 5.0  # 60 teachers over 300s (5 min) = 12 req/min
     TOP_GROUPS_LIMIT: int = 150
-    TOP_TEACHERS_LIMIT: int = 30
+    TOP_TEACHERS_LIMIT: int = 60
     TOP_LISTS_CACHE_TTL: float = 900.0  # 15 minutes
     HEADROOM: int = 5  # Leave at least 5 req/min margin under 110 limit
 
@@ -76,6 +76,52 @@ class SmartWarmupEngine:
         self._groups_cache_updated_at: float = 0.0
         self._teachers_cache: list[tuple[int | str, str]] = []
         self._teachers_cache_updated_at: float = 0.0
+        self._priority_teachers: dict[int | str, tuple[str, float]] = {}  # id -> (name, expires_at)
+
+    def touch_teacher(self, teacher_id: int | str, teacher_name: str | None = None) -> None:
+        """Dynamically enrolls or refreshes a teacher in the priority warmup queue for 2 hours (7200s).
+
+        Whenever a user views a teacher's schedule, this method is called to ensure
+        the teacher is prioritized in cyclic background warmup for the next 2 hours.
+        """
+        if teacher_id is None or teacher_id == "":
+            return
+
+        norm_id: int | str
+        if isinstance(teacher_id, int):
+            norm_id = teacher_id
+        elif isinstance(teacher_id, str) and teacher_id.strip().isdigit():
+            norm_id = int(teacher_id.strip())
+        else:
+            norm_id = str(teacher_id).strip()
+            if not norm_id:
+                return
+
+        t_name = (teacher_name or "").strip()
+        if not t_name:
+            try:
+                from src.services.teacher_directory import teacher_directory_service
+
+                profile = teacher_directory_service.find_by_id(norm_id) if isinstance(norm_id, int) else None
+                if profile:
+                    t_name = profile.get("name") or profile.get("fullName") or str(norm_id)
+                else:
+                    t_name = str(norm_id)
+            except Exception:
+                t_name = str(norm_id)
+
+        now = time.time()
+        expires_at = now + 7200.0  # 2 hours
+        self._priority_teachers[norm_id] = (t_name, expires_at)
+
+        # Update in-memory cache directly placing touched teacher at the front
+        existing = [
+            (tid, name)
+            for tid, name in self._teachers_cache
+            if tid != norm_id and (name.strip().lower() != t_name.strip().lower() if t_name and name else True)
+        ]
+        self._teachers_cache = [(norm_id, t_name)] + existing[: self.TOP_TEACHERS_LIMIT - 1]
+        logger.debug(f"[SmartWarmupEngine] Touched teacher {t_name} (id={norm_id}) for priority warmup (2h).")
 
     def _create_background_task(self, coro: Any) -> asyncio.Task[Any]:
         """Schedules a coroutine retaining a strong reference until completion to prevent GC drop."""
@@ -224,19 +270,19 @@ class SmartWarmupEngine:
                     from beanie.operators import NotIn
 
                     if top_group_ids:
-                        extra_groups = await Group.find(NotIn(Group.group_id, top_group_ids)).limit(needed).to_list()
+                        extra_groups = await Group.find(NotIn("id", top_group_ids)).limit(needed).to_list()
                     else:
                         extra_groups = await Group.find().limit(needed).to_list()
                     for g in extra_groups:
-                        _add_gid(g.group_id)
+                        _add_gid(getattr(g, "group_id", None) or getattr(g, "id", None))
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Group fallback query failed: {e}")
 
             if top_group_ids:
                 from beanie.operators import In
 
-                groups = await Group.find(In(Group.group_id, top_group_ids)).to_list()
-                group_map = {g.group_id: g.name for g in groups if g.name}
+                groups = await Group.find(In("id", top_group_ids)).to_list()
+                group_map = {(getattr(g, "group_id", None) or getattr(g, "id", None)): g.name for g in groups if g.name}
                 res = [(gid, group_map[gid]) for gid in top_group_ids if gid in group_map]
                 if res:
                     self._groups_cache = res
@@ -248,9 +294,28 @@ class SmartWarmupEngine:
         return self._groups_cache
 
     async def _get_top_teachers(self) -> list[tuple[int | str, str]]:
-        """Retrieves top popular teachers from cache, database, or directory."""
+        """Retrieves top popular teachers from cache, database, or directory based on 45-day activity."""
         now = time.time()
+        # Clean expired priority teachers
+        self._priority_teachers = {
+            tid: (name, exp) for tid, (name, exp) in self._priority_teachers.items() if exp > now
+        }
+
         if self._teachers_cache and (now - self._teachers_cache_updated_at < self.TOP_LISTS_CACHE_TTL):
+            active_p = [
+                (tid, name)
+                for tid, (name, exp) in sorted(self._priority_teachers.items(), key=lambda x: x[1][1], reverse=True)
+                if exp > now
+            ]
+            if active_p:
+                p_ids = {int(p[0]) if (isinstance(p[0], str) and p[0].isdigit()) else p[0] for p in active_p}
+                p_names = {p[1].strip().lower() for p in active_p if p[1]}
+                merged = active_p + [
+                    t for t in self._teachers_cache
+                    if (int(t[0]) if (isinstance(t[0], str) and str(t[0]).isdigit()) else t[0]) not in p_ids
+                    and (t[1].strip().lower() not in p_names if t[1] else True)
+                ]
+                return merged[: self.TOP_TEACHERS_LIMIT]
             return self._teachers_cache
 
         try:
@@ -265,50 +330,130 @@ class SmartWarmupEngine:
                     return
                 tid: int | str
                 if isinstance(val, int):
+                    if val <= 0:
+                        return
                     tid = val
                 elif isinstance(val, str):
                     s = val.strip()
-                    if not s:
+                    if not s or s.lower() in ("none", "null", "0"):
                         return
                     tid = int(s) if s.isdigit() else s
+                    if isinstance(tid, int) and tid <= 0:
+                        return
                 else:
                     return
-                if tid not in seen_tids and len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
+                if tid not in seen_tids and len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT * 2:
                     seen_tids.add(tid)
                     top_teacher_ids.append(tid)
 
-            try:
-                pipeline = [
-                    {"$match": {"teacher": {"$exists": True, "$ne": None}}},
-                    {"$group": {"_id": "$teacher", "count": {"$sum": 1}}},
-                    {"$sort": {"count": -1}},
-                    {"$limit": self.TOP_TEACHERS_LIMIT},
-                ]
-                agg_result = await User.aggregate(pipeline).to_list()
-                for item in agg_result:
-                    _add_tid(item.get("_id"))
-            except Exception as e:
-                logger.debug(f"[SmartWarmupEngine] User aggregate for top teachers failed: {e}")
+            # 1. Enqueue active priority teachers (touched dynamically within the last 2 hours)
+            active_p_sorted = sorted(self._priority_teachers.items(), key=lambda x: x[1][1], reverse=True)
+            for p_id, (p_name, _) in active_p_sorted:
+                _add_tid(p_id)
 
-            if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
+            # 2. Aggregate UserAction for activity in the last 45 days (1.5 months)
+            if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT * 2:
                 try:
                     from src.database.models.user_action import UserAction
 
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=45)
+
                     act_pipeline = [
-                        {"$match": {"action": {"$regex": r"^(?:TeacherSchedule|teacherImg|teacherText)\|"}}},
-                        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+                        {
+                            "$match": {
+                                "createdAt": {"$gte": cutoff_date},
+                                "$or": [
+                                    {
+                                        "action": {
+                                            "$in": [
+                                                "view_teacher",
+                                                "view_teacher_text",
+                                                "view_teacher_image",
+                                                "refresh_teacher",
+                                                "refresh_teacher_image",
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "action": {
+                                            "$regex": r"^(?:TeacherSchedule|teacherImg|teacherText|refreshteacherImg|refresh_teacherimg|refreshTeacherSchedule)\|",
+                                            "$options": "i",
+                                        }
+                                    },
+                                ],
+                            }
+                        },
+                        {
+                            "$project": {
+                                "teacher_target": {
+                                    "$toString": {
+                                        "$ifNull": [
+                                            "$entityId",
+                                            {
+                                                "$ifNull": [
+                                                    "$entityName",
+                                                    {
+                                                        "$arrayElemAt": [
+                                                            {"$split": ["$action", "|"]},
+                                                            1,
+                                                        ]
+                                                    },
+                                                ]
+                                            },
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "$match": {
+                                "teacher_target": {"$ne": None, "$nin": ["", "0", "none", "null", "None", "Null"]}
+                            }
+                        },
+                        {
+                            "$group": {
+                                "_id": "$teacher_target",
+                                "count": {"$sum": 1},
+                            }
+                        },
                         {"$sort": {"count": -1}},
-                        {"$limit": self.TOP_TEACHERS_LIMIT},
+                        {"$limit": self.TOP_TEACHERS_LIMIT * 2},
                     ]
                     act_res = await UserAction.aggregate(act_pipeline).to_list()
                     for item in act_res:
-                        act_str = str(item.get("_id") or "")
-                        parts = act_str.split("|")
-                        if len(parts) > 1:
-                            _add_tid(parts[1])
+                        raw_val = item.get("_id")
+                        if raw_val is None:
+                            continue
+                        val_str = str(raw_val).strip()
+                        if not val_str or val_str.lower() in ("none", "null", "0"):
+                            continue
+                        if "|" in val_str:
+                            parts = val_str.split("|")
+                            if len(parts) > 1 and parts[1].strip():
+                                _add_tid(parts[1].strip())
+                            else:
+                                _add_tid(parts[0].strip())
+                        else:
+                            _add_tid(val_str)
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] UserAction aggregate for top teachers failed: {e}")
 
+            # 3. Supplement from User preferences
+            if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
+                try:
+                    pipeline = [
+                        {"$match": {"teacher": {"$exists": True, "$ne": None, "$nin": [0, "0", ""]}}},
+                        {"$group": {"_id": "$teacher", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": self.TOP_TEACHERS_LIMIT},
+                    ]
+                    agg_result = await User.aggregate(pipeline).to_list()
+                    for item in agg_result:
+                        _add_tid(item.get("_id"))
+                except Exception as e:
+                    logger.debug(f"[SmartWarmupEngine] User aggregate for top teachers failed: {e}")
+
+            # 4. Supplement from Teacher collection
             if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
                 needed = self.TOP_TEACHERS_LIMIT - len(top_teacher_ids)
                 try:
@@ -316,15 +461,17 @@ class SmartWarmupEngine:
 
                     num_ids = [t for t in top_teacher_ids if isinstance(t, int)]
                     if num_ids:
-                        extra_teachers = await Teacher.find(NotIn(Teacher.teacher_id, num_ids)).limit(needed).to_list()
+                        extra_teachers = await Teacher.find(NotIn("id", num_ids)).limit(needed).to_list()
                     else:
                         extra_teachers = await Teacher.find().limit(needed).to_list()
                     for t in extra_teachers:
-                        _add_tid(t.teacher_id)
+                        _add_tid(getattr(t, "teacher_id", None) or getattr(t, "id", None))
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher fallback query failed: {e}")
 
             teacher_map: dict[int | str, str] = {}
+            seen_teacher_identities: set[Any] = set()
+
             if top_teacher_ids:
                 try:
                     from src.bot.handlers.callbacks_router import resolve_teacher_identity
@@ -332,11 +479,28 @@ class SmartWarmupEngine:
                     for tid in top_teacher_ids:
                         if len(teacher_map) >= self.TOP_TEACHERS_LIMIT:
                             break
-                        can_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(tid)
+                        known_p_name = self._priority_teachers.get(tid, (None, 0))[0]
+                        can_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(tid, known_p_name)
                         use_id = int(can_id) if (isinstance(can_id, str) and can_id.isdigit()) else can_id
-                        use_name = lookup_name or tch_name
-                        if use_id not in teacher_map:
-                            teacher_map[use_id] = use_name
+                        use_name = lookup_name or tch_name or known_p_name
+
+                        canonical_key = use_id if (use_id is not None and use_id != 0) else tid
+                        if canonical_key in seen_teacher_identities:
+                            continue
+
+                        name_key = (use_name or "").strip().lower()
+                        if name_key and name_key in seen_teacher_identities:
+                            continue
+
+                        seen_teacher_identities.add(canonical_key)
+                        if name_key:
+                            seen_teacher_identities.add(name_key)
+                        if use_name:
+                            teacher_map[canonical_key] = use_name
+                        elif known_p_name:
+                            teacher_map[canonical_key] = known_p_name
+                        else:
+                            teacher_map[canonical_key] = str(canonical_key)
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher resolution in _get_top_teachers failed: {e}")
 
@@ -347,13 +511,18 @@ class SmartWarmupEngine:
 
                     num_ids = [t for t in teacher_map.keys() if isinstance(t, int)]
                     if num_ids:
-                        extra_teachers = await Teacher.find(NotIn(Teacher.teacher_id, num_ids)).limit(needed).to_list()
+                        extra_teachers = await Teacher.find(NotIn("id", num_ids)).limit(needed).to_list()
                     else:
                         extra_teachers = await Teacher.find().limit(needed).to_list()
                     for t in extra_teachers:
-                        name = t.name or t.full_name
-                        if t.teacher_id not in teacher_map and name:
-                            teacher_map[t.teacher_id] = name
+                        t_id = getattr(t, "teacher_id", None) or getattr(t, "id", None)
+                        name = getattr(t, "name", None) or getattr(t, "full_name", None)
+                        if t_id and t_id not in seen_teacher_identities and name:
+                            name_key = name.strip().lower()
+                            if name_key not in seen_teacher_identities:
+                                seen_teacher_identities.add(t_id)
+                                seen_teacher_identities.add(name_key)
+                                teacher_map[t_id] = name
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher fallback query failed: {e}")
 
@@ -365,10 +534,19 @@ class SmartWarmupEngine:
                     for t_dict in teacher_directory_service.teachers:
                         if len(teacher_map) >= self.TOP_TEACHERS_LIMIT:
                             break
-                        t_id = t_dict.get("id") or t_dict.get("teacherId") or t_dict.get("name")
                         t_name = t_dict.get("name") or t_dict.get("fullName")
-                        if t_id and t_name and t_id not in teacher_map:
-                            teacher_map[t_id] = t_name
+                        if not t_name:
+                            continue
+                        name_key = t_name.strip().lower()
+                        if name_key in seen_teacher_identities:
+                            continue
+                        t_id = t_dict.get("id") or t_dict.get("teacherId") or t_name
+                        if t_id in seen_teacher_identities:
+                            continue
+
+                        seen_teacher_identities.add(name_key)
+                        seen_teacher_identities.add(t_id)
+                        teacher_map[t_id] = t_name
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher directory fallback failed: {e}")
 
@@ -438,10 +616,21 @@ class SmartWarmupEngine:
                 teacher_text_cache,
             )
             from src.services.schedule_adapter import schedule_api_adapter
-            from src.services.teacher_directory import clean_titles
+            from src.services.teacher_directory import clean_titles, format_initials, teacher_directory_service
 
             canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
             api_lookup = lookup_name or teacher_name
+
+            if not api_lookup or str(api_lookup).isdigit() or str(api_lookup).startswith("ID "):
+                profile_cand = None
+                if isinstance(canonical_id, int):
+                    profile_cand = teacher_directory_service.find_by_id(canonical_id)
+                if not profile_cand and isinstance(teacher_id, int):
+                    profile_cand = teacher_directory_service.find_by_id(teacher_id)
+                if not profile_cand and teacher_name:
+                    profile_cand = teacher_directory_service.find_match(clean_titles(teacher_name))
+                if profile_cand:
+                    api_lookup = profile_cand.get("name") or profile_cand.get("fullName") or api_lookup
 
             raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=True)
             records = (
@@ -476,25 +665,61 @@ class SmartWarmupEngine:
             }
 
             # Multi-key alias caching across numbers, names, and initials
-            alias_ids = {str(teacher_id), str(canonical_id)}
-            if tch_name:
-                alias_ids.add(tch_name)
-                clean_n = clean_titles(tch_name)
+            alias_ids: set[str] = set()
+
+            def _add_alias(val: Any) -> None:
+                if val is None:
+                    return
+                s = str(val).strip()
+                if s:
+                    alias_ids.add(s)
+
+            _add_alias(canonical_id)
+            _add_alias(teacher_id)
+            _add_alias(tch_name)
+            _add_alias(lookup_name)
+            _add_alias(teacher_name)
+
+            for a_name in list(alias_ids):
+                clean_n = clean_titles(a_name)
                 if clean_n:
                     alias_ids.add(clean_n)
-            if lookup_name:
-                alias_ids.add(lookup_name)
-                clean_l = clean_titles(lookup_name)
-                if clean_l:
-                    alias_ids.add(clean_l)
-            if teacher_name:
-                alias_ids.add(teacher_name)
+
+            # Match in directory for canonical full name and short initials
+            profile = None
+            if isinstance(canonical_id, int):
+                profile = teacher_directory_service.find_by_id(canonical_id)
+            if not profile and isinstance(teacher_id, int):
+                profile = teacher_directory_service.find_by_id(teacher_id)
+            if not profile:
+                for cand in (lookup_name, tch_name, teacher_name):
+                    if cand:
+                        profile = teacher_directory_service.find_match(clean_titles(cand))
+                        if profile:
+                            break
+
+            if profile:
+                _add_alias(profile.get("fullName"))
+                _add_alias(profile.get("initials"))
+                _add_alias(profile.get("name"))
+
+            # Derive initials from all string names
+            for a_name in list(alias_ids):
+                if not a_name.isdigit():
+                    inits = format_initials(a_name)
+                    if inits:
+                        alias_ids.add(inits)
+                        compact_inits = inits.replace(". ", ".")
+                        if compact_inits != inits:
+                            alias_ids.add(compact_inits)
 
             for a_id in alias_ids:
                 if a_id:
                     teacher_text_cache[f"{a_id}_ru"] = cache_entry_ru
                     teacher_text_cache[f"{a_id}_kz"] = cache_entry_kz
                     teacher_table_cache[a_id] = cache_entry_ru
+                    if a_id.isdigit():
+                        teacher_table_cache[int(a_id)] = cache_entry_ru
 
             if not is_from_db and adapted_ru:
                 self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
@@ -631,10 +856,14 @@ async def warmup_top_schedules(limit: int = 30) -> int:
 
             needed = limit - len(top_group_ids)
             if top_group_ids:
-                extra_groups = await Group.find(NotIn(Group.group_id, top_group_ids)).limit(needed).to_list()
+                extra_groups = await Group.find(NotIn("id", top_group_ids)).limit(needed).to_list()
             else:
                 extra_groups = await Group.find().limit(needed).to_list()
-            top_group_ids.extend([g.group_id for g in extra_groups if g.group_id is not None])
+            top_group_ids.extend([
+                (getattr(g, "group_id", None) or getattr(g, "id", None))
+                for g in extra_groups
+                if (getattr(g, "group_id", None) or getattr(g, "id", None)) is not None
+            ])
 
         if not top_group_ids:
             logger.info("[Warmup] Нет доступных групп для прогрева кэша.")
@@ -643,8 +872,8 @@ async def warmup_top_schedules(limit: int = 30) -> int:
         # Load Group details
         from beanie.operators import In
 
-        groups = await Group.find(In(Group.group_id, top_group_ids)).to_list()
-        group_map = {g.group_id: g for g in groups}
+        groups = await Group.find(In("id", top_group_ids)).to_list()
+        group_map = {(getattr(g, "group_id", None) or getattr(g, "id", None)): g for g in groups}
 
         for gid in top_group_ids:
             group_obj = group_map.get(gid)

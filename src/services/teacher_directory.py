@@ -127,6 +127,7 @@ class TeacherDirectoryService:
         custom_path: Path | str | None = None,
     ) -> None:
         self.teachers: list[dict[str, Any]] = []
+        self.by_id_map: dict[str, dict[str, Any]] = {}
         self.by_initials_map: dict[str, list[dict[str, Any]]] = {}
         self.by_single_initial_map: dict[str, list[dict[str, Any]]] = {}
         self.by_surname_map: dict[str, list[dict[str, Any]]] = {}
@@ -186,6 +187,7 @@ class TeacherDirectoryService:
 
     def _build_indexes(self) -> None:
         """Constructs fast in-memory lookup indexes."""
+        self.by_id_map.clear()
         self.by_initials_map.clear()
         self.by_single_initial_map.clear()
         self.by_surname_map.clear()
@@ -194,6 +196,11 @@ class TeacherDirectoryService:
         for t in self.teachers:
             if not t:
                 continue
+
+            # 0. ID mapping
+            t_id = t.get("id") or t.get("teacherId")
+            if t_id is not None:
+                self.by_id_map[str(t_id).strip()] = t
 
             # 1. Full name
             norm_full = normalize_cyrillic(t.get("fullName"))
@@ -345,6 +352,12 @@ class TeacherDirectoryService:
             return found_surname[0]
 
         return None
+
+    def find_by_id(self, teacher_id: int | str | None) -> dict[str, Any] | None:
+        """Finds teacher profile in directory by ID."""
+        if teacher_id is None:
+            return None
+        return self.by_id_map.get(str(teacher_id).strip())
 
     def enrich(self, teacher: dict[str, Any] | str | None) -> dict[str, Any] | None:
         """Enriches raw teacher document or string with verified directory profile data."""
