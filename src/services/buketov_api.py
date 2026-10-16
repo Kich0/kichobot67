@@ -558,14 +558,16 @@ class BuketovApiService:
         self,
         params: dict[str, Any] | None = None,
         cache_type: str | None = None,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Public alias for fetch_schedule_from_api."""
-        return await self.fetch_schedule_from_api(params, cache_type)
+        return await self.fetch_schedule_from_api(params, cache_type, force_refresh=force_refresh)
 
     async def fetch_schedule_from_api(
         self,
         params: dict[str, Any] | None = None,
         cache_type: str | None = None,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Fetches schedule from /api/v1/schedule with rate limit, LRU cache, and circuit breaker."""
         params = params or {}
@@ -593,8 +595,8 @@ class BuketovApiService:
         cached = self._get_cache(target_cache, cache_key)
         now = time.time()
 
-        # 1. Fresh cache: return immediately with 0 network calls
-        if cached and (now - cached.timestamp < self.cache_ttl):
+        # 1. Fresh cache: return immediately with 0 network calls (unless force_refresh is requested)
+        if not force_refresh and cached and (now - cached.timestamp < self.cache_ttl):
             return cached.data
 
         # 2. Circuit Breaker check
@@ -680,7 +682,7 @@ class BuketovApiService:
 
             raise
 
-    async def get_group_schedule(self, group_name: str) -> dict[str, Any]:
+    async def get_group_schedule(self, group_name: str, force_refresh: bool = False) -> dict[str, Any]:
         """Fetches complete schedule of a student group with auto-pagination."""
         if not group_name:
             raise ValueError("Group name is required for schedule request")
@@ -697,6 +699,7 @@ class BuketovApiService:
             result = await self.fetch_schedule(
                 {"group": group_name, "limit": limit, "offset": offset},
                 cache_type="student",
+                force_refresh=force_refresh,
             )
 
             if result and isinstance(result.get("records"), list):
@@ -748,7 +751,7 @@ class BuketovApiService:
         entry = target_cache.get(cache_key)
         return entry.timestamp if entry is not None else None
 
-    async def get_teacher_schedule(self, teacher_name: str) -> dict[str, Any]:
+    async def get_teacher_schedule(self, teacher_name: str, force_refresh: bool = False) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial."""
         if not teacher_name:
             raise ValueError("Teacher name is required for schedule request")
@@ -767,6 +770,7 @@ class BuketovApiService:
             result = await self.fetch_schedule(
                 {"q": surname, "limit": limit, "offset": offset},
                 cache_type="teacher",
+                force_refresh=force_refresh,
             )
 
             if result and isinstance(result.get("records"), list):
@@ -795,9 +799,9 @@ class BuketovApiService:
         res_dict["_cacheTimestamp"] = entry_ts or time.time()
         return res_dict
 
-    async def fetch_teacher_schedule(self, teacher_name: str) -> dict[str, Any]:
+    async def fetch_teacher_schedule(self, teacher_name: str, force_refresh: bool = False) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial (alias for get_teacher_schedule)."""
-        return await self.get_teacher_schedule(teacher_name)
+        return await self.get_teacher_schedule(teacher_name, force_refresh=force_refresh)
 
     async def health_check(self) -> bool:
         """Checks whether Buketov Schedule API is reachable and Circuit Breaker is healthy."""

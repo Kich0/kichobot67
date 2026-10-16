@@ -66,5 +66,8 @@
   "schedule_text_view": "По дням (текст)",
   "teacher_grid_caption": "👥 <b>{{teacherName}}</b>\n📊 Таблица занятости на неделю",
   "schedule_generating_image": "⌛️ Создаю таблицу недели...",
-  "no_schedule_for_group": "ℹ️ У группы {{groupName}} нет расписания."
+  "no_schedule_for_group": "ℹ️ У группы {{groupName}} нет расписания.",
+  "schedule_refreshed": "Расписание обновлено!",
+  "schedule_up_to_date": "Данные уже актуальны!",
+  "schedule_up_to_date_ago": "Данные уже актуальны ({{time}} назад)"
 }

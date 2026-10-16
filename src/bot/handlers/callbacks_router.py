@@ -583,15 +583,24 @@ async def get_or_fetch_student_schedule(
                 try:
                     from src.database.models.group import Group
 
-                    g_doc = await Group.find_one({"id": group_id})
-                    if g_doc and g_doc.name:
+                    num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+                    g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+                    if g_doc and getattr(g_doc, "name", None):
                         grp_name = g_doc.name
+                        _group_meta_cache[(id(get_client()), group_id)] = {
+                            "name": grp_name,
+                            "back_callback": "faculty|0",
+                            "age": getattr(g_doc, "age", None),
+                        }
                 except Exception:
                     pass
 
         if grp_name:
             try:
-                raw_data = await buketov_api_service.get_group_schedule(grp_name)
+                if is_refresh:
+                    raw_data = await buketov_api_service.get_group_schedule(grp_name, force_refresh=True)
+                else:
+                    raw_data = await buketov_api_service.get_group_schedule(grp_name)
                 records = (
                     raw_data.get("records", [])
                     if isinstance(raw_data, dict)
@@ -814,23 +823,19 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
         text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
         if call.message:
-            async def _safe_edit() -> None:
-                try:
-                    await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
-                except Exception as e:
-                    if "message is not modified" not in str(e):
-                        logger.debug(f"editMessageText error: {e}")
-            await asyncio.gather(call.answer(), _safe_edit())
-        else:
-            await call.answer()
+            try:
+                await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+            except Exception as e:
+                if "message is not modified" not in str(e):
+                    logger.debug(f"editMessageText error: {e}")
+        await call.answer()
         return
 
     # 2. Need fresh data (refresh after cooldown or cache older than 30m or missing)
-    # Acknowledge callback immediately to unfreeze the Telegram button spinner in 0 ms
-    await call.answer()
     cached = await get_or_fetch_student_schedule(group_id, sch_lang, is_refresh=is_refresh)
 
     if not cached or not cached.get("data"):
+        await call.answer()
         if call.message:
             await call.message.edit_text(
                 "❌ <b>К сожалению, расписание для данной группы временно недоступно.</b>\n"
@@ -852,6 +857,8 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
         except Exception as e:
             if "message is not modified" not in str(e):
                 logger.debug(f"editMessageText error: {e}")
+
+    await call.answer()
 
 
 # === Department & Teacher Catalog Callbacks ===
@@ -959,8 +966,8 @@ async def get_or_fetch_teacher_text_schedule(
                     from src.database.models.teacher import Teacher
 
                     num_t_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-                    t_doc = await Teacher.find_one({"id": num_t_id})
-                    if t_doc and t_doc.name:
+                    t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
+                    if t_doc and getattr(t_doc, "name", None):
                         tch_name = t_doc.name
                     elif isinstance(teacher_id, str) and not teacher_id.isdigit():
                         tch_name = teacher_id
@@ -974,7 +981,10 @@ async def get_or_fetch_teacher_text_schedule(
 
         if tch_name:
             try:
-                raw_sch = await buketov_api_service.get_teacher_schedule(tch_name)
+                if is_refresh:
+                    raw_sch = await buketov_api_service.get_teacher_schedule(tch_name, force_refresh=True)
+                else:
+                    raw_sch = await buketov_api_service.get_teacher_schedule(tch_name)
                 records = (
                     raw_sch.get("records", [])
                     if isinstance(raw_sch, dict)
@@ -1273,14 +1283,11 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                 f"🕒 <i><b>{elapsed} || {clock}</b></i>"
             )
             markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
-            async def _safe_edit_caption() -> None:
-                try:
-                    await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
-                except Exception:
-                    pass
-            await asyncio.gather(call.answer(), _safe_edit_caption())
-        else:
-            await call.answer()
+            try:
+                await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
+            except Exception:
+                pass
+        await call.answer()
         return
 
     # 2. Fetch fresh data if needed
@@ -1289,7 +1296,10 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         await call.answer("⌛️ Создаю таблицу недели...", show_alert=False)
         try:
             resolved_lookup = lookup_name or (teacher_name if not teacher_name.startswith("ID ") else str(teacher_id))
-            raw_sch = await buketov_api_service.get_teacher_schedule(resolved_lookup)
+            if is_refresh:
+                raw_sch = await buketov_api_service.get_teacher_schedule(resolved_lookup, force_refresh=True)
+            else:
+                raw_sch = await buketov_api_service.get_teacher_schedule(resolved_lookup)
             records = (
                 raw_sch.get("records", [])
                 if isinstance(raw_sch, dict)
@@ -1435,24 +1445,19 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
         text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
         if call.message:
-            async def _safe_edit_text() -> None:
-                try:
-                    await call.message.edit_text(
-                        text,
-                        reply_markup=markup,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                except Exception as e:
-                    if "message is not modified" not in str(e):
-                        logger.debug(f"editMessageText error: {e}")
-            await asyncio.gather(call.answer(), _safe_edit_text())
-        else:
-            await call.answer()
+            try:
+                await call.message.edit_text(
+                    text,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                if "message is not modified" not in str(e):
+                    logger.debug(f"editMessageText error: {e}")
+        await call.answer()
         return
 
-    # Acknowledge callback immediately to unfreeze button spinner in 0 ms
-    await call.answer()
     cached = await get_or_fetch_teacher_text_schedule(teacher_id, ui_lang, is_refresh=is_refresh)
 
     text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
@@ -1479,6 +1484,8 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
             except Exception as e:
                 if "message is not modified" not in str(e):
                     logger.debug(f"editMessageText error: {e}")
+
+    await call.answer()
 
 
 __all__ = [

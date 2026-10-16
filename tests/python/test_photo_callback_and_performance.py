@@ -248,7 +248,7 @@ async def test_warmup_timestamp_preserved_and_zero_db_pagination(mock_db):
         {"dayOfWeek": 1, "time": "09:00-09:50", "subject": "Алгоритмы", "auditory": "301", "teacher": "Смагулов А.К."}
     ]
 
-    async def fake_get_group_schedule(group_name):
+    async def fake_get_group_schedule(group_name, *args, **kwargs):
         return {
             "records": fake_api_data,
             "_cacheTimestamp": warm_ts,

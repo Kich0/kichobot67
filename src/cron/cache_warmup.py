@@ -58,7 +58,7 @@ class SmartWarmupEngine:
     TEACHER_INTERVAL_SEC: float = 10.0  # 30 teachers over 300s (5 min) = 6 req/min
     TOP_GROUPS_LIMIT: int = 150
     TOP_TEACHERS_LIMIT: int = 30
-    TOP_LISTS_CACHE_TTL: float = 7200.0  # 2 hours
+    TOP_LISTS_CACHE_TTL: float = 900.0  # 15 minutes
     HEADROOM: int = 5  # Leave at least 5 req/min margin under 110 limit
 
     SLEEP_CHECK_INTERVAL_SEC: float = 60.0
@@ -373,7 +373,7 @@ class SmartWarmupEngine:
             )
             from src.services.schedule_adapter import schedule_api_adapter
 
-            raw_data = await buketov_api_service.get_group_schedule(group_name)
+            raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
             records = (
                 raw_data.get("records", [])
                 if isinstance(raw_data, dict)
@@ -419,7 +419,7 @@ class SmartWarmupEngine:
             )
             from src.services.schedule_adapter import schedule_api_adapter
 
-            raw_data = await buketov_api_service.get_teacher_schedule(teacher_name)
+            raw_data = await buketov_api_service.get_teacher_schedule(teacher_name, force_refresh=True)
             records = (
                 raw_data.get("records", [])
                 if isinstance(raw_data, dict)
@@ -607,7 +607,7 @@ async def warmup_top_schedules(limit: int = 30) -> int:
 
             try:
                 # Pre-fetch and cache student schedule using canonical get_group_schedule key
-                raw_data = await buketov_api_service.get_group_schedule(group_obj.name)
+                raw_data = await buketov_api_service.get_group_schedule(group_obj.name, force_refresh=True)
                 records = (
                     raw_data.get("records", [])
                     if isinstance(raw_data, dict)

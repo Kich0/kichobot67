@@ -66,5 +66,8 @@
   "schedule_text_view": "Күндер бойынша (мәтін)",
   "teacher_grid_caption": "👥 <b>{{teacherName}}</b>\n📊 Апталық сабақ кестесі",
   "schedule_generating_image": "⌛️ Апталық кесте жасалуда...",
-  "no_schedule_for_group": "ℹ️ {{groupName}} тобында сабақ кестесі жоқ."
+  "no_schedule_for_group": "ℹ️ {{groupName}} тобында сабақ кестесі жоқ.",
+  "schedule_refreshed": "Кесте жаңартылды!",
+  "schedule_up_to_date": "Мәліметтер өзекті!",
+  "schedule_up_to_date_ago": "Мәліметтер өзекті ({{time}} бұрын)"
 }

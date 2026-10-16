@@ -200,8 +200,7 @@ async def test_silent_refresh_answers_within_cooldown(mock_db):
     call_student = make_call(data="refreshschedule|ru|777|0")
     await handle_student_schedule_view(call_student)
     assert call_student.answer.call_count == 1
-    assert call_student.answer.call_args[0] == ()
-    assert not call_student.answer.call_args[1].get("text")
+    assert not call_student.answer.call_args.kwargs.get("text")
 
     # 2. Teacher image table refresh
     teacher_table_cache["888"] = {
@@ -212,8 +211,7 @@ async def test_silent_refresh_answers_within_cooldown(mock_db):
     call_img = make_call(data="refreshteacherImg|888|0")
     await handle_teacher_table_image(call_img)
     assert call_img.answer.call_count == 1
-    assert call_img.answer.call_args[0] == ()
-    assert not call_img.answer.call_args[1].get("text")
+    assert not call_img.answer.call_args.kwargs.get("text")
 
     # 3. Teacher text schedule refresh
     teacher_text_cache["888_ru"] = {
@@ -224,8 +222,7 @@ async def test_silent_refresh_answers_within_cooldown(mock_db):
     call_tch_text = make_call(data="refreshTeacherSchedule|888|0")
     await handle_teacher_text_schedule(call_tch_text)
     assert call_tch_text.answer.call_count == 1
-    assert call_tch_text.answer.call_args[0] == ()
-    assert not call_tch_text.answer.call_args[1].get("text")
+    assert not call_tch_text.answer.call_args.kwargs.get("text")
 
 
 @pytest.mark.asyncio
@@ -453,5 +450,60 @@ def test_export_script_almaty_timezone_and_retroactive_callback_parsing():
     actions, dupes = deduplicate_actions(raw_actions)
     assert len(actions) == 2
     assert dupes == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_refresh_silent_and_force_refresh(mock_db):
+    """Verifies that 🔄 button refreshes via API with force_refresh=True and cooldown skips API, always answering silently."""
+    import time
+    from unittest.mock import AsyncMock, patch
+    from src.bot.handlers.callbacks_router import (
+        clear_schedule_caches,
+        handle_student_schedule_view,
+        handle_teacher_text_schedule,
+        student_schedule_cache,
+        teacher_text_cache,
+    )
+    from src.database.models.group import Group
+    from src.database.models.teacher import Teacher
+
+    clear_schedule_caches()
+    await Group(id=5555, name="ТЕСТ-55", language="ru").insert()
+    await Teacher(id=6666, name="Профессор П. П.").insert()
+
+    fake_sched = {
+        "records": [{"dayOfWeek": 1, "time": "09:00", "subject": "Тест", "auditory": "101", "teacher": "П. П."}],
+        "_cacheTimestamp": time.time(),
+    }
+
+    # 1. Fresh student refresh (cache expired or missing): calls API with force_refresh=True, silent answer
+    with patch("src.bot.handlers.callbacks_router.buketov_api_service.get_group_schedule", AsyncMock(return_value=fake_sched)) as mock_api:
+        call = make_call(data="refreshschedule|ru|5555|0")
+        await handle_student_schedule_view(call)
+
+        mock_api.assert_called_once_with("ТЕСТ-55", force_refresh=True)
+        assert call.message.edit_text.call_count == 1
+        assert call.answer.call_count == 1
+        assert not call.answer.call_args.kwargs.get("text")
+
+    # 2. Repeated student refresh during cooldown (<10 min): does NOT call API, silent answer
+    with patch("src.bot.handlers.callbacks_router.buketov_api_service.get_group_schedule", AsyncMock()) as mock_api_cooldown:
+        call_cooldown = make_call(data="refreshschedule|ru|5555|0")
+        await handle_student_schedule_view(call_cooldown)
+
+        mock_api_cooldown.assert_not_called()
+        assert call_cooldown.answer.call_count == 1
+        assert not call_cooldown.answer.call_args.kwargs.get("text")
+
+    # 3. Fresh teacher refresh: calls API with force_refresh=True, silent answer
+    with patch("src.bot.handlers.callbacks_router.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=fake_sched)) as mock_t_api:
+        call_tch = make_call(data="refreshTeacherSchedule|6666|0")
+        await handle_teacher_text_schedule(call_tch)
+
+        mock_t_api.assert_called_once_with("Профессор П. П.", force_refresh=True)
+        assert call_tch.message.edit_text.call_count == 1
+        assert call_tch.answer.call_count == 1
+        assert not call_tch.answer.call_args.kwargs.get("text")
+
 
 
