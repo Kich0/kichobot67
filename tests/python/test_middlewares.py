@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiogram.types import Animation, Audio, CallbackQuery, Chat, Document, Message, PhotoSize, Sticker, User, Voice
 
@@ -148,7 +148,7 @@ async def test_message_gate_rejects_non_text_in_private():
     res = await gate(handler, msg, {})
     assert res is None
     assert msg.answer.call_count == 1
-    assert "Бот принимает только текст" in msg.answer.call_args[0][0]
+    assert "Я не могу это прочитать" in msg.answer.call_args[0][0]
     assert handler.call_count == 0
 
 
@@ -411,12 +411,12 @@ async def test_message_gate_media_logging(dummy_user, dummy_chat):
         res = await gate(handler, msg, {})
         assert res is None
         assert msg.answer.call_count == 1
-        assert "Бот принимает только текст" in msg.answer.call_args[0][0]
+        assert "Я не могу это прочитать" in msg.answer.call_args[0][0]
         assert handler.call_count == 0
         mock_log.assert_called_once()
         args, _ = mock_log.call_args
         assert args[0] == dummy_user.id
-        assert args[2] == "media_photo"
+        assert args[2] == "media_rejected"
         assert '[Медиа: фото] "Мое фото"' in args[3]
 
 
@@ -467,4 +467,287 @@ async def test_message_gate_spam_ban_logging(dummy_user, dummy_chat):
         assert args[0] == dummy_user.id
         assert args[2] == "spam_blocked"
         assert "Временный бан на 60 сек" in args[3]
+
+
+@pytest.mark.asyncio
+async def test_message_gate_strike_system(dummy_user, dummy_chat):
+    """Verifies 1st strike (60s), repeat strike within 5 min (300s), and subsequent strikes (300s)."""
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=3.0,
+        spam_max_requests=5,
+        first_ban_duration=60.0,
+        repeat_window=300.0,
+        repeat_ban_duration=300.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    current_simulated_time = 1000.0
+
+    with patch("time.time", side_effect=lambda: current_simulated_time):
+        # 1. Send 5 messages (under limit)
+        for i in range(5):
+            msg = make_message(dummy_user, dummy_chat, f"Msg {i}")
+            res = await gate(handler, msg, {})
+            assert res == "OK"
+
+        assert handler.call_count == 5
+        assert not gate.is_user_banned(dummy_user.id)
+
+        # 2. 6th message triggers 1st strike (60s ban)
+        msg_spam1 = make_message(dummy_user, dummy_chat, "Spam 6")
+        res1 = await gate(handler, msg_spam1, {})
+        assert res1 is None
+        assert gate.is_user_banned(dummy_user.id)
+        assert "Блокировка на 60 секунд" in msg_spam1.answer.call_args[0][0]
+
+        # Messages while banned are dropped silently
+        msg_during_ban = make_message(dummy_user, dummy_chat, "During ban")
+        res_during = await gate(handler, msg_during_ban, {})
+        assert res_during is None
+        assert msg_during_ban.answer.call_count == 0
+
+        # 3. Simulate 65 seconds later (ban expired, but within 300s repeat window)
+        current_simulated_time = 1065.0
+        assert not gate.is_user_banned(dummy_user.id)
+
+        # 4. Spam again (5 msgs pass, 6th triggers repeat strike -> 300s ban)
+        for i in range(5):
+            msg = make_message(dummy_user, dummy_chat, f"Msg repeat {i}")
+            res = await gate(handler, msg, {})
+            assert res == "OK"
+
+        msg_spam2 = make_message(dummy_user, dummy_chat, "Spam repeat 6")
+        res2 = await gate(handler, msg_spam2, {})
+        assert res2 is None
+        assert gate.is_user_banned(dummy_user.id)
+        assert "Блокировка на 5 минут" in msg_spam2.answer.call_args[0][0]
+
+        # 5. Simulate 305 seconds later (unbanned, subsequent spam triggers 5 minutes ban again)
+        current_simulated_time = 1065.0 + 305.0
+        assert not gate.is_user_banned(dummy_user.id)
+
+        for i in range(5):
+            msg = make_message(dummy_user, dummy_chat, f"Msg 3rd {i}")
+            res = await gate(handler, msg, {})
+            assert res == "OK"
+
+        msg_spam3 = make_message(dummy_user, dummy_chat, "Spam 3rd 6")
+        res3 = await gate(handler, msg_spam3, {})
+        assert res3 is None
+        assert gate.is_user_banned(dummy_user.id)
+        assert "Блокировка на 5 минут" in msg_spam3.answer.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_callback_query_never_banned_and_works_during_ban(dummy_user, dummy_chat):
+    """Verifies that buttons (CallbackQuery) never get banned and work even while user is in spam ban."""
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=3.0,
+        spam_max_requests=5,
+        first_ban_duration=60.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    # Spam with messages to trigger 60s ban
+    for i in range(6):
+        msg = make_message(dummy_user, dummy_chat, f"Msg {i}")
+        await gate(handler, msg, {})
+
+    assert gate.is_user_banned(dummy_user.id)
+
+    # Now click an inline button while banned: it MUST be allowed
+    call = make_callback(dummy_user, dummy_chat, data="faculty|0")
+    res = await gate(handler, call, {})
+    assert res == "OK"
+    assert handler.call_count == 6  # 5 valid messages + 1 callback query
+
+    # Rapid button clicks must not trigger ban either
+    for _ in range(10):
+        c = make_callback(dummy_user, dummy_chat, data="schedule|0")
+        res_c = await gate(handler, c, {})
+        assert res_c == "OK"
+
+
+@pytest.mark.asyncio
+async def test_message_gate_media_rejection_kazakh(dummy_user, dummy_chat):
+    """Verifies that non-text messages return Kazakh message when user language is kz."""
+    gate = MessageGateMiddleware(throttle_interval=0.0)
+    handler = AsyncMock(return_value="OK")
+
+    animation = Animation(
+        file_id="anim1",
+        file_unique_id="au1",
+        width=100,
+        height=100,
+        duration=5,
+    )
+    msg = make_message(dummy_user, dummy_chat, text=None)
+    object.__setattr__(msg, "animation", animation)
+
+    with patch("src.services.user_service.user_service.get_user_language", AsyncMock(return_value="kz")), \
+         patch("src.bot.middlewares.user_action_logger.user_action_logging_middleware.log_action", AsyncMock()) as mock_log:
+        res = await gate(handler, msg, {})
+        assert res is None
+        assert msg.answer.call_count == 1
+        assert msg.answer.call_args[0][0] == "Мен мұны оқи алмаймын"
+        mock_log.assert_awaited_once()
+        args, _ = mock_log.call_args
+        assert args[2] == "media_rejected"
+        assert "[Медиа: GIF / анимация]" in args[3]
+
+
+@pytest.mark.asyncio
+async def test_media_flood_counts_towards_anti_spam(dummy_user, dummy_chat):
+    """Verifies that sending 5 non-text media items in 3s triggers spam ban on the 6th."""
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=3.0,
+        spam_max_requests=5,
+        first_ban_duration=60.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    photo = [PhotoSize(file_id="p1", file_unique_id="pu1", width=100, height=100)]
+
+    # 5 GIFs/photos within 3s
+    for i in range(5):
+        msg = make_message(dummy_user, dummy_chat, text=None, photo=photo)
+        await gate(handler, msg, {})
+        assert msg.answer.call_args[0][0] == "Я не могу это прочитать"
+
+    assert not gate.is_user_banned(dummy_user.id)
+
+    # 6th photo triggers ban!
+    msg6 = make_message(dummy_user, dummy_chat, text=None, photo=photo)
+    res6 = await gate(handler, msg6, {})
+    assert res6 is None
+    assert gate.is_user_banned(dummy_user.id)
+    assert "Блокировка на 60 секунд" in msg6.answer.call_args[0][0]
+
+
+def test_dispatcher_registers_gate_as_outer_middleware():
+    """Verifies that create_dispatcher registers MessageGateMiddleware as message outer_middleware."""
+    from src.bot.bot_instance import create_dispatcher
+    gate = MessageGateMiddleware()
+    dp = create_dispatcher(message_gate=gate)
+    assert gate in dp.message.outer_middleware
+
+
+@pytest.mark.asyncio
+async def test_rapid_alternation_media_and_buttons(dummy_user, dummy_chat):
+    """Verifies that alternating between media messages and button clicks keeps buttons 100% snappy."""
+    gate = MessageGateMiddleware(throttle_interval=0.0)
+    handler = AsyncMock(return_value="OK")
+    photo = [PhotoSize(file_id="p1", file_unique_id="pu1", width=100, height=100)]
+
+    for i in range(4):
+        # 1. Non-text media message: rejected
+        msg = make_message(dummy_user, dummy_chat, text=None, photo=photo)
+        res_msg = await gate(handler, msg, {})
+        assert res_msg is None
+        assert msg.answer.call_args[0][0] == "Я не могу это прочитать"
+
+        # 2. Inline button click: immediate success
+        call = make_callback(dummy_user, dummy_chat, data=f"faculty|{i}")
+        res_call = await gate(handler, call, {})
+        assert res_call == "OK"
+
+    assert handler.call_count == 4  # All 4 callbacks executed cleanly
+
+
+@pytest.mark.asyncio
+async def test_message_gate_kazakh_spam_ban_warning(dummy_user, dummy_chat):
+    """Verifies that Kazakh language users receive spam warning in Kazakh."""
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=3.0,
+        spam_max_requests=5,
+        first_ban_duration=60.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    with patch("src.services.user_service.user_service.get_user_language", AsyncMock(return_value="kz")):
+        for i in range(5):
+            msg = make_message(dummy_user, dummy_chat, f"Msg {i}")
+            await gate(handler, msg, {})
+
+        msg6 = make_message(dummy_user, dummy_chat, "Msg 6")
+        res6 = await gate(handler, msg6, {})
+        assert res6 is None
+        assert gate.is_user_banned(dummy_user.id)
+        assert "60 секундқа бұғаттау" in msg6.answer.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_anti_spam_resets_after_repeat_window_expires(dummy_user, dummy_chat):
+    """Verifies that if spam happens after the 5-minute repeat window expires, it resets to 1st strike (60s)."""
+    gate = MessageGateMiddleware(
+        throttle_interval=0.0,
+        spam_window=3.0,
+        spam_max_requests=5,
+        first_ban_duration=60.0,
+        repeat_window=300.0,
+        repeat_ban_duration=300.0,
+    )
+    handler = AsyncMock(return_value="OK")
+
+    simulated_time = 1000.0
+    with patch("time.time", side_effect=lambda: simulated_time):
+        # 1st strike (60s ban)
+        for i in range(6):
+            msg = make_message(dummy_user, dummy_chat, f"Msg {i}")
+            await gate(handler, msg, {})
+        assert gate.is_user_banned(dummy_user.id)
+        assert gate._banned_users[dummy_user.id] == 1060.0
+
+        # Fast-forward 600 seconds (> 300s repeat window after ban expired at 1060.0)
+        simulated_time = 1700.0
+        assert not gate.is_user_banned(dummy_user.id)
+
+        # Spam again -> must reset to 1st strike (60s ban), NOT repeat 300s ban!
+        for i in range(5):
+            msg = make_message(dummy_user, dummy_chat, f"Msg {i}")
+            await gate(handler, msg, {})
+        msg_spam = make_message(dummy_user, dummy_chat, "Msg 6")
+        await gate(handler, msg_spam, {})
+        assert gate.is_user_banned(dummy_user.id)
+        assert gate._banned_users[dummy_user.id] == 1760.0  # 60s, not 300s!
+        assert "Блокировка на 60 секунд" in msg_spam.answer.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_is_user_banned_concurrent_expiration_safe():
+    """Verifies that is_user_banned does not raise KeyError on concurrent expirations."""
+    gate = MessageGateMiddleware()
+    user_id = 12345
+    gate._banned_users[user_id] = 50.0
+
+    with patch("time.time", return_value=100.0):
+        # 1st call clears the key
+        assert not gate.is_user_banned(user_id)
+        # 2nd call should cleanly return False without KeyError
+        assert not gate.is_user_banned(user_id)
+
+
+@pytest.mark.asyncio
+async def test_check_has_prior_button_ignores_media_rejected():
+    """Verifies that non-button events (media_rejected, spam_blocked) do not count as prior button clicks."""
+    from src.bot.middlewares.user_action_logger import user_action_logging_middleware
+    user_action_logging_middleware._queue.clear()
+
+    # If queue has media_rejected and spam_blocked:
+    user_action_logging_middleware._queue.append({"user_id": 999111, "action": "media_rejected"})
+    user_action_logging_middleware._queue.append({"user_id": 999111, "action": "spam_blocked"})
+    user_action_logging_middleware._queue.append({"user_id": 999111, "action": "long_text_rejected"})
+
+    with patch("src.database.models.user_action.UserAction.find_one", AsyncMock(return_value=None)):
+        has_prior = await user_action_logging_middleware._check_has_prior_button(999111)
+        assert not has_prior  # Must be False, media/spam is NOT a button
+
+    user_action_logging_middleware._queue.clear()
+
+
+
 

@@ -18,7 +18,10 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from src.core.constants import (
     ANTI_SPAM_BAN_DURATION,
+    ANTI_SPAM_FIRST_BAN_DURATION,
     ANTI_SPAM_MAX_REQUESTS,
+    ANTI_SPAM_REPEAT_BAN_DURATION,
+    ANTI_SPAM_REPEAT_WINDOW,
     ANTI_SPAM_WINDOW,
     MESSAGE_GATE_THROTTLE_INTERVAL,
 )
@@ -35,14 +38,20 @@ class MessageGateMiddleware(BaseMiddleware):
         throttle_interval: float = MESSAGE_GATE_THROTTLE_INTERVAL,
         spam_window: float = ANTI_SPAM_WINDOW,
         spam_max_requests: int = ANTI_SPAM_MAX_REQUESTS,
-        ban_duration: float = ANTI_SPAM_BAN_DURATION,
+        first_ban_duration: float = ANTI_SPAM_FIRST_BAN_DURATION,
+        repeat_window: float = ANTI_SPAM_REPEAT_WINDOW,
+        repeat_ban_duration: float = ANTI_SPAM_REPEAT_BAN_DURATION,
+        ban_duration: float | None = None,
         max_text_length: int = 250,
     ) -> None:
         super().__init__()
         self.throttle_interval = throttle_interval
         self.spam_window = spam_window
         self.spam_max_requests = spam_max_requests
-        self.ban_duration = ban_duration
+        self.first_ban_duration = ban_duration if ban_duration is not None else first_ban_duration
+        self.repeat_window = repeat_window
+        self.repeat_ban_duration = repeat_ban_duration
+        self.ban_duration = self.first_ban_duration
         self.max_text_length = max_text_length
 
         from cachetools import TTLCache
@@ -51,6 +60,9 @@ class MessageGateMiddleware(BaseMiddleware):
         self._user_request_timestamps: TTLCache[int, list[float]] = TTLCache(maxsize=10000, ttl=600.0)
         self._banned_users: TTLCache[int, float] = TTLCache(maxsize=5000, ttl=3600.0)
         self._ban_warning_sent: TTLCache[int, bool] = TTLCache(maxsize=5000, ttl=3600.0)
+        self._user_last_strike: TTLCache[int, float] = TTLCache(maxsize=5000, ttl=3600.0)
+        self._user_last_ban_end: TTLCache[int, float] = TTLCache(maxsize=5000, ttl=3600.0)
+        self._user_strike_count: TTLCache[int, int] = TTLCache(maxsize=5000, ttl=3600.0)
         try:
             from src.services.black_list_service import black_list_service
 
@@ -62,10 +74,10 @@ class MessageGateMiddleware(BaseMiddleware):
         """Returns True if user is currently under temporary spam ban."""
         now = time.time()
         expire_time = self._banned_users.get(user_id)
-        if expire_time:
+        if expire_time is not None:
             if now < expire_time:
                 return True
-            del self._banned_users[user_id]
+            self._banned_users.pop(user_id, None)
             self._ban_warning_sent.pop(user_id, None)
         return False
 
@@ -75,6 +87,9 @@ class MessageGateMiddleware(BaseMiddleware):
         self._user_request_timestamps.clear()
         self._banned_users.clear()
         self._ban_warning_sent.clear()
+        self._user_last_strike.clear()
+        self._user_last_ban_end.clear()
+        self._user_strike_count.clear()
         try:
             from src.services.black_list_service import black_list_service
 
@@ -124,7 +139,7 @@ class MessageGateMiddleware(BaseMiddleware):
         except Exception as e:
             logger.debug(f"BlackList check skipped or errored: {e}")
 
-        # 3. Sliding window spam detection (STRICTLY for Message text spam; button clicks do not cause 60s bans)
+        # 3. Sliding window spam detection (STRICTLY for Message text/media; button clicks do not cause bans)
         if isinstance(event, Message):
             timestamps = self._user_request_timestamps.setdefault(user_id, [])
             timestamps.append(now)
@@ -132,14 +147,49 @@ class MessageGateMiddleware(BaseMiddleware):
             self._user_request_timestamps[user_id] = timestamps
 
             if len(timestamps) > self.spam_max_requests:
-                self._banned_users[user_id] = now + self.ban_duration
+                last_strike = self._user_last_strike.get(user_id)
+                last_ban_end = self._user_last_ban_end.get(user_id)
+                prev_strikes = self._user_strike_count.get(user_id, 0)
+
+                is_repeat = False
+                if prev_strikes > 0:
+                    if last_strike is not None and (now - last_strike <= self.repeat_window):
+                        is_repeat = True
+                    elif last_ban_end is not None and (now - last_ban_end <= self.repeat_window):
+                        is_repeat = True
+
+                strike_num = (prev_strikes + 1) if is_repeat else 1
+                self._user_strike_count[user_id] = strike_num
+
+                cur_ban_duration = self.repeat_ban_duration if strike_num >= 2 else self.first_ban_duration
+                self._user_last_strike[user_id] = now
+                self._user_last_ban_end[user_id] = now + cur_ban_duration
+                self._banned_users[user_id] = now + cur_ban_duration
+                self._user_request_timestamps[user_id] = []
+
                 logger.warning(
-                    f"[GATE] User {user_id} BANNED for {int(self.ban_duration)}s "
-                    f"({len(timestamps)} msgs in {self.spam_window}s)"
+                    f"[GATE] User {user_id} BANNED for {int(cur_ban_duration)}s "
+                    f"(strike #{strike_num}, {len(timestamps)} msgs in {self.spam_window}s)"
                 )
                 if not self._ban_warning_sent.get(user_id):
                     self._ban_warning_sent[user_id] = True
-                    ban_sec = int(self.ban_duration)
+                    ban_sec = int(cur_ban_duration)
+                    if ban_sec == 60:
+                        duration_str = "60 секунд"
+                    elif ban_sec == 300:
+                        duration_str = "5 минут"
+                    elif ban_sec % 60 == 0:
+                        mins = ban_sec // 60
+                        if mins % 10 == 1 and mins % 100 != 11:
+                            m_str = "минуту"
+                        elif mins % 10 in (2, 3, 4) and mins % 100 not in (12, 13, 14):
+                            m_str = "минуты"
+                        else:
+                            m_str = "минут"
+                        duration_str = f"{mins} {m_str}"
+                    else:
+                        duration_str = f"{ban_sec} секунд"
+
                     try:
                         from src.bot.middlewares.user_action_logger import (
                             user_action_logging_middleware,
@@ -149,18 +199,38 @@ class MessageGateMiddleware(BaseMiddleware):
                             user_id,
                             user.username,
                             "spam_blocked",
-                            f"🚫 Временный бан на {ban_sec} секунд за спам ({len(timestamps)} сообщ. за {int(self.spam_window)}с)",
+                            f"🚫 Временный бан на {duration_str} за спам ({len(timestamps)} сообщ. за {int(self.spam_window)}с)",
                         )
                     except Exception as e:
                         logger.debug(f"Error logging spam ban: {e}")
 
-                    warning_text = (
-                        f"🚫 <b>Блокировка на {ban_sec} секунд</b>\n\n"
-                        "Вы отправили слишком много сообщений.\n"
-                        "⏳ Бот будет игнорировать вас до окончания блокировки.\n\n"
-                        "<i>Пожалуйста, не спамьте.</i>"
-                    )
-                    await event.answer(warning_text, parse_mode="HTML")
+                    lang = "ru"
+                    try:
+                        from src.services.user_service import user_service
+
+                        lang = await user_service.get_user_language(user_id)
+                    except Exception:
+                        pass
+
+                    if lang == "kz":
+                        duration_str_kz = "60 секундқа" if ban_sec == 60 else ("5 минутқа" if ban_sec == 300 else f"{ban_sec} секундқа")
+                        warning_text = (
+                            f"🚫 <b>{duration_str_kz} бұғаттау</b>\n\n"
+                            "Сіз тым көп хабарлама жібердіңіз.\n"
+                            "⏳ Бот бұғаттау аяқталғанша хабарламаларыңызды қабылдамайды.\n\n"
+                            "<i>Өтінеміз, спам жасамаңыз.</i>"
+                        )
+                    else:
+                        warning_text = (
+                            f"🚫 <b>Блокировка на {duration_str}</b>\n\n"
+                            "Вы отправили слишком много сообщений.\n"
+                            "⏳ Бот будет игнорировать вас до окончания блокировки.\n\n"
+                            "<i>Пожалуйста, не спамьте.</i>"
+                        )
+                    try:
+                        await event.answer(warning_text, parse_mode="HTML")
+                    except Exception as e:
+                        logger.debug(f"Failed to send spam ban warning: {e}")
                 return None
 
             # 4. Message throttle interval
@@ -170,7 +240,7 @@ class MessageGateMiddleware(BaseMiddleware):
             self._user_last_interaction[user_id] = now
 
         # 5. Media & message length validations for private messages
-        if isinstance(event, Message) and event.chat.type == "private":
+        if isinstance(event, Message) and (not getattr(event, "chat", None) or event.chat.type == "private"):
             # Reject non-text messages
             if not event.text:
                 try:
@@ -179,25 +249,34 @@ class MessageGateMiddleware(BaseMiddleware):
                         user_action_logging_middleware,
                     )
 
-                    act, label = get_media_category(event)
+                    _, label = get_media_category(event)
                     if event.caption:
                         label += f' "{event.caption}"'
                     await user_action_logging_middleware.log_action(
                         user_id,
                         user.username,
-                        act,
+                        "media_rejected",
                         label,
                     )
                 except Exception as e:
                     logger.debug(f"Error logging media rejection: {e}")
 
                 try:
-                    await event.answer(
-                        "⛔ <b>Бот принимает только текст</b>\n\n"
-                        "Стикеры, фото, видео, файлы и голосовые\nне поддерживаются.\n\n"
-                        "Нажмите /start для начала.",
-                        parse_mode="HTML",
+                    from src.core.i18n import t
+                    from src.services.user_service import user_service
+
+                    lang = "ru"
+                    try:
+                        lang = await user_service.get_user_language(user_id)
+                    except Exception:
+                        pass
+
+                    msg_text = t(
+                        "media_cannot_read",
+                        lang=lang,
+                        default="Я не могу это прочитать" if lang != "kz" else "Мен мұны оқи алмаймын",
                     )
+                    await event.answer(msg_text)
                 except Exception:
                     pass
                 return None

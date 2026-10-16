@@ -122,7 +122,7 @@ async def test_multi_key_cache_hit_after_warmup():
         # Cache should contain numeric and alias string keys
         assert "770_ru" in teacher_text_cache
         assert "Мусина Светлана Тахировна_ru" in teacher_text_cache or "ст.пр. Мусина С. Т._ru" in teacher_text_cache
-        assert "770" in teacher_table_cache
+        assert "770" not in teacher_table_cache
 
         # Now simulate user searching and requesting via string name:
         cached = await get_or_fetch_teacher_text_schedule(
@@ -436,11 +436,9 @@ async def test_multi_key_cache_aliases_complete_parity():
         assert "Мусина С. Т._ru" in teacher_text_cache
         assert "Мусина С.Т._ru" in teacher_text_cache
 
-        # Verify all alias keys in table cache
-        assert "770" in teacher_table_cache
-        assert 770 in teacher_table_cache
-        assert "Мусина Светлана Тахировна" in teacher_table_cache
-        assert "Мусина С. Т." in teacher_table_cache
+        # Verify table cache is NOT touched by _warm_teacher
+        assert len(teacher_table_cache) == 0
+        assert "770" not in teacher_table_cache
 
 
 @pytest.mark.asyncio

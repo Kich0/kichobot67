@@ -1143,10 +1143,6 @@ async def get_or_fetch_teacher_text_schedule(
                 }
                 for k in alias_keys:
                     teacher_text_cache[k] = cached
-                teacher_table_cache[str(canonical_id)] = cached
-                teacher_table_cache[str(teacher_id)] = cached
-                if tch_name:
-                    teacher_table_cache[tch_name] = cached
                 if not cached["is_from_db"] and adapted:
                     asyncio.create_task(_bg_persist_teacher_schedule(canonical_id, adapted))
             except Exception as e:
@@ -1169,8 +1165,6 @@ async def get_or_fetch_teacher_text_schedule(
                     }
                     for k in alias_keys:
                         teacher_text_cache[k] = cached
-                    teacher_table_cache[str(canonical_id)] = cached
-                    teacher_table_cache[str(teacher_id)] = cached
             except Exception:
                 pass
 
@@ -1182,8 +1176,6 @@ async def get_or_fetch_teacher_text_schedule(
             }
             for k in alias_keys:
                 teacher_text_cache[k] = cached
-            teacher_table_cache[str(canonical_id)] = cached
-            teacher_table_cache[str(teacher_id)] = cached
 
     return cached
 

@@ -567,7 +567,11 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
     async def _check_has_prior_button(self, user_id: int) -> bool:
         """Checks whether user has clicked any prior button in queue or DB."""
-        is_btn = lambda a: a not in ("command", "chat_input", "first_message") and not a.startswith("media_")
+        is_btn = lambda a: (
+            a not in ("command", "chat_input", "first_message", "long_text_rejected", "spam_blocked")
+            and not a.startswith("media_")
+            and not a.startswith("search_")
+        )
         if any(r["user_id"] == user_id and is_btn(r["action"]) for r in self._queue):
             return True
         try:
@@ -582,11 +586,22 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                         "command",
                         "chat_input",
                         "first_message",
+                        "long_text_rejected",
+                        "spam_blocked",
+                        "media_rejected",
                         "media_photo",
-                        "media_sticker",
+                        "media_gif",
                         "media_video",
                         "media_voice",
+                        "media_video_note",
+                        "media_audio",
                         "media_document",
+                        "media_sticker",
+                        "media_contact",
+                        "media_location",
+                        "media_poll",
+                        "media_dice",
+                        "media_other",
                     ],
                 ),
             )

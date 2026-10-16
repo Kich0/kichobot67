@@ -33,7 +33,7 @@ async def test_callback_query_not_blocked_by_rapid_clicks():
 
 @pytest.mark.asyncio
 async def test_message_flood_triggers_temporary_spam_ban():
-    """Excessive text message flood (> 8 messages in 10s) must trigger the temporary 60s ban."""
+    """Excessive text message flood (> 5 messages in 3s) must trigger the temporary 60s ban."""
     # Set throttle_interval=0 to test pure flood detection logic
     middleware = MessageGateMiddleware(throttle_interval=0.0)
     user = User(id=888222333, is_bot=False, first_name="Spammer")
@@ -41,8 +41,8 @@ async def test_message_flood_triggers_temporary_spam_ban():
 
     handler = AsyncMock(return_value="handled")
 
-    # Send 8 messages (within threshold)
-    for _ in range(8):
+    # Send 5 messages (within threshold)
+    for _ in range(5):
         msg = MagicMock(spec=Message)
         msg.from_user = user
         msg.chat = chat
@@ -51,15 +51,16 @@ async def test_message_flood_triggers_temporary_spam_ban():
         result = await middleware(handler, msg, {})
         assert result == "handled"
 
-    # 9th message triggers spam ban
-    msg9 = MagicMock(spec=Message)
-    msg9.from_user = user
-    msg9.chat = chat
-    msg9.text = "Hello spam"
-    msg9.answer = AsyncMock()
+    # 6th message triggers spam ban
+    msg6 = MagicMock(spec=Message)
+    msg6.from_user = user
+    msg6.chat = chat
+    msg6.text = "Hello spam"
+    msg6.answer = AsyncMock()
 
-    result9 = await middleware(handler, msg9, {})
-    assert result9 is None  # Blocked
+    result6 = await middleware(handler, msg6, {})
+    assert result6 is None  # Blocked
     assert middleware.is_user_banned(888222333)
-    msg9.answer.assert_called_once()
-    assert "слишком много сообщений" in msg9.answer.call_args[0][0]
+    msg6.answer.assert_called_once()
+    assert "слишком много сообщений" in msg6.answer.call_args[0][0]
+    assert "60 секунд" in msg6.answer.call_args[0][0]

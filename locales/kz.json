@@ -1,5 +1,8 @@
 {
   "antispam": "🛑 Спам жасама, рахмет!",
+  "media_cannot_read": "Мен мұны оқи алмаймын",
+  "cannot_read_media": "Мен мұны оқи алмаймын",
+  "media_rejected": "Мен мұны оқи алмаймын",
   "bot_is_sick": "🩹 Бот ауырып қалды, кейінірек көріңіз.",
   "day": "күн",
   "department": "🏛 Кафедра: {{departmentName}}",

@@ -55,7 +55,7 @@ def create_dispatcher(
     gate = message_gate or MessageGateMiddleware()
 
     # 1. Outer / early middlewares: Message Gate & Rate Limiter
-    dp.message.middleware(gate)
+    dp.message.outer_middleware(gate)
     dp.callback_query.middleware(gate)
 
     # 2. Audit Trail & Toll Middlewares

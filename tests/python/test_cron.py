@@ -499,4 +499,47 @@ async def test_smart_warmup_engine_background_task_retention():
     assert task not in engine._background_tasks
 
 
+@pytest.mark.asyncio
+async def test_teacher_warmup_and_text_fetch_cache_isolation():
+    """Verifies that _warm_teacher and fetch_teacher_text_schedule touch ONLY text cache, NOT table cache."""
+    clear_schedule_caches()
+    engine = SmartWarmupEngine()
+
+    dummy_schedule = {
+        "records": [{"day": "Понедельник", "time": "09:00", "subject": "Math", "lessonType": "лек", "group": "ИС-21-1"}],
+        "_cacheTimestamp": 1000.0,
+        "_fromDb": False,
+    }
+
+    with patch("src.bot.handlers.callbacks_router.resolve_teacher_identity", AsyncMock(return_value=(555, "Петров П. П.", 10, "Петров П. П."))), \
+         patch("src.services.buketov_api.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=dummy_schedule)), \
+         patch("src.database.models.teacher.Teacher.find_one", AsyncMock(return_value=None)):
+
+        # 1. Warm teacher via SmartWarmupEngine
+        await engine._warm_teacher(555, "Петров П. П.")
+
+        # Text cache must be populated
+        assert "555_ru" in teacher_text_cache
+        assert "555_kz" in teacher_text_cache
+        # Table cache must remain strictly empty
+        assert len(teacher_table_cache) == 0
+        assert "555" not in teacher_table_cache
+
+        # 2. Fetch text schedule via callbacks_router
+        from src.bot.handlers.callbacks_router import get_or_fetch_teacher_text_schedule
+        text_entry = await get_or_fetch_teacher_text_schedule(555, "ru", is_refresh=False, teacher_name="Петров П. П.")
+        assert text_entry is not None
+        assert text_entry["timestamp"] == 1000.0
+        # Table cache must STILL remain strictly empty
+        assert len(teacher_table_cache) == 0
+
+        # 3. Independent freshness: table cache has its own independent entry and timestamp
+        teacher_table_cache["555"] = {"data": [], "timestamp": 2000.0, "is_from_db": False}
+        assert teacher_text_cache["555_ru"]["timestamp"] == 1000.0
+        assert teacher_table_cache["555"]["timestamp"] == 2000.0
+
+    clear_schedule_caches()
+
+
+
 

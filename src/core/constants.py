@@ -36,9 +36,12 @@ CIRCUIT_BREAKER_RESET_TIMEOUT = 120.0  # seconds (2 minutes)
 
 # Message Gate & Anti-Spam
 MESSAGE_GATE_THROTTLE_INTERVAL = 0.5  # seconds (500ms between interactions)
-ANTI_SPAM_WINDOW = 10.0  # seconds
-ANTI_SPAM_MAX_REQUESTS = 8
-ANTI_SPAM_BAN_DURATION = 60.0  # seconds
+ANTI_SPAM_WINDOW = 3.0  # seconds
+ANTI_SPAM_MAX_REQUESTS = 5
+ANTI_SPAM_FIRST_BAN_DURATION = 60.0  # seconds (1 minute)
+ANTI_SPAM_REPEAT_WINDOW = 300.0  # seconds (5 minutes)
+ANTI_SPAM_REPEAT_BAN_DURATION = 300.0  # seconds (5 minutes)
+ANTI_SPAM_BAN_DURATION = ANTI_SPAM_FIRST_BAN_DURATION  # backwards compatibility alias
 
 # Database TTLs
 USER_ACTION_TTL_DAYS = 30

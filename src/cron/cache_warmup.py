@@ -612,7 +612,6 @@ class SmartWarmupEngine:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_teacher_schedule,
                 resolve_teacher_identity,
-                teacher_table_cache,
                 teacher_text_cache,
             )
             from src.services.schedule_adapter import schedule_api_adapter
@@ -717,9 +716,6 @@ class SmartWarmupEngine:
                 if a_id:
                     teacher_text_cache[f"{a_id}_ru"] = cache_entry_ru
                     teacher_text_cache[f"{a_id}_kz"] = cache_entry_kz
-                    teacher_table_cache[a_id] = cache_entry_ru
-                    if a_id.isdigit():
-                        teacher_table_cache[int(a_id)] = cache_entry_ru
 
             if not is_from_db and adapted_ru:
                 self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))

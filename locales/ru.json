@@ -1,5 +1,8 @@
 {
   "antispam": "🛑 Не спамь, пожалуйста!",
+  "media_cannot_read": "Я не могу это прочитать",
+  "cannot_read_media": "Я не могу это прочитать",
+  "media_rejected": "Я не могу это прочитать",
   "bot_is_sick": "🩹 Бот немножко приболел, попробуйте позже.",
   "day": "дн.",
   "department": "🏛 Кафедра: {{departmentName}}",

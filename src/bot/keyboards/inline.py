@@ -465,12 +465,6 @@ def get_teacher_text_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
-                    callback_data=f"teacherImg|{cb_tid}|{day_number}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
                     text=f"◀️ {t('go_back', lang)}",
                     callback_data=f"TeacherSchedule|{cb_tid}|{prev_day}",
                 ),
@@ -482,6 +476,12 @@ def get_teacher_text_keyboard(
                     text=f"{t('go_forward', lang)} ▶️",
                     callback_data=f"TeacherSchedule|{cb_tid}|{next_day}",
                 ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
+                    callback_data=f"teacherImg|{cb_tid}|{day_number}",
+                )
             ],
             [
                 InlineKeyboardButton(

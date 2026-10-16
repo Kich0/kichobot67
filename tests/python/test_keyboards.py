@@ -128,14 +128,23 @@ def test_teacher_table_and_text_keyboards():
     assert "refreshteacherImg|305|2" in cb_table
     assert "teacher|10|0" in cb_table
 
-    # Text daily view controls
+    # Text daily view controls: row 0 = navigation [◀️ | 🔄 | ▶️], row 1 = table button, row 2 = back
     kb_text = get_teacher_text_keyboard(teacher_id=305, day_number=2, department_id=10, lang="ru")
-    cb_text = [btn.callback_data for row in kb_text.inline_keyboard for btn in row]
-    assert "teacherImg|305|2" in cb_text
-    assert "TeacherSchedule|305|1" in cb_text
-    assert "refreshTeacherSchedule|305|2" in cb_text
-    assert "TeacherSchedule|305|3" in cb_text
-    assert "teacher|10|0" in cb_text
+    assert len(kb_text.inline_keyboard) == 3
+
+    # Row 0: Navigation
+    assert len(kb_text.inline_keyboard[0]) == 3
+    assert kb_text.inline_keyboard[0][0].callback_data == "TeacherSchedule|305|1"
+    assert kb_text.inline_keyboard[0][1].callback_data == "refreshTeacherSchedule|305|2"
+    assert kb_text.inline_keyboard[0][2].callback_data == "TeacherSchedule|305|3"
+
+    # Row 1: Week table button
+    assert len(kb_text.inline_keyboard[1]) == 1
+    assert kb_text.inline_keyboard[1][0].callback_data == "teacherImg|305|2"
+
+    # Row 2: Back button
+    assert len(kb_text.inline_keyboard[2]) == 1
+    assert kb_text.inline_keyboard[2][0].callback_data == "teacher|10|0"
 
 
 def test_search_results_and_fuzzy_keyboards():
