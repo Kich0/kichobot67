@@ -363,7 +363,7 @@ async def handle_group_search_prefix(message: Message) -> None:
     match = re.match(r"^(?:[ГгТт]|[Гг]руппа|[Тт]обы)(?:\s+(.*))?$", text, re.IGNORECASE)
     query = (match.group(1) or "").strip() if match else ""
 
-    if not query or len(query) < 2:
+    if not query or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", query):
         await message.answer(t("group_search_validation_error", lang), parse_mode="HTML")
         return
 
@@ -416,7 +416,7 @@ async def handle_teacher_search_prefix(message: Message) -> None:
     match = re.match(r"^(?:[ПпОо]|[Пп]реподаватель|[Оо]қытушы)(?:\s+(.*))?$", text, re.IGNORECASE)
     query = (match.group(1) or "").strip() if match else ""
 
-    if not query or len(query) < 2:
+    if not query or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", query):
         await message.answer(t("teacher_search_validation_error", lang), parse_mode="HTML")
         return
 

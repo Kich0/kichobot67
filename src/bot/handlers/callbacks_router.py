@@ -60,7 +60,7 @@ from src.core.logging import get_logger
 from src.services.buketov_api import buketov_api_service
 from src.services.schedule_adapter import schedule_api_adapter
 from src.services.table_image import table_image_service
-from src.services.teacher_directory import teacher_directory_service
+from src.services.teacher_directory import clean_titles, teacher_directory_service
 from src.database.connection import get_client
 from src.services.user_service import user_service
 
@@ -82,6 +82,133 @@ _persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsi
 _persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=500, ttl=3600.0)
 _group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
 _teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
+
+
+async def resolve_teacher_identity(
+    teacher_id: int | str,
+    teacher_name: str | None = None,
+) -> tuple[int | str, str, int, str]:
+    """Resolves any teacher reference (integer ID, string ID, initials, or full name) into:
+    (canonical_id, display_name, department_id, lookup_name)
+    """
+    client_id = id(get_client())
+    cached_meta = _teacher_meta_cache.get((client_id, teacher_id))
+    if cached_meta is not None:
+        can_id = cached_meta.get("canonical_id", teacher_id)
+        if isinstance(can_id, str) and can_id.isdigit():
+            can_id = int(can_id)
+        return (
+            can_id,
+            cached_meta.get("name") or teacher_name or str(teacher_id),
+            cached_meta.get("dept_id", 0),
+            cached_meta.get("lookup_name") or cached_meta.get("name") or str(teacher_id),
+        )
+
+    if teacher_name and (client_id, teacher_name) in _teacher_meta_cache:
+        cached_meta = _teacher_meta_cache[(client_id, teacher_name)]
+        can_id = cached_meta.get("canonical_id", teacher_id)
+        if isinstance(can_id, str) and can_id.isdigit():
+            can_id = int(can_id)
+        return (
+            can_id,
+            cached_meta.get("name") or teacher_name,
+            cached_meta.get("dept_id", 0),
+            cached_meta.get("lookup_name") or cached_meta.get("name") or str(teacher_id),
+        )
+
+    t_doc = None
+    canonical_id: int | str = teacher_id
+    display_name = teacher_name or (f"ID {teacher_id}" if isinstance(teacher_id, int) or str(teacher_id).isdigit() else str(teacher_id))
+    lookup_name = ""
+    dept_id = 0
+    is_head = False
+    job_title = ""
+
+    try:
+        from src.database.models.teacher import Teacher
+
+        if isinstance(teacher_id, int) or (isinstance(teacher_id, str) and teacher_id.isdigit()):
+            num_id = int(teacher_id)
+            canonical_id = num_id
+            t_doc = await Teacher.find_one({"id": num_id}) or await Teacher.find_one({"teacherId": num_id})
+        else:
+            str_name = str(teacher_id).strip()
+            # Try finding by exact name in DB
+            t_doc = await Teacher.find_one({"name": str_name})
+            if not t_doc and teacher_name:
+                t_doc = await Teacher.find_one({"name": teacher_name})
+            if not t_doc:
+                # Try finding match via directory service
+                matched_dir = teacher_directory_service.find_match(str_name) or (
+                    teacher_directory_service.find_match(teacher_name) if teacher_name else None
+                )
+                if matched_dir:
+                    m_initials = matched_dir.get("initials")
+                    m_full = matched_dir.get("fullName")
+                    if m_initials:
+                        clean_inits = clean_titles(m_initials)
+                        t_doc = await Teacher.find_one({"name": clean_inits})
+                    if not t_doc and m_full:
+                        surname = m_full.split()[0]
+                        candidates = await Teacher.find({"name": {"$regex": surname, "$options": "i"}}).to_list()
+                        for c in candidates:
+                            c_name = getattr(c, "name", None) or (c.get("name") if isinstance(c, dict) else "")
+                            if buketov_api_service.match_teacher_record(c_name, m_full):
+                                t_doc = c
+                                break
+
+        if t_doc:
+            doc_id = getattr(t_doc, "teacher_id", None) or getattr(t_doc, "id", None) or (t_doc.get("id") if isinstance(t_doc, dict) else None)
+            if doc_id and str(doc_id).isdigit():
+                canonical_id = int(doc_id)
+            lookup_name = getattr(t_doc, "name", "") or (t_doc.get("name", "") if isinstance(t_doc, dict) else "")
+            doc_dict = t_doc.model_dump(by_alias=True) if hasattr(t_doc, "model_dump") else (t_doc if isinstance(t_doc, dict) else {"id": canonical_id, "name": lookup_name})
+            enriched = teacher_directory_service.enrich(doc_dict)
+            display_name = (enriched.get("fullName") if enriched else None) or lookup_name or display_name
+            dept_val = getattr(t_doc, "department", 0) or (t_doc.get("department") if isinstance(t_doc, dict) else 0)
+            dept_id = int(dept_val) if dept_val and str(dept_val).isdigit() else 0
+            is_head = bool((enriched.get("isHead") if enriched else False) or getattr(t_doc, "is_head", False) or getattr(t_doc, "isHead", False))
+            job_title = (enriched.get("jobTitle") if enriched else "") or getattr(t_doc, "job_title", "") or getattr(t_doc, "jobTitle", "")
+        elif isinstance(teacher_id, str) and not teacher_id.isdigit():
+            matched_dir = teacher_directory_service.find_match(teacher_id) or (
+                teacher_directory_service.find_match(teacher_name) if teacher_name else None
+            )
+            if matched_dir:
+                display_name = matched_dir.get("fullName") or matched_dir.get("name") or display_name
+                lookup_name = matched_dir.get("name") or display_name
+                dept_val = matched_dir.get("departmentId") or 0
+                dept_id = int(dept_val) if dept_val and str(dept_val).isdigit() else 0
+                is_head = bool(matched_dir.get("isHead", False))
+                job_title = matched_dir.get("jobTitle", "")
+            else:
+                lookup_name = display_name
+    except Exception as e:
+        logger.debug(f"Error in resolve_teacher_identity for {teacher_id}: {e}")
+
+    if not lookup_name:
+        lookup_name = display_name
+
+    meta = {
+        "canonical_id": canonical_id,
+        "name": display_name,
+        "dept_id": dept_id,
+        "lookup_name": lookup_name,
+        "is_head": is_head,
+        "job_title": job_title,
+    }
+    _teacher_meta_cache[(client_id, canonical_id)] = meta
+    _teacher_meta_cache[(client_id, teacher_id)] = meta
+    _teacher_meta_cache[(client_id, display_name)] = meta
+    if lookup_name and lookup_name != display_name:
+        _teacher_meta_cache[(client_id, lookup_name)] = meta
+
+    if canonical_id and display_name:
+        register_teacher_name(canonical_id, display_name)
+    if teacher_id and teacher_id != canonical_id and display_name:
+        register_teacher_name(teacher_id, display_name)
+
+    return canonical_id, display_name, dept_id, lookup_name
+
 
 
 def _norm_cache_lang(lang: str | None) -> str:
@@ -955,43 +1082,47 @@ async def get_or_fetch_teacher_text_schedule(
     is_refresh: bool = False,
     teacher_name: str | None = None,
 ) -> dict[str, Any] | None:
-    """Retrieves teacher schedule from RAM cache, Buketov API, or MongoDB fallback."""
+    """Retrieves teacher schedule from RAM cache, Buketov API, or MongoDB fallback with multi-key aliasing."""
+    canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
     norm_lang = _norm_cache_lang(ui_lang)
-    cache_key = f"{teacher_id}_{norm_lang}"
+
+    # Collect all alias keys
+    alias_keys = [
+        f"{canonical_id}_{norm_lang}",
+        f"{teacher_id}_{norm_lang}",
+        f"{canonical_id}_{ui_lang}",
+        f"{teacher_id}_{ui_lang}",
+    ]
+    if tch_name:
+        alias_keys.append(f"{tch_name}_{norm_lang}")
+        clean_name = clean_titles(tch_name)
+        if clean_name != tch_name:
+            alias_keys.append(f"{clean_name}_{norm_lang}")
+    if lookup_name and lookup_name != tch_name:
+        alias_keys.append(f"{lookup_name}_{norm_lang}")
+
     now = time.time()
-    cached = teacher_text_cache.get(cache_key) or teacher_text_cache.get(f"{teacher_id}_{ui_lang}")
+    cached = None
+    for k in alias_keys:
+        cached = teacher_text_cache.get(k)
+        if cached:
+            break
 
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1800.0)
+    if not needs_fetch and cached:
+        # Propagate cache across all alias keys
+        for k in alias_keys:
+            if k not in teacher_text_cache:
+                teacher_text_cache[k] = cached
+        return cached
+
     if needs_fetch:
-        tch_name = teacher_name
-        if not tch_name:
-            meta = _teacher_meta_cache.get((id(get_client()), teacher_id))
-            if meta and meta.get("lookup_name"):
-                tch_name = meta["lookup_name"]
-            else:
-                try:
-                    from src.database.models.teacher import Teacher
-
-                    num_t_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-                    t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
-                    if t_doc and getattr(t_doc, "name", None):
-                        tch_name = t_doc.name
-                    elif isinstance(teacher_id, str) and not teacher_id.isdigit():
-                        tch_name = teacher_id
-                except Exception:
-                    if isinstance(teacher_id, str) and not teacher_id.isdigit():
-                        tch_name = teacher_id
-                if not tch_name and teacher_id:
-                    matched_dir = teacher_directory_service.find_match(str(teacher_id))
-                    if matched_dir:
-                        tch_name = matched_dir.get("name") or matched_dir.get("fullName")
-
-        if tch_name:
+        if lookup_name:
             try:
                 if is_refresh:
-                    raw_sch = await buketov_api_service.get_teacher_schedule(tch_name, force_refresh=True)
+                    raw_sch = await buketov_api_service.get_teacher_schedule(lookup_name, force_refresh=True)
                 else:
-                    raw_sch = await buketov_api_service.get_teacher_schedule(tch_name)
+                    raw_sch = await buketov_api_service.get_teacher_schedule(lookup_name)
                 records = (
                     raw_sch.get("records", [])
                     if isinstance(raw_sch, dict)
@@ -1004,17 +1135,22 @@ async def get_or_fetch_teacher_text_schedule(
                     "timestamp": now if is_refresh else entry_ts,
                     "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
                 }
-                teacher_text_cache[cache_key] = cached
+                for k in alias_keys:
+                    teacher_text_cache[k] = cached
+                teacher_table_cache[str(canonical_id)] = cached
+                teacher_table_cache[str(teacher_id)] = cached
+                if tch_name:
+                    teacher_table_cache[tch_name] = cached
                 if not cached["is_from_db"] and adapted:
-                    asyncio.create_task(_bg_persist_teacher_schedule(teacher_id, adapted))
+                    asyncio.create_task(_bg_persist_teacher_schedule(canonical_id, adapted))
             except Exception as e:
-                logger.warning(f"Error fetching text schedule for teacher {tch_name} (id={teacher_id}): {e}")
+                logger.warning(f"Error fetching text schedule for teacher {lookup_name} (id={canonical_id}): {e}")
 
         if not cached:
             try:
                 from src.database.models.teacher_schedule import TeacherSchedule
 
-                num_t_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+                num_t_id = int(canonical_id) if str(canonical_id).isdigit() else canonical_id
                 doc = await TeacherSchedule.find_one({"teacherId": num_t_id})
                 if doc and doc.data:
                     cached = {
@@ -1025,16 +1161,24 @@ async def get_or_fetch_teacher_text_schedule(
                         "timestamp": doc.updated_at.timestamp() if doc.updated_at else now,
                         "is_from_db": True,
                     }
-                    teacher_text_cache[cache_key] = cached
+                    for k in alias_keys:
+                        teacher_text_cache[k] = cached
+                    teacher_table_cache[str(canonical_id)] = cached
+                    teacher_table_cache[str(teacher_id)] = cached
             except Exception:
                 pass
+
         if not cached:
             cached = {
                 "data": schedule_api_adapter.adapt_teacher_schedule([], norm_lang),
                 "timestamp": now,
                 "is_from_db": True,
             }
-            teacher_text_cache[cache_key] = cached
+            for k in alias_keys:
+                teacher_text_cache[k] = cached
+            teacher_table_cache[str(canonical_id)] = cached
+            teacher_table_cache[str(teacher_id)] = cached
+
     return cached
 
 
@@ -1085,61 +1229,11 @@ async def build_teacher_day_text_view(
                 seen_times[norm_t] = copy_item
             deduplicated.append(copy_item)
 
-    tch_name = teacher_name or f"ID {teacher_id}"
-    dept_id = 0
-    job_title = ""
-    is_head = False
+    canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
     client_id = id(get_client())
-    cached_meta = _teacher_meta_cache.get((client_id, teacher_id))
-
-    if cached_meta is not None:
-        if not teacher_name and cached_meta.get("name"):
-            tch_name = cached_meta["name"]
-        dept_id = cached_meta.get("dept_id", 0)
-        is_head = bool(cached_meta.get("is_head", False))
-        job_title = cached_meta.get("job_title", "")
-    else:
-        found_meta = False
-        lookup_name = ""
-        try:
-            from src.database.models.teacher import Teacher
-
-            num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-            t_doc = await Teacher.find_one(Teacher.teacher_id == num_id) or await Teacher.find_one({"id": num_id})
-            if not t_doc and teacher_name:
-                t_doc = await Teacher.find_one(Teacher.name == teacher_name) or await Teacher.find_one({"name": teacher_name})
-            if t_doc:
-                found_meta = True
-                lookup_name = t_doc.name or ""
-                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
-                if not teacher_name:
-                    tch_name = enriched.get("fullName") or t_doc.name
-                dept_id = t_doc.department or 0
-                is_head = bool(enriched.get("isHead") or getattr(t_doc, "is_head", False) or getattr(t_doc, "isHead", False))
-                job_title = enriched.get("jobTitle") or getattr(t_doc, "job_title", "") or getattr(t_doc, "jobTitle", "")
-        except Exception:
-            pass
-
-        if not is_head and not job_title and teacher_id:
-            matched = teacher_directory_service.find_match(str(teacher_id)) or teacher_directory_service.find_match(tch_name)
-            if matched:
-                found_meta = True
-                enriched = teacher_directory_service.enrich(matched)
-                if not lookup_name:
-                    lookup_name = enriched.get("name") or enriched.get("fullName") or ""
-                if not teacher_name and enriched.get("fullName"):
-                    tch_name = enriched.get("fullName")
-                is_head = is_head or bool(enriched.get("isHead"))
-                job_title = job_title or enriched.get("jobTitle") or ""
-
-        if found_meta:
-            _teacher_meta_cache[(client_id, teacher_id)] = {
-                "name": tch_name,
-                "lookup_name": lookup_name or tch_name,
-                "dept_id": dept_id,
-                "is_head": is_head,
-                "job_title": job_title,
-            }
+    cached_meta = _teacher_meta_cache.get((client_id, canonical_id)) or _teacher_meta_cache.get((client_id, teacher_id)) or {}
+    job_title = cached_meta.get("job_title", "")
+    is_head = bool(cached_meta.get("is_head", False))
 
     if is_head and not job_title:
         job_title = "Кафедра меңгерушісі" if ui_lang in ("kz", "каз") else "Заведующий кафедрой"
@@ -1234,51 +1328,13 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     chat_id = call.message.chat.id if call.message and call.message.chat else user_id
 
     now = time.time()
-    t_id_str = str(teacher_id)
-    cached = teacher_table_cache.get(t_id_str)
-
-    # Teacher profile resolution (with RAM metadata cache)
-    teacher_name = f"ID {teacher_id}"
-    lookup_name = ""
-    dept_id = 0
-    client_id = id(get_client())
-    cached_meta = _teacher_meta_cache.get((client_id, teacher_id))
-
-    if cached_meta is not None:
-        teacher_name = cached_meta.get("name") or teacher_name
-        lookup_name = cached_meta.get("lookup_name") or teacher_name
-        dept_id = cached_meta.get("dept_id", 0)
-        if teacher_id and teacher_name:
-            register_teacher_name(teacher_id, teacher_name)
-    else:
-        t_doc = None
-        try:
-            from src.database.models.teacher import Teacher
-
-            t_doc = await Teacher.find_one({"id": teacher_id})
-            if t_doc:
-                lookup_name = t_doc.name or ""
-                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
-                teacher_name = enriched.get("fullName") or t_doc.name
-                if teacher_id and teacher_name:
-                    register_teacher_name(teacher_id, teacher_name)
-                dept_id = t_doc.department or 0
-                _teacher_meta_cache[(client_id, teacher_id)] = {
-                    "name": teacher_name,
-                    "lookup_name": lookup_name or teacher_name,
-                    "dept_id": dept_id,
-                    "is_head": bool(enriched.get("isHead") or getattr(t_doc, "is_head", False)),
-                    "job_title": enriched.get("jobTitle") or getattr(t_doc, "job_title", ""),
-                }
-        except Exception:
-            pass
-        if teacher_name.startswith("ID ") and teacher_id:
-            matched_dir = teacher_directory_service.find_match(str(teacher_id))
-            if matched_dir:
-                enriched = teacher_directory_service.enrich(matched_dir)
-                teacher_name = enriched.get("fullName") or enriched.get("name") or teacher_name
-                lookup_name = enriched.get("name") or teacher_name
-                register_teacher_name(teacher_id, teacher_name)
+    canonical_id, teacher_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id)
+    t_id_str = str(canonical_id)
+    cached = (
+        teacher_table_cache.get(t_id_str)
+        or teacher_table_cache.get(str(teacher_id))
+        or teacher_table_cache.get(teacher_name)
+    )
 
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
@@ -1289,7 +1345,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                 f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
                 f"🕒 <i><b>{elapsed} || {clock}</b></i>"
             )
-            markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
+            markup = get_teacher_table_keyboard(canonical_id, day_num, department_id=dept_id, lang=ui_lang)
             try:
                 await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
             except Exception:
@@ -1441,16 +1497,34 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
 
     user_id = call.from_user.id if call.from_user else 0
     ui_lang = await user_service.get_user_language(user_id)
-    if user_id and teacher_id:
-        asyncio.create_task(user_service.set_user_schedule_preference(user_id, "teacher", teacher=teacher_id))
+    canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id)
+    if user_id and canonical_id:
+        asyncio.create_task(user_service.set_user_schedule_preference(user_id, "teacher", teacher=canonical_id))
 
     norm_lang = _norm_cache_lang(ui_lang)
-    cache_key = f"{teacher_id}_{norm_lang}"
+    alias_keys = [
+        f"{canonical_id}_{norm_lang}",
+        f"{teacher_id}_{norm_lang}",
+        f"{canonical_id}_{ui_lang}",
+        f"{teacher_id}_{ui_lang}",
+    ]
+    if tch_name:
+        alias_keys.append(f"{tch_name}_{norm_lang}")
+        clean_name = clean_titles(tch_name)
+        if clean_name != tch_name:
+            alias_keys.append(f"{clean_name}_{norm_lang}")
+    if lookup_name and lookup_name != tch_name:
+        alias_keys.append(f"{lookup_name}_{norm_lang}")
+
     now = time.time()
-    cached = teacher_text_cache.get(cache_key) or teacher_text_cache.get(f"{teacher_id}_{ui_lang}")
+    cached = None
+    for k in alias_keys:
+        cached = teacher_text_cache.get(k)
+        if cached:
+            break
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
-        text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
+        text, markup = await build_teacher_day_text_view(cached, canonical_id, day_num, ui_lang, teacher_name=tch_name)
         if call.message:
             try:
                 await call.message.edit_text(
@@ -1465,9 +1539,9 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
         await call.answer()
         return
 
-    cached = await get_or_fetch_teacher_text_schedule(teacher_id, ui_lang, is_refresh=is_refresh)
+    cached = await get_or_fetch_teacher_text_schedule(canonical_id, ui_lang, is_refresh=is_refresh, teacher_name=tch_name)
 
-    text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
+    text, markup = await build_teacher_day_text_view(cached, canonical_id, day_num, ui_lang, teacher_name=tch_name)
     if call.message:
         if call.message.photo:
             try:
@@ -1510,6 +1584,7 @@ __all__ = [
     "get_or_fetch_teacher_text_schedule",
     "render_student_day_schedule_message",
     "render_teacher_day_schedule_message",
+    "resolve_teacher_identity",
     "safe_edit_or_replace_message",
     "student_schedule_cache",
     "teacher_table_cache",

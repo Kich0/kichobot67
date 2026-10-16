@@ -99,6 +99,8 @@ class SmartSearchService:
         self._last_teachers_cache_time = 0.0
         self._last_groups_cache_time = 0.0
 
+    clear_cache = invalidate_caches
+
     @staticmethod
     def _ensure_teacher_indexed(t: Any) -> tuple[str, str, str, str, str, str, str, list[str], list[str], list[str]]:
         """Returns precomputed normalized teacher fields, caching them on dict items."""
@@ -220,17 +222,63 @@ class SmartSearchService:
         except Exception as e:
             logger.debug(f"Could not load teachers from DB, checking directory: {e}")
 
-        # Combine DB teachers with in-memory teacher directory service
+        # Build cross-matching indexes from database teachers
         all_teachers = list(unique_teachers)
-        seen_names = {
-            t.get("_norm_full") or normalize_cyrillic(str(_get_field(t, "fullName") or _get_field(t, "name") or ""))
-            for t in unique_teachers
-            if (_get_field(t, "fullName") or _get_field(t, "name"))
-        }
+        db_by_norm_full: dict[str, dict[str, Any]] = {}
+        db_by_norm_name: dict[str, dict[str, Any]] = {}
+        db_by_inits: dict[str, dict[str, Any]] = {}
+
+        seen_keys: set[str] = set()
+        for t in unique_teachers:
+            t_full = str(_get_field(t, "fullName") or "").strip()
+            t_name = str(_get_field(t, "name") or "").strip()
+            if t_full:
+                nf = normalize_cyrillic(t_full)
+                db_by_norm_full[nf] = t
+                seen_keys.add(nf)
+            if t_name:
+                nn = normalize_cyrillic(clean_titles(t_name))
+                db_by_norm_name[nn] = t
+                seen_keys.add(nn)
+                words = nn.split()
+                if len(words) >= 2:
+                    surname = words[-1] if len(words[0]) == 1 else words[0]
+                    inits = [w[0] for w in (words[:-1] if len(words[0]) == 1 else words[1:]) if w]
+                    if inits:
+                        init_key = f"{surname} {' '.join(inits)}"
+                        db_by_inits[init_key] = t
+                        seen_keys.add(init_key)
+
         for d_t in (teacher_directory_service.teachers or []):
-            d_norm = normalize_cyrillic(str(_get_field(d_t, "fullName") or _get_field(d_t, "name") or ""))
-            if d_norm and d_norm not in seen_names:
-                seen_names.add(d_norm)
+            d_full = str(_get_field(d_t, "fullName") or "").strip()
+            d_name = str(_get_field(d_t, "name") or _get_field(d_t, "initials") or d_full).strip()
+            d_norm_full = normalize_cyrillic(d_full)
+            d_norm_name = normalize_cyrillic(clean_titles(d_name))
+
+            # Attempt to find corresponding DB teacher with integer ID
+            matched_db = (
+                db_by_norm_full.get(d_norm_full)
+                or db_by_norm_name.get(d_norm_name)
+            )
+            if not matched_db and d_name:
+                words = d_norm_name.split()
+                if len(words) >= 2:
+                    surname = words[-1] if len(words[0]) == 1 else words[0]
+                    inits = [w[0] for w in (words[:-1] if len(words[0]) == 1 else words[1:]) if w]
+                    if inits:
+                        matched_db = db_by_inits.get(f"{surname} {' '.join(inits)}")
+
+            if matched_db:
+                # Merge directory profile into existing DB teacher document
+                db_id = matched_db.get("id") or matched_db.get("teacher_id")
+                if db_id and not matched_db.get("photoUrl") and d_t.get("photoUrl"):
+                    matched_db["photoUrl"] = d_t["photoUrl"]
+                if db_id and not matched_db.get("fullName") and d_full:
+                    matched_db["fullName"] = d_full
+                continue
+
+            if d_norm_full and d_norm_full not in seen_keys:
+                seen_keys.add(d_norm_full)
                 enriched = teacher_directory_service.enrich(d_t)
                 if enriched:
                     self._ensure_teacher_indexed(enriched)
@@ -316,7 +364,7 @@ class SmartSearchService:
             if len(tokens) == 1 and len(norm_query) <= 2:
                 last_starts = norm_last.startswith(norm_query)
                 first_starts = bool(norm_first and norm_first.startswith(norm_query))
-                token_starts = any(tok.startswith(norm_query) for tok in full_tokens)
+                token_starts = len(norm_query) >= 2 and any(tok.startswith(norm_query) for tok in full_tokens)
                 alias_starts = any(a.startswith(norm_query) for a in norm_aliases)
                 if last_starts:
                     matches.append((100, t))
@@ -482,12 +530,14 @@ class SmartSearchService:
                     results.append(g)
                     continue
 
-        # Sort: exact compact first, prefix compact next, alphabetical
-        def _sort_key(item: Any) -> tuple[int, int, str]:
+        # Sort: exact compact first, prefix compact next, then natural course/subgroup sort
+        from src.services.group_sorting import group_sort_key
+
+        def _sort_key(item: Any):
             raw_n, _, n, _ = self._ensure_group_indexed(item)
             is_exact = 0 if n == compact_query else 1
             is_prefix = 0 if n.startswith(compact_query) else 1
-            return (is_exact, is_prefix, raw_n)
+            return (is_exact, is_prefix, group_sort_key(item))
 
         results.sort(key=_sort_key)
         return results
@@ -564,8 +614,8 @@ class SmartSearchService:
         text = str(query or "").strip()
         lang = "kz" if is_kazakh_text(text) else user_language
 
-        # Validation: length < 2 or no letters/digits
-        if len(text) < 2 or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", text):
+        # Validation: empty query or no letters/digits
+        if not text or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", text):
             return SmartSearchResult(
                 query=text,
                 user_language=lang,
@@ -670,7 +720,7 @@ class SmartSearchService:
         # Scenario 5: Combined (both teachers and groups)
         if len(matched_teachers) > 0 and len(matched_groups) > 0:
             has_digits = bool(re.search(r"\d", text))
-            is_group_pattern = bool(re.match(r"^[a-zA-Zа-яА-ЯёЁ]{2,4}$", compact_query))
+            is_group_pattern = bool(re.match(r"^[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]{1,4}$", compact_query))
             group_starts = any(
                 normalize_cyrillic(str(_get_field(g, "name", ""))).replace(" ", "").startswith(compact_query)
                 for g in matched_groups

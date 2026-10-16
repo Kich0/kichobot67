@@ -327,17 +327,35 @@ class SmartWarmupEngine:
             teacher_map: dict[int | str, str] = {}
             if top_teacher_ids:
                 try:
-                    from beanie.operators import In
+                    from src.bot.handlers.callbacks_router import resolve_teacher_identity
 
-                    num_ids = [t for t in top_teacher_ids if isinstance(t, int)]
-                    if num_ids:
-                        teachers = await Teacher.find(In(Teacher.teacher_id, num_ids)).to_list()
-                        for t in teachers:
-                            name = t.name or t.full_name
-                            if name:
-                                teacher_map[t.teacher_id] = name
+                    for tid in top_teacher_ids:
+                        if len(teacher_map) >= self.TOP_TEACHERS_LIMIT:
+                            break
+                        can_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(tid)
+                        use_id = int(can_id) if (isinstance(can_id, str) and can_id.isdigit()) else can_id
+                        use_name = lookup_name or tch_name
+                        if use_id not in teacher_map:
+                            teacher_map[use_id] = use_name
                 except Exception as e:
-                    logger.debug(f"[SmartWarmupEngine] Teacher In query failed: {e}")
+                    logger.debug(f"[SmartWarmupEngine] Teacher resolution in _get_top_teachers failed: {e}")
+
+            if len(teacher_map) < self.TOP_TEACHERS_LIMIT:
+                needed = self.TOP_TEACHERS_LIMIT - len(teacher_map)
+                try:
+                    from beanie.operators import NotIn
+
+                    num_ids = [t for t in teacher_map.keys() if isinstance(t, int)]
+                    if num_ids:
+                        extra_teachers = await Teacher.find(NotIn(Teacher.teacher_id, num_ids)).limit(needed).to_list()
+                    else:
+                        extra_teachers = await Teacher.find().limit(needed).to_list()
+                    for t in extra_teachers:
+                        name = t.name or t.full_name
+                        if t.teacher_id not in teacher_map and name:
+                            teacher_map[t.teacher_id] = name
+                except Exception as e:
+                    logger.debug(f"[SmartWarmupEngine] Teacher fallback query failed: {e}")
 
             # Supplement from teacher_directory_service if DB has fewer entries
             if len(teacher_map) < self.TOP_TEACHERS_LIMIT:
@@ -411,16 +429,21 @@ class SmartWarmupEngine:
             logger.warning(f"[SmartWarmupEngine] Error warming group {group_name} (id={group_id}): {e}")
 
     async def _warm_teacher(self, teacher_id: int | str, teacher_name: str) -> None:
-        """Fetches and warms schedule for a single teacher into RAM and DB fallback."""
+        """Fetches and warms schedule for a single teacher into RAM and DB fallback with multi-key aliasing."""
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_teacher_schedule,
+                resolve_teacher_identity,
                 teacher_table_cache,
                 teacher_text_cache,
             )
             from src.services.schedule_adapter import schedule_api_adapter
+            from src.services.teacher_directory import clean_titles
 
-            raw_data = await buketov_api_service.get_teacher_schedule(teacher_name, force_refresh=True)
+            canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
+            api_lookup = lookup_name or teacher_name
+
+            raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=True)
             records = (
                 raw_data.get("records", [])
                 if isinstance(raw_data, dict)
@@ -430,10 +453,10 @@ class SmartWarmupEngine:
 
             # If fallback from DB is completely empty, preserve existing valid cache
             if is_from_db and not records:
-                existing = teacher_text_cache.get(f"{teacher_id}_ru")
+                existing = teacher_text_cache.get(f"{canonical_id}_ru") or teacher_text_cache.get(f"{teacher_id}_ru")
                 if existing and existing.get("data"):
                     logger.debug(
-                        f"[SmartWarmupEngine] Keeping existing cache for teacher {teacher_name}; DB returned empty."
+                        f"[SmartWarmupEngine] Keeping existing cache for teacher {api_lookup}; DB returned empty."
                     )
                     return
 
@@ -441,24 +464,41 @@ class SmartWarmupEngine:
             adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
-            teacher_text_cache[f"{teacher_id}_ru"] = {
+            cache_entry_ru = {
                 "data": adapted_ru,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
-            teacher_text_cache[f"{teacher_id}_kz"] = {
+            cache_entry_kz = {
                 "data": adapted_kz,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
-            teacher_table_cache[str(teacher_id)] = {
-                "data": adapted_ru,
-                "timestamp": entry_ts,
-                "is_from_db": is_from_db,
-            }
+
+            # Multi-key alias caching across numbers, names, and initials
+            alias_ids = {str(teacher_id), str(canonical_id)}
+            if tch_name:
+                alias_ids.add(tch_name)
+                clean_n = clean_titles(tch_name)
+                if clean_n:
+                    alias_ids.add(clean_n)
+            if lookup_name:
+                alias_ids.add(lookup_name)
+                clean_l = clean_titles(lookup_name)
+                if clean_l:
+                    alias_ids.add(clean_l)
+            if teacher_name:
+                alias_ids.add(teacher_name)
+
+            for a_id in alias_ids:
+                if a_id:
+                    teacher_text_cache[f"{a_id}_ru"] = cache_entry_ru
+                    teacher_text_cache[f"{a_id}_kz"] = cache_entry_kz
+                    teacher_table_cache[a_id] = cache_entry_ru
+
             if not is_from_db and adapted_ru:
-                self._create_background_task(_bg_persist_teacher_schedule(teacher_id, adapted_ru))
-            logger.debug(f"[SmartWarmupEngine] Warmed schedule for teacher {teacher_name} (id={teacher_id})")
+                self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
+            logger.debug(f"[SmartWarmupEngine] Warmed schedule for teacher {api_lookup} (id={canonical_id})")
         except Exception as e:
             logger.warning(f"[SmartWarmupEngine] Error warming teacher {teacher_name} (id={teacher_id}): {e}")
 

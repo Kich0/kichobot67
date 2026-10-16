@@ -253,12 +253,51 @@ async def test_smart_search_not_found(mock_teachers, mock_groups):
 
 @pytest.mark.asyncio
 async def test_smart_search_welcome_fallback():
-    """Verifies WELCOME_FALLBACK for single characters or punctuation."""
+    """Verifies WELCOME_FALLBACK for non-alphanumeric queries."""
     result = await smart_search_service.search("!")
     assert result.result_type == SearchResultType.WELCOME_FALLBACK
 
-    result2 = await smart_search_service.search("а")
+    result2 = await smart_search_service.search("   ")
     assert result2.result_type == SearchResultType.WELCOME_FALLBACK
+
+    result3 = await smart_search_service.search("---")
+    assert result3.result_type == SearchResultType.WELCOME_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_smart_search_single_letter_group_and_teacher():
+    """Verifies that single-letter queries like 'Ю' find matching groups and teachers."""
+    groups = [
+        {"id": 1, "name": "Ю-26-1к"},
+        {"id": 2, "name": "Ю-25-2р"},
+        {"id": 3, "name": "Ю-24-1к"},
+        {"id": 4, "name": "ИС-25-3р"},
+    ]
+    teachers = [
+        {"id": 10, "name": "Юсупова А.", "fullName": "Юсупова Асель", "lastName": "Юсупова", "firstName": "Асель", "aliases": []},
+        {"id": 11, "name": "Попова Н.", "fullName": "Попова Надежда", "lastName": "Попова", "firstName": "Надежда", "aliases": []},
+    ]
+
+    # 1. Direct find_groups with single letter 'Ю'
+    matched_g = smart_search_service.find_groups("Ю", groups)
+    assert len(matched_g) == 3
+    # Check natural sorting: 26 before 25 before 24
+    assert matched_g[0]["name"] == "Ю-26-1к"
+    assert matched_g[1]["name"] == "Ю-25-2р"
+    assert matched_g[2]["name"] == "Ю-24-1к"
+
+    # 2. Direct find_teachers with single letter 'Ю'
+    matched_t = smart_search_service.find_teachers("Ю", teachers)
+    assert len(matched_t) == 1
+    assert matched_t[0]["lastName"] == "Юсупова"
+
+    # 3. Full search workflow with 'Ю'
+    res = await smart_search_service.search("Ю", groups=groups, teachers=teachers)
+    assert res.result_type == SearchResultType.COMBINED
+    assert len(res.groups) == 3
+    assert len(res.teachers) == 1
+    assert res.prefer_groups_first is True
+
 
 
 @pytest.mark.asyncio

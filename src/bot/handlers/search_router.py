@@ -64,8 +64,8 @@ async def handle_text_search(message: Message) -> None:
     if is_kazakh_text(text):
         lang = "kz"
 
-    # Validation: reject queries shorter than 2 chars or with no alphanumeric characters
-    if len(text) < 2 or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", text):
+    # Validation: reject empty queries or queries with no alphanumeric characters
+    if not text or not re.search(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ0-9]", text):
         await message.answer(
             f"ℹ️ {t('search_command_content', lang)}",
             parse_mode="HTML",
@@ -120,7 +120,8 @@ async def handle_text_search(message: Message) -> None:
     if result.result_type == SearchResultType.EXACT_TEACHER and result.exact_teacher:
         tch = result.exact_teacher
         t_name = tch.get("fullName") or tch.get("name")
-        t_id = tch.get("id") or tch.get("teacher_id") or tch.get("name") or t_name
+        raw_id = tch.get("id") or tch.get("teacher_id")
+        t_id = int(raw_id) if raw_id and str(raw_id).isdigit() else (raw_id or tch.get("name") or t_name)
 
         if t_id and t_name:
             register_teacher_name(t_id, t_name)
@@ -165,7 +166,8 @@ async def handle_text_search(message: Message) -> None:
                 register_group_name(gid, gname)
         for tch in (result.teachers or []):
             tname = tch.get("fullName") or tch.get("name")
-            tid = tch.get("id") or tch.get("teacher_id") or tch.get("name") or tname
+            raw_id = tch.get("id") or tch.get("teacher_id")
+            tid = int(raw_id) if raw_id and str(raw_id).isdigit() else (raw_id or tch.get("name") or tname)
             if tid and tname:
                 register_teacher_name(tid, tname)
 
@@ -195,6 +197,7 @@ async def handle_text_search(message: Message) -> None:
             tab="all",
             page=0,
             query=text,
+            prefer_groups_first=result.prefer_groups_first,
         )
         await message.answer(heading, reply_markup=markup, parse_mode="HTML")
         return
@@ -212,7 +215,8 @@ async def handle_text_search(message: Message) -> None:
                         register_group_name(gid, gname)
                 else:
                     tname = item.get("fullName") or item.get("name")
-                    tid = item.get("id") or item.get("teacher_id") or item.get("name") or tname
+                    raw_id = item.get("id") or item.get("teacher_id")
+                    tid = int(raw_id) if raw_id and str(raw_id).isdigit() else (raw_id or item.get("name") or tname)
                     if tid and tname:
                         register_teacher_name(tid, tname)
 
@@ -298,6 +302,7 @@ async def handle_search_tabs_and_pagination(call: CallbackQuery) -> None:
         tab=tab,
         page=page,
         query=query,
+        prefer_groups_first=result.prefer_groups_first,
     )
 
     if call.message and isinstance(call.message, Message):

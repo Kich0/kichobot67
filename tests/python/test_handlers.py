@@ -287,6 +287,28 @@ async def test_search_router_fuzzy_and_not_found():
 
 
 @pytest.mark.asyncio
+async def test_search_router_single_letter_query():
+    """Verifies that single-letter query like 'Ю' in chat is processed and returns search results."""
+    mock_result_single = SmartSearchResult(
+        query="Ю",
+        result_type=SearchResultType.COMBINED,
+        groups=[{"id": 1, "name": "Ю-26-1к"}, {"id": 2, "name": "Ю-25-2р"}],
+        teachers=[{"id": 10, "name": "Юсупова А.", "fullName": "Юсупова Асель"}],
+        prefer_groups_first=True,
+    )
+    with patch.object(smart_search_service, "search", AsyncMock(return_value=mock_result_single)):
+        msg = make_message(user_id=88008, text="Ю")
+        await handle_text_search(msg)
+        assert msg.answer.call_count == 1
+        assert "найдено совпадений: <b>3</b>" in msg.answer.call_args[0][0]
+        markup = msg.answer.call_args[1]["reply_markup"]
+        btn_texts = [btn.text for row in markup.inline_keyboard for btn in row]
+        assert any("Группы (2)" in t for t in btn_texts)
+        assert any("Преподаватели (1)" in t for t in btn_texts)
+        assert any("Ю-26-1к" in t for t in btn_texts)
+
+
+@pytest.mark.asyncio
 async def test_admin_router_security(mock_db):
     # Regular user is rejected
     non_admin_msg = make_message(user_id=99001, text="/stat")

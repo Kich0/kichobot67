@@ -502,6 +502,7 @@ def get_search_results_keyboard(
     page: int = 0,
     query: str = "",
     page_size: int = 8,
+    prefer_groups_first: bool = True,
 ) -> InlineKeyboardMarkup:
     """Inline keyboard presenting matched groups and teachers with category filter tabs and pagination."""
     buttons: list[list[InlineKeyboardButton]] = []
@@ -631,27 +632,35 @@ def get_search_results_keyboard(
                     InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"srch|a|{next_p}|{clean_q}"),
                 ])
         else:
-            # Both exist: balanced preview (first 5 groups, first 5 teachers), user can click tabs above
-            for g in groups_list[:5]:
-                g_id = get_domain_id(g, "group_id")
-                g_name = _get_attr(g, "name") or f"Группа {g_id}"
-                g_lang = _get_attr(g, "language") or "ru"
-                buttons.append([
-                    InlineKeyboardButton(
-                        text=f"👥 {g_name}",
-                        callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|{day_val}",
-                    )
-                ])
-            for t_item in teachers_list[:5]:
-                t_id = get_domain_id(t_item, "teacher_id")
-                t_name = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {t_id}"
-                t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(t_item, "name") or t_name)
-                buttons.append([
-                    InlineKeyboardButton(
-                        text=f"👨‍🏫 {t_name}",
-                        callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
-                    )
-                ])
+            # Both exist: balanced preview (first 5 of preferred category, first 5 of other)
+            def _render_group_btn(g_item: Any) -> InlineKeyboardButton:
+                gid = get_domain_id(g_item, "group_id")
+                gname = _get_attr(g_item, "name") or f"Группа {gid}"
+                glang = _get_attr(g_item, "language") or "ru"
+                return InlineKeyboardButton(
+                    text=f"👥 {gname}",
+                    callback_data=f"chooseScheduleLanguage|{glang}|{gid}|{day_val}",
+                )
+
+            def _render_teacher_btn(t_item: Any) -> InlineKeyboardButton:
+                tid = get_domain_id(t_item, "teacher_id")
+                tname = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {tid}"
+                tcb_id = _safe_teacher_cb_id(tid, _get_attr(t_item, "name") or tname)
+                return InlineKeyboardButton(
+                    text=f"👨‍🏫 {tname}",
+                    callback_data=f"TeacherSchedule|{tcb_id}|{day_val}",
+                )
+
+            if prefer_groups_first:
+                for g in groups_list[:5]:
+                    buttons.append([_render_group_btn(g)])
+                for t_item in teachers_list[:5]:
+                    buttons.append([_render_teacher_btn(t_item)])
+            else:
+                for t_item in teachers_list[:5]:
+                    buttons.append([_render_teacher_btn(t_item)])
+                for g in groups_list[:5]:
+                    buttons.append([_render_group_btn(g)])
 
     buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
