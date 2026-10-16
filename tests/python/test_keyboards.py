@@ -99,7 +99,7 @@ def test_departments_and_teachers_keyboards():
     teachers = [{"id": 305, "fullName": "Жунусова А. К."}]
     kb_tch = get_teachers_keyboard(teachers, department_id=10, page=0, lang="ru")
     cb_tch = [btn.callback_data for row in kb_tch.inline_keyboard for btn in row]
-    assert "teacherImg|305|0" in cb_tch
+    assert any(cb.startswith("TeacherSchedule|305|") for cb in cb_tch)
     assert "department|0" in cb_tch
 
 
@@ -157,3 +157,19 @@ def test_search_results_and_fuzzy_keyboards():
     assert "chooseScheduleLanguage|ru|502|0" in cb_fuzzy
     assert "TeacherSchedule|306|0" in cb_fuzzy
     assert "start" in cb_fuzzy
+
+    # Test category tabs and pagination
+    many_groups = [{"id": 500 + i, "name": f"ИС-2{i}", "language": "ru"} for i in range(12)]
+    many_teachers = [{"id": 300 + i, "fullName": f"Препод {i}"} for i in range(10)]
+
+    # Tab "grp" with page 0 (8 items per page)
+    kb_grp = get_search_results_keyboard(groups=many_groups, teachers=many_teachers, tab="grp", page=0, query="ис", page_size=8)
+    cb_grp = [btn.callback_data for row in kb_grp.inline_keyboard for btn in row]
+    assert "srch|g|1|ис" in cb_grp  # Next page button
+    assert "srch|t|0|ис" in cb_grp  # Switch to teachers tab
+
+    # Tab "tch" with page 1
+    kb_tch_tab = get_search_results_keyboard(groups=many_groups, teachers=many_teachers, tab="tch", page=1, query="ис", page_size=8)
+    cb_tch_tab = [btn.callback_data for row in kb_tch_tab.inline_keyboard for btn in row]
+    assert "srch|t|0|ис" in cb_tch_tab  # Prev page button
+

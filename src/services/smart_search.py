@@ -236,7 +236,7 @@ class SmartSearchService:
                     self._ensure_teacher_indexed(enriched)
                     all_teachers.append(enriched)
 
-        if db_loaded:
+        if all_teachers:
             self._teachers_cache = all_teachers
             self._last_teachers_cache_time = now
         return all_teachers
@@ -312,12 +312,18 @@ class SmartSearchService:
             if not name_val:
                 continue
 
-            # 1. Short queries (<= 2 chars): strictly prefix of surname or first name
+            # 1. Short queries (<= 2 chars): prefix of surname, first name, or any token/alias
             if len(tokens) == 1 and len(norm_query) <= 2:
                 last_starts = norm_last.startswith(norm_query)
                 first_starts = bool(norm_first and norm_first.startswith(norm_query))
-                if last_starts or first_starts:
-                    matches.append((100 if last_starts else 60, t))
+                token_starts = any(tok.startswith(norm_query) for tok in full_tokens)
+                alias_starts = any(a.startswith(norm_query) for a in norm_aliases)
+                if last_starts:
+                    matches.append((100, t))
+                elif first_starts:
+                    matches.append((80, t))
+                elif token_starts or alias_starts:
+                    matches.append((60, t))
                 continue
 
             # 2. Exact match on full name

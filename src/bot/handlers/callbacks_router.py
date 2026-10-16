@@ -934,7 +934,14 @@ async def handle_teacher_menu(call: CallbackQuery) -> None:
         teachers = []
         dept_name = f"ID {dept_id}"
 
-    markup = get_teachers_keyboard(teachers, department_id=dept_id, page=page, lang=lang)
+    curr_day = get_current_day_number()
+    markup = get_teachers_keyboard(
+        teachers,
+        department_id=dept_id,
+        page=page,
+        lang=lang,
+        current_day=curr_day,
+    )
     page_text = t("page_text", lang, page=page + 1, pageCount=max(1, (len(teachers) + 9) // 10))
     msg_text = f"📌 {t('teacher_pick', lang)}\n📘 {t('department', lang, departmentName=dept_name)}\n{page_text}"
 

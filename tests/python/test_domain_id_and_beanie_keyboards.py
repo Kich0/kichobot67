@@ -119,7 +119,7 @@ async def test_keyboards_with_real_beanie_documents(mock_db):
     await tch.insert()
     kb_tch = get_teachers_keyboard([tch], department_id=30, page=0, lang="ru")
     cb_tch = [btn.callback_data for row in kb_tch.inline_keyboard for btn in row]
-    assert "teacherImg|990|0" in cb_tch
+    assert any(cb.startswith("TeacherSchedule|990|") for cb in cb_tch)
     assert not any(str(tch.id) in cb for cb in cb_tch)
 
 

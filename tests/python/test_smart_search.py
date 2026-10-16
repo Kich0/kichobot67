@@ -326,3 +326,28 @@ async def test_smart_search_combined_prefer_groups_first(mock_teachers, mock_gro
     assert res_digits.result_type == SearchResultType.COMBINED
     assert res_digits.prefer_groups_first is True
 
+
+@pytest.mark.asyncio
+async def test_find_teachers_and_groups_completeness(mock_groups):
+    """Verifies that short queries like 'ис' return all matching teachers and all matching groups."""
+    teachers = [
+        {"id": 21, "name": "Исабеков К.", "fullName": "Исабеков Кайрат", "lastName": "Исабеков", "firstName": "Кайрат", "aliases": []},
+        {"id": 22, "name": "Искакова А.", "fullName": "Искакова Айнур", "lastName": "Искакова", "firstName": "Айнур", "aliases": []},
+        {"id": 23, "name": "Асанов И.", "fullName": "Асанов Ислам", "lastName": "Асанов", "firstName": "Ислам", "aliases": []},
+        {"id": 24, "name": "Смирнов В.", "fullName": "Смирнов В.", "lastName": "Смирнов", "firstName": "В.", "aliases": []},
+    ]
+    matched_t = smart_search_service.find_teachers("ис", teachers)
+    # Исабеков, Искакова, Асанов Ислам should all be matched
+    matched_ids = [t["id"] for t in matched_t]
+    assert 21 in matched_ids
+    assert 22 in matched_ids
+    assert 23 in matched_ids
+    assert 24 not in matched_ids
+
+    # Groups: ИС-21-1, ИС-21-2 should be matched
+    matched_g = smart_search_service.find_groups("ис", mock_groups)
+    assert len(matched_g) == 2
+    assert matched_g[0]["name"] == "ИС-21-1"
+    assert matched_g[1]["name"] == "ИС-21-2"
+
+

@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from src.bot.keyboards.inline import (
     get_fuzzy_suggestions_keyboard,
@@ -192,6 +192,9 @@ async def handle_text_search(message: Message) -> None:
             teachers=result.teachers,
             lang=lang,
             current_day=curr_day,
+            tab="all",
+            page=0,
+            query=text,
         )
         await message.answer(heading, reply_markup=markup, parse_mode="HTML")
         return
@@ -255,6 +258,54 @@ async def handle_text_search(message: Message) -> None:
         "💡 Подробнее о поиске: /search"
     )
     await message.answer(not_found_msg, parse_mode="HTML")
+
+
+@search_router.callback_query(F.data.startswith("srch|"))
+async def handle_search_tabs_and_pagination(call: CallbackQuery) -> None:
+    """Handles switching search category filter tabs and navigating pagination."""
+    await call.answer()
+    raw = call.data or ""
+    parts = raw.split("|")
+    if len(parts) < 4:
+        return
+
+    tab_code = parts[1]
+    tab = "grp" if tab_code == "g" else ("tch" if tab_code == "t" else "all")
+    page = int(parts[2]) if parts[2].isdigit() else 0
+    query = parts[3].strip()
+
+    user_id = call.from_user.id if call.from_user else 0
+    lang = await user_service.get_user_language(user_id)
+    if is_kazakh_text(query):
+        lang = "kz"
+
+    result: SmartSearchResult = await smart_search_service.search(query, user_language=lang)
+
+    from src.bot.handlers.callbacks_router import get_current_day_number
+    curr_day = get_current_day_number()
+    total_matches = len(result.groups) + len(result.teachers)
+
+    heading = (
+        f"✨ По вашему запросу: <b>{query}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
+        "Выберите нужный вариант из списка:"
+    )
+
+    markup = get_search_results_keyboard(
+        groups=result.groups,
+        teachers=result.teachers,
+        lang=lang,
+        current_day=curr_day,
+        tab=tab,
+        page=page,
+        query=query,
+    )
+
+    if call.message and isinstance(call.message, Message):
+        try:
+            await call.message.edit_text(heading, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            if "message is not modified" not in str(e).lower():
+                logger.debug(f"Search pagination edit failed: {e}")
 
 
 __all__ = ["search_router"]

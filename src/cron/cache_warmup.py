@@ -415,6 +415,7 @@ class SmartWarmupEngine:
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_teacher_schedule,
+                teacher_table_cache,
                 teacher_text_cache,
             )
             from src.services.schedule_adapter import schedule_api_adapter
@@ -447,6 +448,11 @@ class SmartWarmupEngine:
             }
             teacher_text_cache[f"{teacher_id}_kz"] = {
                 "data": adapted_kz,
+                "timestamp": entry_ts,
+                "is_from_db": is_from_db,
+            }
+            teacher_table_cache[str(teacher_id)] = {
+                "data": adapted_ru,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }

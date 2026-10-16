@@ -8,6 +8,7 @@ and search result selectors.
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime
 from typing import Any
 
@@ -335,6 +336,7 @@ def get_teachers_keyboard(
     department_id: int | str,
     page: int = 0,
     lang: str = "ru",
+    current_day: int | None = None,
     row_per_page: int = 10,
 ) -> InlineKeyboardMarkup:
     """Paginated list of teachers in a department."""
@@ -344,12 +346,14 @@ def get_teachers_keyboard(
 
     start_idx = page * row_per_page
     page_items = teachers[start_idx : start_idx + row_per_page]
+    day_val = get_current_day_number() if current_day is None else current_day
 
     buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
         t_id = get_domain_id(item, "teacher_id")
         t_name = _get_attr(item, "fullName") or _get_attr(item, "name") or f"Преподаватель {t_id}"
-        buttons.append([InlineKeyboardButton(text=str(t_name), callback_data=f"teacherImg|{t_id}|0")])
+        t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(item, "name") or t_name)
+        buttons.append([InlineKeyboardButton(text=str(t_name), callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}")])
 
     if page_count > 0:
         prev_page = page - 1 if page > 0 else page_count
@@ -494,13 +498,45 @@ def get_search_results_keyboard(
     teachers: list[dict[str, Any]] | None = None,
     lang: str = "ru",
     current_day: int | None = None,
+    tab: str = "all",
+    page: int = 0,
+    query: str = "",
+    page_size: int = 8,
 ) -> InlineKeyboardMarkup:
-    """Inline keyboard presenting matched groups and teachers from smart search."""
+    """Inline keyboard presenting matched groups and teachers with category filter tabs and pagination."""
     buttons: list[list[InlineKeyboardButton]] = []
     day_val = get_current_day_number() if current_day is None else current_day
+    groups_list = groups or []
+    teachers_list = teachers or []
+    total_g = len(groups_list)
+    total_t = len(teachers_list)
 
-    if groups:
-        for g in groups[:8]:
+    # Clean query for callback (max 18 chars to guarantee byte size <= 64 bytes in Telegram)
+    clean_q = re.sub(r"[^\w\s-]", "", query.strip())[:18]
+
+    # Category filter tabs when both groups and teachers are found (or user switched tab)
+    if total_g > 0 and total_t > 0:
+        btn_all = InlineKeyboardButton(
+            text=f"{'🔘 ' if tab == 'all' else ''}{t('all', lang, default='Все')} ({total_g + total_t})",
+            callback_data=f"srch|a|0|{clean_q}",
+        )
+        btn_grp = InlineKeyboardButton(
+            text=f"{'🔘 ' if tab == 'grp' else ''}👥 {t('groups', lang, default='Группы')} ({total_g})",
+            callback_data=f"srch|g|0|{clean_q}",
+        )
+        btn_tch = InlineKeyboardButton(
+            text=f"{'🔘 ' if tab == 'tch' else ''}👨‍🏫 {t('teachers', lang, default='Преподаватели')} ({total_t})",
+            callback_data=f"srch|t|0|{clean_q}",
+        )
+        buttons.append([btn_all, btn_grp, btn_tch])
+
+    if tab == "grp":
+        page_count = max(0, math.ceil(total_g / page_size) - 1)
+        page = max(0, min(page, page_count)) if page_count > 0 else 0
+        start_idx = page * page_size
+        items = groups_list[start_idx : start_idx + page_size]
+
+        for g in items:
             g_id = get_domain_id(g, "group_id")
             g_name = _get_attr(g, "name") or f"Группа {g_id}"
             g_lang = _get_attr(g, "language") or "ru"
@@ -511,8 +547,22 @@ def get_search_results_keyboard(
                 )
             ])
 
-    if teachers:
-        for t_item in teachers[:8]:
+        if page_count > 0:
+            prev_p = page - 1 if page > 0 else page_count
+            next_p = page + 1 if page < page_count else 0
+            buttons.append([
+                InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"srch|g|{prev_p}|{clean_q}"),
+                InlineKeyboardButton(text=f"{page + 1}/{page_count + 1}", callback_data="nothing"),
+                InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"srch|g|{next_p}|{clean_q}"),
+            ])
+
+    elif tab == "tch":
+        page_count = max(0, math.ceil(total_t / page_size) - 1)
+        page = max(0, min(page, page_count)) if page_count > 0 else 0
+        start_idx = page * page_size
+        items = teachers_list[start_idx : start_idx + page_size]
+
+        for t_item in items:
             t_id = get_domain_id(t_item, "teacher_id")
             t_name = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {t_id}"
             t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(t_item, "name") or t_name)
@@ -522,6 +572,86 @@ def get_search_results_keyboard(
                     callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
                 )
             ])
+
+        if page_count > 0:
+            prev_p = page - 1 if page > 0 else page_count
+            next_p = page + 1 if page < page_count else 0
+            buttons.append([
+                InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"srch|t|{prev_p}|{clean_q}"),
+                InlineKeyboardButton(text=f"{page + 1}/{page_count + 1}", callback_data="nothing"),
+                InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"srch|t|{next_p}|{clean_q}"),
+            ])
+
+    else:
+        # "all" view
+        if total_g > 0 and total_t == 0:
+            # Only groups exist: full paginated list
+            page_count = max(0, math.ceil(total_g / page_size) - 1)
+            page = max(0, min(page, page_count)) if page_count > 0 else 0
+            start_idx = page * page_size
+            for g in groups_list[start_idx : start_idx + page_size]:
+                g_id = get_domain_id(g, "group_id")
+                g_name = _get_attr(g, "name") or f"Группа {g_id}"
+                g_lang = _get_attr(g, "language") or "ru"
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"👥 {g_name}",
+                        callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|{day_val}",
+                    )
+                ])
+            if page_count > 0:
+                prev_p = page - 1 if page > 0 else page_count
+                next_p = page + 1 if page < page_count else 0
+                buttons.append([
+                    InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"srch|a|{prev_p}|{clean_q}"),
+                    InlineKeyboardButton(text=f"{page + 1}/{page_count + 1}", callback_data="nothing"),
+                    InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"srch|a|{next_p}|{clean_q}"),
+                ])
+        elif total_t > 0 and total_g == 0:
+            # Only teachers exist: full paginated list
+            page_count = max(0, math.ceil(total_t / page_size) - 1)
+            page = max(0, min(page, page_count)) if page_count > 0 else 0
+            start_idx = page * page_size
+            for t_item in teachers_list[start_idx : start_idx + page_size]:
+                t_id = get_domain_id(t_item, "teacher_id")
+                t_name = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {t_id}"
+                t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(t_item, "name") or t_name)
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"👨‍🏫 {t_name}",
+                        callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
+                    )
+                ])
+            if page_count > 0:
+                prev_p = page - 1 if page > 0 else page_count
+                next_p = page + 1 if page < page_count else 0
+                buttons.append([
+                    InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"srch|a|{prev_p}|{clean_q}"),
+                    InlineKeyboardButton(text=f"{page + 1}/{page_count + 1}", callback_data="nothing"),
+                    InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"srch|a|{next_p}|{clean_q}"),
+                ])
+        else:
+            # Both exist: balanced preview (first 5 groups, first 5 teachers), user can click tabs above
+            for g in groups_list[:5]:
+                g_id = get_domain_id(g, "group_id")
+                g_name = _get_attr(g, "name") or f"Группа {g_id}"
+                g_lang = _get_attr(g, "language") or "ru"
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"👥 {g_name}",
+                        callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|{day_val}",
+                    )
+                ])
+            for t_item in teachers_list[:5]:
+                t_id = get_domain_id(t_item, "teacher_id")
+                t_name = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {t_id}"
+                t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(t_item, "name") or t_name)
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"👨‍🏫 {t_name}",
+                        callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
+                    )
+                ])
 
     buttons.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data="start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

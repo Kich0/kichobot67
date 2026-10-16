@@ -185,7 +185,7 @@ async def test_teacher_navigation_flow(mock_db):
 
     tch_kb = tch_kwargs["reply_markup"]
     tch_cbs = [b.callback_data for row in tch_kb.inline_keyboard for b in row]
-    assert "teacherImg|120|0" in tch_cbs
+    assert any(cb.startswith("TeacherSchedule|120|") for cb in tch_cbs)
     # Verify teacher from Dept 5 is NOT shown!
     assert not any("50" in cb for cb in tch_cbs)
 
