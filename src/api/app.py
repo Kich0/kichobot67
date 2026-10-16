@@ -90,10 +90,12 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         from src.services.black_list_service import black_list_service
+        from src.services.smart_search import smart_search_service
         from src.services.user_toll_service import user_toll_service
 
         await black_list_service.ensure_loaded()
         await user_toll_service.ensure_loaded()
+        await smart_search_service.warmup()
     except Exception as e:
         logger.error(f"Database initialization error during startup: {e}")
 
@@ -262,6 +264,11 @@ def create_app() -> FastAPI:
     # 4. Client log endpoint
     @app.post("/bot/log")
     async def post_client_log(request: Request) -> ORJSONResponse:
+        if settings.INTERNAL_API_SECRET:
+            provided = request.headers.get("x-api-secret") or request.query_params.get("key")
+            if provided != settings.INTERNAL_API_SECRET:
+                return ORJSONResponse(content={"error": "Forbidden"}, status_code=403)
+
         client_ip = get_client_ip(request)
         if not log_rate_limiter.is_allowed(client_ip):
             logger.warning(f"[Rate Limit] Exceeded log rate limit for IP: {client_ip}")
@@ -290,6 +297,11 @@ def create_app() -> FastAPI:
         request: Request,
         user_id: str | None = Query(default=None, alias="userId"),
     ) -> ORJSONResponse:
+        if settings.INTERNAL_API_SECRET:
+            provided = request.headers.get("x-api-secret") or request.query_params.get("key")
+            if provided != settings.INTERNAL_API_SECRET:
+                return ORJSONResponse(content={"error": "Forbidden"}, status_code=403)
+
         client_ip = get_client_ip(request)
         if not schedule_rate_limiter.is_allowed(client_ip):
             logger.warning(f"[Rate Limit] Exceeded schedule rate limit for IP: {client_ip}")

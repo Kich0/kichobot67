@@ -21,7 +21,15 @@ logger = get_logger("memory_trim")
 
 
 def trim_process_memory() -> None:
-    """Frees dead Python objects and invokes glibc malloc_trim on Linux."""
+    """Frees expired API cache entries, dead Python objects, and invokes glibc malloc_trim on Linux."""
+    purged = 0
+    try:
+        from src.services.buketov_api import buketov_api_service
+
+        purged = buketov_api_service.purge_expired()
+    except Exception as e:
+        logger.debug(f"purge_expired call skipped or failed: {e}")
+
     collected = gc.collect()
     trimmed = False
 
@@ -35,7 +43,10 @@ def trim_process_memory() -> None:
         except Exception as e:
             logger.debug(f"malloc_trim call skipped or failed: {e}")
 
-    logger.debug(f"Memory trim executed: {collected} objects collected, malloc_trim={trimmed}")
+    logger.debug(
+        f"Memory trim executed: {purged} expired cache entries purged, "
+        f"{collected} objects collected, malloc_trim={trimmed}"
+    )
 
 
 def check_and_enforce_memory_limit(threshold_mb: float = 430.0) -> bool:
@@ -99,11 +110,11 @@ def check_and_enforce_memory_limit(threshold_mb: float = 430.0) -> bool:
 
 
 def setup_memory_trim(scheduler: AsyncIOScheduler) -> None:
-    """Schedules memory trimming every 30 minutes and emergency OOM guard every 60 seconds."""
+    """Schedules memory trimming every 10 minutes and emergency OOM guard every 60 seconds."""
     scheduler.add_job(
         trim_process_memory,
         "interval",
-        minutes=30,
+        minutes=10,
         id="memory_trim_job",
         replace_existing=True,
     )
@@ -114,7 +125,7 @@ def setup_memory_trim(scheduler: AsyncIOScheduler) -> None:
         id="memory_guard_job",
         replace_existing=True,
     )
-    logger.info("Configured memory trim job (30m) and emergency OOM guard (60s)")
+    logger.info("Configured memory trim job (10m) and emergency OOM guard (60s)")
 
 
 __all__ = [

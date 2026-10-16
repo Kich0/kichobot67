@@ -142,18 +142,18 @@ def test_search_results_and_fuzzy_keyboards():
     groups = [{"id": 501, "name": "ИС-21-1", "language": "ru"}]
     teachers = [{"id": 305, "fullName": "Жунусова А. К."}]
 
-    kb_search = get_search_results_keyboard(groups=groups, teachers=teachers, lang="ru")
+    kb_search = get_search_results_keyboard(groups=groups, teachers=teachers, lang="ru", current_day=0)
     cb_search = [btn.callback_data for row in kb_search.inline_keyboard for btn in row]
     assert "chooseScheduleLanguage|ru|501|0" in cb_search
-    assert "teacherImg|305|0" in cb_search
+    assert "TeacherSchedule|305|0" in cb_search
     assert "start" in cb_search
 
     suggestions = [
         {"type": "group", "item": {"id": 502, "name": "ИС-21-2", "language": "ru"}},
         {"type": "teacher", "item": {"id": 306, "fullName": "Попова Н. В."}},
     ]
-    kb_fuzzy = get_fuzzy_suggestions_keyboard(suggestions, lang="ru")
+    kb_fuzzy = get_fuzzy_suggestions_keyboard(suggestions, lang="ru", current_day=0)
     cb_fuzzy = [btn.callback_data for row in kb_fuzzy.inline_keyboard for btn in row]
     assert "chooseScheduleLanguage|ru|502|0" in cb_fuzzy
-    assert "teacherImg|306|0" in cb_fuzzy
+    assert "TeacherSchedule|306|0" in cb_fuzzy
     assert "start" in cb_fuzzy

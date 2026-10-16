@@ -4,14 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
+from cachetools import TTLCache
+
 from src.core.i18n import I18n
 from src.core.logging import get_logger
+from src.database.connection import get_client
 
 logger = get_logger("user_service")
 
 
 class UserService:
     """Manages user registration, language preferences, and profile data."""
+
+    def __init__(self) -> None:
+        self._lang_cache: TTLCache[tuple[int, int], str] = TTLCache(maxsize=5000, ttl=1800.0)
+
+    def clear_cache(self) -> None:
+        """Clears the in-memory language cache."""
+        self._lang_cache.clear()
 
     async def get_or_create_user(
         self,
@@ -24,6 +34,7 @@ class UserService:
         try:
             from src.database.models.user import User
 
+            client_id = id(get_client())
             user = await User.find_one({"userId": user_id})
             if user:
                 # Update username or names if changed
@@ -40,6 +51,8 @@ class UserService:
                     changed = True
                 if changed:
                     await user.save()
+                if user.language:
+                    self._lang_cache[(client_id, user_id)] = I18n.normalize_lang(user.language)
                 return user
 
             clean_username = username.lstrip("@") if username else None
@@ -52,6 +65,7 @@ class UserService:
                 isAdmin=False,
             )
             await new_user.insert()
+            self._lang_cache[(client_id, user_id)] = "ru"
             return new_user
         except Exception as e:
             logger.debug(f"User get_or_create skipped or errored: {e}")
@@ -59,12 +73,20 @@ class UserService:
 
     async def get_user_language(self, user_id: int) -> str:
         """Returns the user's preferred language ('ru' or 'kz'). Defaults to 'ru'."""
+        if not user_id:
+            return "ru"
+        client_id = id(get_client())
+        cached = self._lang_cache.get((client_id, user_id))
+        if cached is not None:
+            return cached
         try:
             from src.database.models.user import User
 
             user = await User.find_one({"userId": user_id})
             if user and user.language:
-                return I18n.normalize_lang(user.language)
+                norm_lang = I18n.normalize_lang(user.language)
+                self._lang_cache[(client_id, user_id)] = norm_lang
+                return norm_lang
         except Exception:
             pass
         return "ru"
@@ -72,6 +94,8 @@ class UserService:
     async def set_user_language(self, user_id: int, language: str) -> None:
         """Updates user interface language."""
         norm_lang = I18n.normalize_lang(language)
+        client_id = id(get_client())
+        self._lang_cache[(client_id, user_id)] = norm_lang
         try:
             from src.database.models.user import User
 
@@ -84,6 +108,51 @@ class UserService:
                 await new_user.insert()
         except Exception as e:
             logger.debug(f"Failed to set user language: {e}")
+
+    async def set_user_schedule_preference(
+        self,
+        user_id: int,
+        schedule_type: str,
+        group: str | int | None = None,
+        teacher: str | int | None = None,
+    ) -> None:
+        """Saves the user's last viewed student group or teacher preference in background."""
+        if not user_id:
+            return
+        try:
+            from src.database.models.user import User
+
+            user = await User.find_one({"userId": user_id})
+            if not user:
+                return
+            changed = False
+            if user.schedule_type != schedule_type:
+                user.schedule_type = schedule_type
+                changed = True
+            if group is not None:
+                norm_group: int | None = None
+                if isinstance(group, int):
+                    norm_group = group
+                elif isinstance(group, str) and group.strip().isdigit():
+                    norm_group = int(group.strip())
+                if norm_group is not None and norm_group > 0 and user.group != norm_group:
+                    user.group = norm_group
+                    changed = True
+            if teacher is not None:
+                norm_teacher: int | str | None = None
+                if isinstance(teacher, int):
+                    norm_teacher = teacher if teacher > 0 else None
+                elif isinstance(teacher, str):
+                    s = teacher.strip()
+                    if s:
+                        norm_teacher = int(s) if s.isdigit() else s
+                if norm_teacher is not None and user.teacher != norm_teacher:
+                    user.teacher = norm_teacher
+                    changed = True
+            if changed:
+                await user.save()
+        except Exception as e:
+            logger.debug(f"Failed to save user schedule preference: {e}")
 
     async def is_admin(self, user_id: int) -> bool:
         """Checks if a user has administrator rights."""

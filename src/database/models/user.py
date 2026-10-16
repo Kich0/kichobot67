@@ -16,7 +16,7 @@ class User(BaseMongoDoc):
     last_name: str | None = Field(default=None, alias="lastName")
     username: str | None = Field(default=None)
     group: int | None = Field(default=None)
-    teacher: int | None = Field(default=None)
+    teacher: int | str | None = Field(default=None)
     schedule_type: str | None = Field(default=None, alias="scheduleType")
     is_admin: bool = Field(default=False, alias="isAdmin")
     language: str | None = Field(default="ru")
@@ -28,12 +28,30 @@ class User(BaseMongoDoc):
             return False
         return bool(v)
 
-    @field_validator("group", "teacher", mode="before")
+    @field_validator("group", mode="before")
     @classmethod
-    def _empty_to_none(cls, v: Any) -> Any:
+    def _coerce_group(cls, v: Any) -> int | None:
         if v == "" or v is None:
             return None
-        return v
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+        return None
+
+    @field_validator("teacher", mode="before")
+    @classmethod
+    def _coerce_teacher(cls, v: Any) -> int | str | None:
+        if v == "" or v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            return int(s) if s.isdigit() else s
+        return None
 
     class Settings:
         name = "users"

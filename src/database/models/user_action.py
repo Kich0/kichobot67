@@ -39,10 +39,14 @@ class UserAction(BaseMongoDoc):
 
     @field_validator("entity_id", mode="before")
     @classmethod
-    def _coerce_entity_id(cls, v: Any) -> Any:
+    def _coerce_entity_id(cls, v: Any) -> int | None:
         if v == "" or v is None:
             return None
-        return v
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+        return None
 
     class Settings:
         name = "useractions"

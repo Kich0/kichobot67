@@ -8,11 +8,25 @@ and search result selectors.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from src.core.constants import TIMEZONE
 from src.core.i18n import t
+
+
+def get_current_day_number() -> int:
+    """Calculates current day of week (0=Mon, 5=Sat) in Asia/Almaty time."""
+    now_kz = datetime.now(TIMEZONE)
+    day = now_kz.weekday()
+    if now_kz.hour >= 18:
+        day += 1
+    if day > 5:
+        day = 0
+    return day
+
 
 
 def _is_int_like(val: Any) -> bool:
@@ -379,6 +393,25 @@ def get_schedule_pagination_keyboard(
     )
 
 
+def _safe_teacher_cb_id(raw_id: Any, fallback_name: str = "") -> int | str:
+    """Normalizes teacher callback ID and ensures UTF-8 byte length fits within Telegram's 64-byte limit."""
+    if isinstance(raw_id, int) and raw_id > 0:
+        return raw_id
+    s = str(raw_id if raw_id else fallback_name).strip()
+    if s.isdigit() and int(s) > 0:
+        return int(s)
+    max_bytes = 38  # 64 - len("refreshTeacherSchedule||0") == 39 bytes
+    if len(s.encode("utf-8")) > max_bytes:
+        words = s.split()
+        if len(words) >= 2 and all(len(w) > 2 for w in words[:2]):
+            inits = "".join(f"{w[0].upper()}." for w in words[1:3] if w)
+            s = f"{words[0]} {inits}".strip()
+        s = s.replace(". ", ".")
+        while len(s.encode("utf-8")) > max_bytes and len(s) > 1:
+            s = s[:-1].rstrip()
+    return s
+
+
 def get_teacher_table_keyboard(
     teacher_id: int | str,
     day_number: int = 0,
@@ -386,19 +419,20 @@ def get_teacher_table_keyboard(
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     """Controls for teacher table PNG image: switch to text, refresh, back."""
+    cb_tid = _safe_teacher_cb_id(teacher_id)
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=f"📝 {t('schedule_text_view', lang, default='Текстовый вид')}",
-                    callback_data=f"teacherText|{teacher_id}|{day_number}",
+                    callback_data=f"teacherText|{cb_tid}|{day_number}",
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="🔄",
-                    callback_data=f"refreshteacherImg|{teacher_id}|{day_number}",
+                    callback_data=f"refreshteacherImg|{cb_tid}|{day_number}",
                 )
             ],
             [
@@ -418,6 +452,7 @@ def get_teacher_text_keyboard(
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, back."""
+    cb_tid = _safe_teacher_cb_id(teacher_id)
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
@@ -427,21 +462,21 @@ def get_teacher_text_keyboard(
             [
                 InlineKeyboardButton(
                     text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
-                    callback_data=f"teacherImg|{teacher_id}|{day_number}",
+                    callback_data=f"teacherImg|{cb_tid}|{day_number}",
                 )
             ],
             [
                 InlineKeyboardButton(
                     text=f"◀️ {t('go_back', lang)}",
-                    callback_data=f"TeacherSchedule|{teacher_id}|{prev_day}",
+                    callback_data=f"TeacherSchedule|{cb_tid}|{prev_day}",
                 ),
                 InlineKeyboardButton(
                     text="🔄",
-                    callback_data=f"refreshTeacherSchedule|{teacher_id}|{day_number}",
+                    callback_data=f"refreshTeacherSchedule|{cb_tid}|{day_number}",
                 ),
                 InlineKeyboardButton(
                     text=f"{t('go_forward', lang)} ▶️",
-                    callback_data=f"TeacherSchedule|{teacher_id}|{next_day}",
+                    callback_data=f"TeacherSchedule|{cb_tid}|{next_day}",
                 ),
             ],
             [
@@ -458,30 +493,33 @@ def get_search_results_keyboard(
     groups: list[dict[str, Any]] | None = None,
     teachers: list[dict[str, Any]] | None = None,
     lang: str = "ru",
+    current_day: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Inline keyboard presenting matched groups and teachers from smart search."""
     buttons: list[list[InlineKeyboardButton]] = []
+    day_val = get_current_day_number() if current_day is None else current_day
 
     if groups:
         for g in groups[:8]:
             g_id = get_domain_id(g, "group_id")
-            g_name = g.get("name") or f"Группа {g_id}"
-            g_lang = g.get("language") or "ru"
+            g_name = _get_attr(g, "name") or f"Группа {g_id}"
+            g_lang = _get_attr(g, "language") or "ru"
             buttons.append([
                 InlineKeyboardButton(
                     text=f"👥 {g_name}",
-                    callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|0",
+                    callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|{day_val}",
                 )
             ])
 
     if teachers:
         for t_item in teachers[:8]:
             t_id = get_domain_id(t_item, "teacher_id")
-            t_name = t_item.get("fullName") or t_item.get("name") or f"Преподаватель {t_id}"
+            t_name = _get_attr(t_item, "fullName") or _get_attr(t_item, "name") or f"Преподаватель {t_id}"
+            t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(t_item, "name") or t_name)
             buttons.append([
                 InlineKeyboardButton(
                     text=f"👨‍🏫 {t_name}",
-                    callback_data=f"teacherImg|{t_id}|0",
+                    callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
                 )
             ])
 
@@ -492,9 +530,11 @@ def get_search_results_keyboard(
 def get_fuzzy_suggestions_keyboard(
     suggestions: list[Any],
     lang: str = "ru",
+    current_day: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Did-you-mean suggestions inline keyboard."""
     buttons: list[list[InlineKeyboardButton]] = []
+    day_val = get_current_day_number() if current_day is None else current_day
     for s in suggestions[:5]:
         s_type = _get_attr(s, "type")
         item = _get_attr(s, "item")
@@ -505,16 +545,17 @@ def get_fuzzy_suggestions_keyboard(
             buttons.append([
                 InlineKeyboardButton(
                     text=f"👥 {g_name}",
-                    callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|0",
+                    callback_data=f"chooseScheduleLanguage|{g_lang}|{g_id}|{day_val}",
                 )
             ])
         else:
             t_id = get_domain_id(item, "teacher_id")
             t_name = _get_attr(item, "fullName") or _get_attr(item, "name") or f"Преподаватель {t_id}"
+            t_cb_id = _safe_teacher_cb_id(t_id, _get_attr(item, "name") or t_name)
             buttons.append([
                 InlineKeyboardButton(
                     text=f"👨‍🏫 {t_name}",
-                    callback_data=f"teacherImg|{t_id}|0",
+                    callback_data=f"TeacherSchedule|{t_cb_id}|{day_val}",
                 )
             ])
 

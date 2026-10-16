@@ -714,7 +714,39 @@ class BuketovApiService:
         res_dict = dict(result) if isinstance(result, dict) else {}
         res_dict["records"] = all_records
         res_dict["total"] = len(all_records)
+        entry_ts = self.get_entry_timestamp(
+            {"group": group_name, "limit": limit, "offset": 0},
+            cache_type="student",
+        )
+        res_dict["_cacheTimestamp"] = entry_ts or time.time()
         return res_dict
+
+    def get_entry_timestamp(
+        self,
+        params: dict[str, Any] | None = None,
+        cache_type: str | None = None,
+    ) -> float | None:
+        """Returns the original Unix timestamp of a cached API response, or None if not cached."""
+        params = params or {}
+        is_teacher = (
+            cache_type == "teacher"
+            or bool(params.get("teacher"))
+            or bool(params.get("q"))
+            or bool(params.get("teacherId"))
+        )
+        target_cache = self.teacher_cache if is_teacher else self.student_cache
+        clean_params = {
+            k: str(v)
+            for k, v in params.items()
+            if v is not None and str(v) != ""
+        }
+        query_string = urllib.parse.urlencode(sorted(clean_params.items()))
+        if query_string:
+            cache_key = f"{self.api_url}&{query_string}" if "?" in self.api_url else f"{self.api_url}?{query_string}"
+        else:
+            cache_key = self.api_url
+        entry = target_cache.get(cache_key)
+        return entry.timestamp if entry is not None else None
 
     async def get_teacher_schedule(self, teacher_name: str) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial."""
@@ -756,11 +788,26 @@ class BuketovApiService:
         res_dict = dict(result) if isinstance(result, dict) else {}
         res_dict["records"] = all_records
         res_dict["total"] = len(all_records)
+        entry_ts = self.get_entry_timestamp(
+            {"q": surname, "limit": limit, "offset": 0},
+            cache_type="teacher",
+        )
+        res_dict["_cacheTimestamp"] = entry_ts or time.time()
         return res_dict
 
     async def fetch_teacher_schedule(self, teacher_name: str) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial (alias for get_teacher_schedule)."""
         return await self.get_teacher_schedule(teacher_name)
+
+    async def health_check(self) -> bool:
+        """Checks whether Buketov Schedule API is reachable and Circuit Breaker is healthy."""
+        if self.circuit_state == "API_DOWN":
+            return False
+        try:
+            res = await self.fetch_schedule({"limit": 1, "offset": 0}, cache_type="student")
+            return isinstance(res, dict) and not res.get("_fromDb")
+        except Exception:
+            return False
 
 
 # Singleton instance

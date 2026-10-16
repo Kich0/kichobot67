@@ -45,10 +45,12 @@ class MessageGateMiddleware(BaseMiddleware):
         self.ban_duration = ban_duration
         self.max_text_length = max_text_length
 
-        self._user_last_interaction: dict[int, float] = {}
-        self._user_request_timestamps: dict[int, list[float]] = {}
-        self._banned_users: dict[int, float] = {}
-        self._ban_warning_sent: dict[int, bool] = {}
+        from cachetools import TTLCache
+
+        self._user_last_interaction: TTLCache[int, float] = TTLCache(maxsize=10000, ttl=3600.0)
+        self._user_request_timestamps: TTLCache[int, list[float]] = TTLCache(maxsize=10000, ttl=600.0)
+        self._banned_users: TTLCache[int, float] = TTLCache(maxsize=5000, ttl=3600.0)
+        self._ban_warning_sent: TTLCache[int, bool] = TTLCache(maxsize=5000, ttl=3600.0)
         try:
             from src.services.black_list_service import black_list_service
 

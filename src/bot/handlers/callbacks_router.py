@@ -61,6 +61,7 @@ from src.services.buketov_api import buketov_api_service
 from src.services.schedule_adapter import schedule_api_adapter
 from src.services.table_image import table_image_service
 from src.services.teacher_directory import teacher_directory_service
+from src.database.connection import get_client
 from src.services.user_service import user_service
 
 logger = get_logger("callbacks_router")
@@ -68,13 +69,26 @@ callbacks_router = Router(name="callbacks_router")
 
 # In-memory RAM caches for schedule viewing (bounded LRU with TTL matching AGENTS.md §4)
 # Key: f"{group_id}_{lang}" -> {"data": [...], "timestamp": float, "group": Any, "is_from_db": bool}
-student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=150, ttl=1800.0)
+student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=360, ttl=1800.0)
 
 # Key: f"{teacher_id}_{lang}" -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
-teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=150, ttl=1800.0)
+teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=360, ttl=1800.0)
 
 # Key: str(teacher_id) -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
 teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=100, ttl=1200.0)
+
+# Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
+_persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=500, ttl=3600.0)
+_persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=500, ttl=3600.0)
+_group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
+_teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
+
+
+def _norm_cache_lang(lang: str | None) -> str:
+    """Normalizes schedule/UI language ('рус'/'ru' -> 'ru', 'каз'/'kz' -> 'kz') for cache keys."""
+    if not lang:
+        return "ru"
+    return "kz" if str(lang).lower().strip() in ("kz", "каз", "kaz", "қаз", "kk") else "ru"
 
 
 def clear_schedule_caches() -> None:
@@ -82,6 +96,11 @@ def clear_schedule_caches() -> None:
     student_schedule_cache.clear()
     teacher_text_cache.clear()
     teacher_table_cache.clear()
+    _persisted_student_hashes.clear()
+    _persisted_teacher_hashes.clear()
+    _group_meta_cache.clear()
+    _teacher_meta_cache.clear()
+    user_service.clear_cache()
 
 
 def get_current_day_number() -> int:
@@ -468,13 +487,19 @@ async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -
     try:
         from src.database.models.schedule import Schedule
 
+        num_id = int(group_id) if str(group_id).isdigit() else group_id
+        client_id = id(get_client())
         data_json = json.dumps(adapted_data, ensure_ascii=False, sort_keys=True, default=str)
         sch_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
-        now_dt = datetime.now(timezone.utc)
+        if _persisted_student_hashes.get((client_id, num_id)) == sch_hash:
+            return
 
-        num_id = int(group_id) if str(group_id).isdigit() else group_id
+        now_dt = datetime.now(timezone.utc)
         doc = await Schedule.find_one({"groupId": num_id})
         if doc:
+            if doc.hash == sch_hash:
+                _persisted_student_hashes[(client_id, num_id)] = sch_hash
+                return
             doc.data = adapted_data
             doc.hash = sch_hash
             doc.checked_at = now_dt
@@ -489,6 +514,7 @@ async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -
                 updatedAt=now_dt,
             )
             await new_doc.insert()
+        _persisted_student_hashes[(client_id, num_id)] = sch_hash
     except Exception as e:
         logger.debug(f"Background student schedule persistence error: {e}")
 
@@ -500,13 +526,19 @@ async def _bg_persist_teacher_schedule(teacher_id: int | str, adapted_data: list
     try:
         from src.database.models.teacher_schedule import TeacherSchedule
 
+        num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+        client_id = id(get_client())
         data_json = json.dumps(adapted_data, ensure_ascii=False, sort_keys=True, default=str)
         sch_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
-        now_dt = datetime.now(timezone.utc)
+        if _persisted_teacher_hashes.get((client_id, num_id)) == sch_hash:
+            return
 
-        num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+        now_dt = datetime.now(timezone.utc)
         doc = await TeacherSchedule.find_one({"teacherId": num_id})
         if doc:
+            if doc.hash == sch_hash:
+                _persisted_teacher_hashes[(client_id, num_id)] = sch_hash
+                return
             doc.data = adapted_data
             doc.hash = sch_hash
             doc.checked_at = now_dt
@@ -521,6 +553,7 @@ async def _bg_persist_teacher_schedule(teacher_id: int | str, adapted_data: list
                 updatedAt=now_dt,
             )
             await new_doc.insert()
+        _persisted_teacher_hashes[(client_id, num_id)] = sch_hash
     except Exception as e:
         logger.debug(f"Background teacher schedule persistence error: {e}")
 
@@ -532,9 +565,10 @@ async def get_or_fetch_student_schedule(
     group_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Retrieves student schedule from RAM cache, Buketov API, or MongoDB fallback."""
-    cache_key = f"{group_id}_{sch_lang}"
+    norm_lang = _norm_cache_lang(sch_lang)
+    cache_key = f"{group_id}_{norm_lang}"
     now = time.time()
-    cached = student_schedule_cache.get(cache_key)
+    cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
 
     max_age_sec = 1800.0  # 30 minutes
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= max_age_sec)
@@ -542,14 +576,18 @@ async def get_or_fetch_student_schedule(
     if needs_fetch:
         grp_name = group_name
         if not grp_name:
-            try:
-                from src.database.models.group import Group
+            meta = _group_meta_cache.get((id(get_client()), group_id))
+            if meta and meta.get("name"):
+                grp_name = meta["name"]
+            else:
+                try:
+                    from src.database.models.group import Group
 
-                g_doc = await Group.find_one({"id": group_id})
-                if g_doc and g_doc.name:
-                    grp_name = g_doc.name
-            except Exception:
-                pass
+                    g_doc = await Group.find_one({"id": group_id})
+                    if g_doc and g_doc.name:
+                        grp_name = g_doc.name
+                except Exception:
+                    pass
 
         if grp_name:
             try:
@@ -559,10 +597,11 @@ async def get_or_fetch_student_schedule(
                     if isinstance(raw_data, dict)
                     else (raw_data if isinstance(raw_data, list) else [])
                 )
-                adapted = schedule_api_adapter.adapt_group_schedule(records, sch_lang)
+                adapted = schedule_api_adapter.adapt_group_schedule(records, norm_lang)
+                entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
                 cached = {
                     "data": adapted,
-                    "timestamp": now,
+                    "timestamp": now if is_refresh else entry_ts,
                     "is_from_db": bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False,
                 }
                 student_schedule_cache[cache_key] = cached
@@ -620,39 +659,57 @@ async def build_student_day_schedule_view(
 
     grp_name = group_name or f"Группа {group_id}"
     back_callback = "faculty|0"
-    g_doc = None
-    try:
-        from src.database.models.group import Group
+    group_age = None
+    client_id = id(get_client())
+    cached_meta = _group_meta_cache.get((client_id, group_id))
 
-        num_g_id = int(group_id) if str(group_id).isdigit() else group_id
-        g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
-        if not g_doc and group_name:
-            g_doc = await Group.find_one(Group.name == group_name) or await Group.find_one({"name": group_name})
-        if g_doc:
-            if not group_name and getattr(g_doc, "name", None):
-                grp_name = g_doc.name
-            if grp_name and group_id:
-                register_group_name(group_id, grp_name)
-            prog_id = getattr(g_doc, "program", None)
-            fac_id = getattr(g_doc, "faculty", None)
-            if prog_id:
-                if not fac_id:
-                    from src.database.models.program import Program
+    if cached_meta is not None:
+        if not group_name and cached_meta.get("name"):
+            grp_name = cached_meta["name"]
+        back_callback = cached_meta.get("back_callback", "faculty|0")
+        group_age = cached_meta.get("age")
+        if grp_name and group_id:
+            register_group_name(group_id, grp_name)
+    else:
+        g_doc = None
+        try:
+            from src.database.models.group import Group
 
-                    num_p_id = int(prog_id) if str(prog_id).isdigit() else prog_id
-                    p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
-                    if p_doc and getattr(p_doc, "faculty", None):
-                        fac_id = p_doc.faculty
-                fac_id = fac_id or 0
-                back_callback = f"group|{fac_id}|{prog_id}|0"
-            elif fac_id:
-                back_callback = f"program|{fac_id}|0"
-    except Exception as e:
-        logger.debug(f"Error resolving group schedule back callback: {e}")
+            num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+            g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+            if not g_doc and group_name:
+                g_doc = await Group.find_one(Group.name == group_name) or await Group.find_one({"name": group_name})
+            if g_doc:
+                if not group_name and getattr(g_doc, "name", None):
+                    grp_name = g_doc.name
+                if grp_name and group_id:
+                    register_group_name(group_id, grp_name)
+                group_age = getattr(g_doc, "age", None)
+                prog_id = getattr(g_doc, "program", None)
+                fac_id = getattr(g_doc, "faculty", None)
+                if prog_id:
+                    if not fac_id:
+                        from src.database.models.program import Program
 
-    if g_doc and getattr(g_doc, "age", None):
+                        num_p_id = int(prog_id) if str(prog_id).isdigit() else prog_id
+                        p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
+                        if p_doc and getattr(p_doc, "faculty", None):
+                            fac_id = p_doc.faculty
+                    fac_id = fac_id or 0
+                    back_callback = f"group|{fac_id}|{prog_id}|0"
+                elif fac_id:
+                    back_callback = f"program|{fac_id}|0"
+                _group_meta_cache[(client_id, group_id)] = {
+                    "name": getattr(g_doc, "name", None) or grp_name,
+                    "back_callback": back_callback,
+                    "age": group_age,
+                }
+        except Exception as e:
+            logger.debug(f"Error resolving group schedule back callback: {e}")
+
+    if group_age:
         group_header = (
-            f"{t('group_and_year', ui_lang, groupName=grp_name, groupYear=g_doc.age)}\n"
+            f"{t('group_and_year', ui_lang, groupName=grp_name, groupYear=group_age)}\n"
             f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
         )
     else:
@@ -745,10 +802,13 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
 
     user_id = call.from_user.id if call.from_user else 0
     ui_lang = await user_service.get_user_language(user_id)
+    if user_id and group_id:
+        asyncio.create_task(user_service.set_user_schedule_preference(user_id, "student", group=group_id))
 
-    cache_key = f"{group_id}_{sch_lang}"
+    norm_lang = _norm_cache_lang(sch_lang)
+    cache_key = f"{group_id}_{norm_lang}"
     now = time.time()
-    cached = student_schedule_cache.get(cache_key)
+    cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
 
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
@@ -878,25 +938,35 @@ async def get_or_fetch_teacher_text_schedule(
     teacher_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Retrieves teacher schedule from RAM cache, Buketov API, or MongoDB fallback."""
-    cache_key = f"{teacher_id}_{ui_lang}"
+    norm_lang = _norm_cache_lang(ui_lang)
+    cache_key = f"{teacher_id}_{norm_lang}"
     now = time.time()
-    cached = teacher_text_cache.get(cache_key)
+    cached = teacher_text_cache.get(cache_key) or teacher_text_cache.get(f"{teacher_id}_{ui_lang}")
 
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1800.0)
     if needs_fetch:
         tch_name = teacher_name
         if not tch_name:
-            try:
-                from src.database.models.teacher import Teacher
+            meta = _teacher_meta_cache.get((id(get_client()), teacher_id))
+            if meta and meta.get("lookup_name"):
+                tch_name = meta["lookup_name"]
+            else:
+                try:
+                    from src.database.models.teacher import Teacher
 
-                num_t_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-                t_doc = await Teacher.find_one({"id": num_t_id})
-                if t_doc and t_doc.name:
-                    tch_name = t_doc.name
-                elif isinstance(teacher_id, str) and not teacher_id.isdigit():
-                    tch_name = teacher_id
-            except Exception:
-                pass
+                    num_t_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+                    t_doc = await Teacher.find_one({"id": num_t_id})
+                    if t_doc and t_doc.name:
+                        tch_name = t_doc.name
+                    elif isinstance(teacher_id, str) and not teacher_id.isdigit():
+                        tch_name = teacher_id
+                except Exception:
+                    if isinstance(teacher_id, str) and not teacher_id.isdigit():
+                        tch_name = teacher_id
+                if not tch_name and teacher_id:
+                    matched_dir = teacher_directory_service.find_match(str(teacher_id))
+                    if matched_dir:
+                        tch_name = matched_dir.get("name") or matched_dir.get("fullName")
 
         if tch_name:
             try:
@@ -906,10 +976,11 @@ async def get_or_fetch_teacher_text_schedule(
                     if isinstance(raw_sch, dict)
                     else (raw_sch if isinstance(raw_sch, list) else [])
                 )
-                adapted = schedule_api_adapter.adapt_teacher_schedule(records, ui_lang)
+                adapted = schedule_api_adapter.adapt_teacher_schedule(records, norm_lang)
+                entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
                 cached = {
                     "data": adapted,
-                    "timestamp": now,
+                    "timestamp": now if is_refresh else entry_ts,
                     "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
                 }
                 teacher_text_cache[cache_key] = cached
@@ -938,7 +1009,7 @@ async def get_or_fetch_teacher_text_schedule(
                 pass
         if not cached:
             cached = {
-                "data": schedule_api_adapter.adapt_teacher_schedule([], ui_lang),
+                "data": schedule_api_adapter.adapt_teacher_schedule([], norm_lang),
                 "timestamp": now,
                 "is_from_db": True,
             }
@@ -997,31 +1068,57 @@ async def build_teacher_day_text_view(
     dept_id = 0
     job_title = ""
     is_head = False
-    try:
-        from src.database.models.teacher import Teacher
+    client_id = id(get_client())
+    cached_meta = _teacher_meta_cache.get((client_id, teacher_id))
 
-        num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
-        t_doc = await Teacher.find_one(Teacher.teacher_id == num_id) or await Teacher.find_one({"id": num_id})
-        if not t_doc and teacher_name:
-            t_doc = await Teacher.find_one(Teacher.name == teacher_name) or await Teacher.find_one({"name": teacher_name})
-        if t_doc:
-            enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
-            if not teacher_name:
-                tch_name = enriched.get("fullName") or t_doc.name
-            dept_id = t_doc.department or 0
-            is_head = bool(enriched.get("isHead") or getattr(t_doc, "is_head", False) or getattr(t_doc, "isHead", False))
-            job_title = enriched.get("jobTitle") or getattr(t_doc, "job_title", "") or getattr(t_doc, "jobTitle", "")
-    except Exception:
-        pass
+    if cached_meta is not None:
+        if not teacher_name and cached_meta.get("name"):
+            tch_name = cached_meta["name"]
+        dept_id = cached_meta.get("dept_id", 0)
+        is_head = bool(cached_meta.get("is_head", False))
+        job_title = cached_meta.get("job_title", "")
+    else:
+        found_meta = False
+        lookup_name = ""
+        try:
+            from src.database.models.teacher import Teacher
 
-    if not is_head and not job_title and teacher_id:
-        matched = teacher_directory_service.find_match(str(teacher_id)) or teacher_directory_service.find_match(tch_name)
-        if matched:
-            enriched = teacher_directory_service.enrich(matched)
-            if not teacher_name and enriched.get("fullName"):
-                tch_name = enriched.get("fullName")
-            is_head = is_head or bool(enriched.get("isHead"))
-            job_title = job_title or enriched.get("jobTitle") or ""
+            num_id = int(teacher_id) if str(teacher_id).isdigit() else teacher_id
+            t_doc = await Teacher.find_one(Teacher.teacher_id == num_id) or await Teacher.find_one({"id": num_id})
+            if not t_doc and teacher_name:
+                t_doc = await Teacher.find_one(Teacher.name == teacher_name) or await Teacher.find_one({"name": teacher_name})
+            if t_doc:
+                found_meta = True
+                lookup_name = t_doc.name or ""
+                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
+                if not teacher_name:
+                    tch_name = enriched.get("fullName") or t_doc.name
+                dept_id = t_doc.department or 0
+                is_head = bool(enriched.get("isHead") or getattr(t_doc, "is_head", False) or getattr(t_doc, "isHead", False))
+                job_title = enriched.get("jobTitle") or getattr(t_doc, "job_title", "") or getattr(t_doc, "jobTitle", "")
+        except Exception:
+            pass
+
+        if not is_head and not job_title and teacher_id:
+            matched = teacher_directory_service.find_match(str(teacher_id)) or teacher_directory_service.find_match(tch_name)
+            if matched:
+                found_meta = True
+                enriched = teacher_directory_service.enrich(matched)
+                if not lookup_name:
+                    lookup_name = enriched.get("name") or enriched.get("fullName") or ""
+                if not teacher_name and enriched.get("fullName"):
+                    tch_name = enriched.get("fullName")
+                is_head = is_head or bool(enriched.get("isHead"))
+                job_title = job_title or enriched.get("jobTitle") or ""
+
+        if found_meta:
+            _teacher_meta_cache[(client_id, teacher_id)] = {
+                "name": tch_name,
+                "lookup_name": lookup_name or tch_name,
+                "dept_id": dept_id,
+                "is_head": is_head,
+                "job_title": job_title,
+            }
 
     if is_head and not job_title:
         job_title = "Кафедра меңгерушісі" if ui_lang in ("kz", "каз") else "Заведующий кафедрой"
@@ -1111,28 +1208,56 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
 
     user_id = call.from_user.id if call.from_user else 0
     ui_lang = await user_service.get_user_language(user_id)
+    if user_id and teacher_id:
+        asyncio.create_task(user_service.set_user_schedule_preference(user_id, "teacher", teacher=teacher_id))
     chat_id = call.message.chat.id if call.message and call.message.chat else user_id
 
     now = time.time()
     t_id_str = str(teacher_id)
     cached = teacher_table_cache.get(t_id_str)
 
-    # Teacher profile resolution
+    # Teacher profile resolution (with RAM metadata cache)
     teacher_name = f"ID {teacher_id}"
-    t_doc = None
+    lookup_name = ""
     dept_id = 0
-    try:
-        from src.database.models.teacher import Teacher
+    client_id = id(get_client())
+    cached_meta = _teacher_meta_cache.get((client_id, teacher_id))
 
-        t_doc = await Teacher.find_one({"id": teacher_id})
-        if t_doc:
-            enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
-            teacher_name = enriched.get("fullName") or t_doc.name
-            if teacher_id and teacher_name:
+    if cached_meta is not None:
+        teacher_name = cached_meta.get("name") or teacher_name
+        lookup_name = cached_meta.get("lookup_name") or teacher_name
+        dept_id = cached_meta.get("dept_id", 0)
+        if teacher_id and teacher_name:
+            register_teacher_name(teacher_id, teacher_name)
+    else:
+        t_doc = None
+        try:
+            from src.database.models.teacher import Teacher
+
+            t_doc = await Teacher.find_one({"id": teacher_id})
+            if t_doc:
+                lookup_name = t_doc.name or ""
+                enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
+                teacher_name = enriched.get("fullName") or t_doc.name
+                if teacher_id and teacher_name:
+                    register_teacher_name(teacher_id, teacher_name)
+                dept_id = t_doc.department or 0
+                _teacher_meta_cache[(client_id, teacher_id)] = {
+                    "name": teacher_name,
+                    "lookup_name": lookup_name or teacher_name,
+                    "dept_id": dept_id,
+                    "is_head": bool(enriched.get("isHead") or getattr(t_doc, "is_head", False)),
+                    "job_title": enriched.get("jobTitle") or getattr(t_doc, "job_title", ""),
+                }
+        except Exception:
+            pass
+        if teacher_name.startswith("ID ") and teacher_id:
+            matched_dir = teacher_directory_service.find_match(str(teacher_id))
+            if matched_dir:
+                enriched = teacher_directory_service.enrich(matched_dir)
+                teacher_name = enriched.get("fullName") or enriched.get("name") or teacher_name
+                lookup_name = enriched.get("name") or teacher_name
                 register_teacher_name(teacher_id, teacher_name)
-            dept_id = t_doc.department or 0
-    except Exception:
-        pass
 
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
@@ -1156,17 +1281,18 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     if needs_fetch:
         await call.answer("⌛️ Создаю таблицу недели...", show_alert=False)
         try:
-            lookup_name = t_doc.name if (t_doc and t_doc.name) else (teacher_name if not teacher_name.startswith("ID ") else str(teacher_id))
-            raw_sch = await buketov_api_service.get_teacher_schedule(lookup_name)
+            resolved_lookup = lookup_name or (teacher_name if not teacher_name.startswith("ID ") else str(teacher_id))
+            raw_sch = await buketov_api_service.get_teacher_schedule(resolved_lookup)
             records = (
                 raw_sch.get("records", [])
                 if isinstance(raw_sch, dict)
                 else (raw_sch if isinstance(raw_sch, list) else [])
             )
             adapted = schedule_api_adapter.adapt_teacher_schedule(records, ui_lang)
+            entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
             cached = {
                 "data": adapted,
-                "timestamp": now,
+                "timestamp": now if is_refresh else entry_ts,
                 "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
             }
             teacher_table_cache[t_id_str] = cached
@@ -1291,9 +1417,13 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
 
     user_id = call.from_user.id if call.from_user else 0
     ui_lang = await user_service.get_user_language(user_id)
-    cache_key = f"{teacher_id}_{ui_lang}"
+    if user_id and teacher_id:
+        asyncio.create_task(user_service.set_user_schedule_preference(user_id, "teacher", teacher=teacher_id))
+
+    norm_lang = _norm_cache_lang(ui_lang)
+    cache_key = f"{teacher_id}_{norm_lang}"
     now = time.time()
-    cached = teacher_text_cache.get(cache_key)
+    cached = teacher_text_cache.get(cache_key) or teacher_text_cache.get(f"{teacher_id}_{ui_lang}")
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
         await call.answer()

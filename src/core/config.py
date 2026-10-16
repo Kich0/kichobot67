@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET_TOKEN: str | None = Field(
         default=None, description="Secret token sent in X-Telegram-Bot-Api-Secret-Token"
     )
+    INTERNAL_API_SECRET: str | None = Field(
+        default=None, description="Optional secret token for /bot/log and /bot/get_user_schedule"
+    )
 
     # === Debug & Browser/Proxy (Legacy flags) ===
     DEBUG: bool = Field(default=False)

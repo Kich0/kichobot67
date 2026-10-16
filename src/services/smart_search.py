@@ -99,6 +99,95 @@ class SmartSearchService:
         self._last_teachers_cache_time = 0.0
         self._last_groups_cache_time = 0.0
 
+    @staticmethod
+    def _ensure_teacher_indexed(t: Any) -> tuple[str, str, str, str, str, str, str, list[str], list[str], list[str]]:
+        """Returns precomputed normalized teacher fields, caching them on dict items."""
+        if isinstance(t, dict) and "_norm_full" in t:
+            return (
+                t["_name_val"],
+                t["_norm_name"],
+                t["_norm_full"],
+                t["_norm_last"],
+                t["_norm_first"],
+                t["_norm_patr"],
+                t["_comp_full"],
+                t["_full_tokens"],
+                t["_norm_aliases"],
+                t["_comp_aliases"],
+            )
+
+        name_val = str(_get_field(t, "name") or _get_field(t, "fullName") or _get_field(t, "initials") or "").strip()
+        full_val = str(_get_field(t, "fullName") or name_val).strip()
+        last_val = str(_get_field(t, "lastName") or (name_val.split()[0] if name_val.split() else "")).strip()
+        first_val = str(_get_field(t, "firstName") or "").strip()
+        patr_val = str(_get_field(t, "patronymic") or "").strip()
+
+        norm_name = normalize_cyrillic(name_val)
+        norm_full = normalize_cyrillic(full_val)
+        norm_last = normalize_cyrillic(last_val)
+        norm_first = normalize_cyrillic(first_val)
+        norm_patr = normalize_cyrillic(patr_val)
+        comp_full = norm_full.replace(" ", "")
+        full_tokens = norm_full.split()
+
+        aliases = _get_field(t, "aliases")
+        norm_aliases = [normalize_cyrillic(a) for a in aliases if a] if isinstance(aliases, list) else []
+        comp_aliases = [na.replace(" ", "") for na in norm_aliases]
+
+        if isinstance(t, dict):
+            t["_name_val"] = name_val
+            t["_norm_name"] = norm_name
+            t["_norm_full"] = norm_full
+            t["_norm_last"] = norm_last
+            t["_norm_first"] = norm_first
+            t["_norm_patr"] = norm_patr
+            t["_comp_full"] = comp_full
+            t["_full_tokens"] = full_tokens
+            t["_norm_aliases"] = norm_aliases
+            t["_comp_aliases"] = comp_aliases
+
+        return (
+            name_val,
+            norm_name,
+            norm_full,
+            norm_last,
+            norm_first,
+            norm_patr,
+            comp_full,
+            full_tokens,
+            norm_aliases,
+            comp_aliases,
+        )
+
+    @staticmethod
+    def _ensure_group_indexed(g: Any) -> tuple[str, str, str, list[str]]:
+        """Returns precomputed normalized group fields, caching them on dict items."""
+        if isinstance(g, dict) and "_comp_name" in g:
+            return (
+                g["_g_name"],
+                g["_norm_name"],
+                g["_comp_name"],
+                g["_norm_tokens"],
+            )
+
+        g_name = str(_get_field(g, "name") or "").strip()
+        norm_name = normalize_cyrillic(g_name)
+        comp_name = norm_name.replace(" ", "")
+        norm_tokens = norm_name.split()
+
+        if isinstance(g, dict):
+            g["_g_name"] = g_name
+            g["_norm_name"] = norm_name
+            g["_comp_name"] = comp_name
+            g["_norm_tokens"] = norm_tokens
+
+        return g_name, norm_name, comp_name, norm_tokens
+
+    async def warmup(self) -> None:
+        """Pre-loads and pre-indexes teachers and groups caches in RAM."""
+        await self.get_all_teachers()
+        await self.get_all_groups()
+
     async def get_all_teachers(self) -> list[dict[str, Any]]:
         """Retrieves and enriches all teachers from MongoDB or directory fallback."""
         now = time.time()
@@ -110,10 +199,12 @@ class SmartSearchService:
             return self._teachers_cache
 
         unique_teachers: list[dict[str, Any]] = []
+        db_loaded = False
         try:
             from src.database.models.teacher import Teacher
 
             docs = await Teacher.find().sort("name").to_list()
+            db_loaded = True
             seen: set[int] = set()
 
             for doc in docs:
@@ -124,6 +215,7 @@ class SmartSearchService:
                 t_dict = doc.model_dump(by_alias=True)
                 enriched = teacher_directory_service.enrich(t_dict)
                 if enriched:
+                    self._ensure_teacher_indexed(enriched)
                     unique_teachers.append(enriched)
         except Exception as e:
             logger.debug(f"Could not load teachers from DB, checking directory: {e}")
@@ -131,7 +223,7 @@ class SmartSearchService:
         # Combine DB teachers with in-memory teacher directory service
         all_teachers = list(unique_teachers)
         seen_names = {
-            normalize_cyrillic(str(_get_field(t, "fullName") or _get_field(t, "name") or ""))
+            t.get("_norm_full") or normalize_cyrillic(str(_get_field(t, "fullName") or _get_field(t, "name") or ""))
             for t in unique_teachers
             if (_get_field(t, "fullName") or _get_field(t, "name"))
         }
@@ -141,11 +233,13 @@ class SmartSearchService:
                 seen_names.add(d_norm)
                 enriched = teacher_directory_service.enrich(d_t)
                 if enriched:
+                    self._ensure_teacher_indexed(enriched)
                     all_teachers.append(enriched)
 
-        self._teachers_cache = all_teachers
-        self._last_teachers_cache_time = now
-        return self._teachers_cache
+        if db_loaded:
+            self._teachers_cache = all_teachers
+            self._last_teachers_cache_time = now
+        return all_teachers
 
     async def get_all_groups(self) -> list[dict[str, Any]]:
         """Retrieves all student groups from MongoDB."""
@@ -169,7 +263,9 @@ class SmartSearchService:
                 if g_id in seen:
                     continue
                 seen.add(g_id)
-                unique_groups.append(doc.model_dump(by_alias=True))
+                g_dict = doc.model_dump(by_alias=True)
+                self._ensure_group_indexed(g_dict)
+                unique_groups.append(g_dict)
 
             self._groups_cache = unique_groups
             self._last_groups_cache_time = now
@@ -201,22 +297,20 @@ class SmartSearchService:
             if not t:
                 continue
 
-            name_val = str(_get_field(t, "name") or _get_field(t, "fullName") or _get_field(t, "initials") or "").strip()
+            (
+                name_val,
+                norm_name,
+                norm_full,
+                norm_last,
+                norm_first,
+                norm_patr,
+                comp_full,
+                full_tokens,
+                norm_aliases,
+                comp_aliases,
+            ) = self._ensure_teacher_indexed(t)
             if not name_val:
                 continue
-
-            full_val = str(_get_field(t, "fullName") or name_val).strip()
-            last_val = str(_get_field(t, "lastName") or (name_val.split()[0] if name_val.split() else "")).strip()
-            first_val = str(_get_field(t, "firstName") or "").strip()
-            patr_val = str(_get_field(t, "patronymic") or "").strip()
-
-            norm_name = normalize_cyrillic(name_val)
-            norm_full = normalize_cyrillic(full_val)
-            norm_last = normalize_cyrillic(last_val)
-            norm_first = normalize_cyrillic(first_val)
-            norm_patr = normalize_cyrillic(patr_val)
-            words = [w for w in [norm_last, norm_first, norm_patr] if w]
-            full_tokens = norm_full.split()
 
             # 1. Short queries (<= 2 chars): strictly prefix of surname or first name
             if len(tokens) == 1 and len(norm_query) <= 2:
@@ -225,8 +319,6 @@ class SmartSearchService:
                 if last_starts or first_starts:
                     matches.append((100 if last_starts else 60, t))
                 continue
-
-            comp_full = norm_full.replace(" ", "")
 
             # 2. Exact match on full name
             if norm_full == norm_query or comp_full == compact_query or norm_name == norm_query:
@@ -244,14 +336,13 @@ class SmartSearchService:
                 continue
 
             # 5. Aliases match
-            aliases = _get_field(t, "aliases")
-            if isinstance(aliases, list):
+            if norm_aliases:
                 alias_matched = any(
-                    normalize_cyrillic(a) == norm_query
-                    or normalize_cyrillic(a).replace(" ", "") == compact_query
-                    or normalize_cyrillic(a).startswith(norm_query)
-                    or (len(tokens) > 1 and norm_query in normalize_cyrillic(a))
-                    for a in aliases
+                    na == norm_query
+                    or ca == compact_query
+                    or na.startswith(norm_query)
+                    or (len(tokens) > 1 and norm_query in na)
+                    for na, ca in zip(norm_aliases, comp_aliases)
                 )
                 if alias_matched:
                     matches.append((135, t))
@@ -353,12 +444,9 @@ class SmartSearchService:
         for g in groups_list:
             if not g:
                 continue
-            g_name = str(_get_field(g, "name") or "").strip()
+            g_name, norm_name, comp_name, norm_tokens = self._ensure_group_indexed(g)
             if not g_name:
                 continue
-
-            norm_name = normalize_cyrillic(g_name)
-            comp_name = norm_name.replace(" ", "")
 
             # 1. Compact startswith ("ис" -> "ис211")
             if comp_name.startswith(compact_query):
@@ -366,7 +454,6 @@ class SmartSearchService:
                 continue
 
             # 2. All tokens match prefix of words
-            norm_tokens = norm_name.split()
             if tokens and all(any(n_tok == q_tok or n_tok.startswith(q_tok) for n_tok in norm_tokens) for q_tok in tokens):
                 results.append(g)
                 continue
@@ -391,8 +478,7 @@ class SmartSearchService:
 
         # Sort: exact compact first, prefix compact next, alphabetical
         def _sort_key(item: Any) -> tuple[int, int, str]:
-            raw_n = str(_get_field(item, "name", ""))
-            n = normalize_cyrillic(raw_n).replace(" ", "")
+            raw_n, _, n, _ = self._ensure_group_indexed(item)
             is_exact = 0 if n == compact_query else 1
             is_prefix = 0 if n.startswith(compact_query) else 1
             return (is_exact, is_prefix, raw_n)
@@ -419,11 +505,9 @@ class SmartSearchService:
         for g in groups or []:
             if not g:
                 continue
-            g_name = str(_get_field(g, "name") or "").strip()
+            g_name, _, g_comp, _ = self._ensure_group_indexed(g)
             if not g_name:
                 continue
-            g_norm = normalize_cyrillic(g_name)
-            g_comp = g_norm.replace(" ", "")
             sim1 = calculate_similarity(compact, g_comp)
             sim2 = calculate_similarity(compact_no_suffix, g_comp)
             best_sim = max(sim1, sim2)
@@ -436,17 +520,20 @@ class SmartSearchService:
         for t in teachers or []:
             if not t:
                 continue
-            name_val = str(_get_field(t, "name") or _get_field(t, "fullName") or _get_field(t, "initials") or "").strip()
+            (
+                name_val,
+                _,
+                _,
+                norm_last,
+                norm_first,
+                _,
+                comp_full,
+                _,
+                _,
+                _,
+            ) = self._ensure_teacher_indexed(t)
             if not name_val:
                 continue
-            full_val = str(_get_field(t, "fullName") or name_val).strip()
-            last_val = str(_get_field(t, "lastName") or (name_val.split()[0] if name_val.split() else "")).strip()
-            first_val = str(_get_field(t, "firstName") or "").strip()
-
-            norm_full = normalize_cyrillic(full_val)
-            norm_last = normalize_cyrillic(last_val)
-            norm_first = normalize_cyrillic(first_val)
-            comp_full = norm_full.replace(" ", "")
 
             sim_surname = calculate_similarity(compact, norm_last)
             sim_first = calculate_similarity(compact, norm_first) if norm_first else 0.0
@@ -496,18 +583,26 @@ class SmartSearchService:
             query_tokens = norm_q.split()
             full_exact = []
             for t in matched_teachers:
-                n_name = normalize_cyrillic(t.get("name"))
-                n_full = normalize_cyrillic(t.get("fullName") or t.get("name"))
-                c_full = n_full.replace(" ", "")
-                alias_matches = isinstance(t.get("aliases"), list) and any(
-                    normalize_cyrillic(a) == norm_q or normalize_cyrillic(a).replace(" ", "") == compact_query
-                    for a in t["aliases"]
+                (
+                    _,
+                    n_name,
+                    n_full,
+                    _,
+                    _,
+                    _,
+                    c_full,
+                    full_tokens,
+                    norm_aliases,
+                    comp_aliases,
+                ) = self._ensure_teacher_indexed(t)
+                alias_matches = bool(norm_aliases) and any(
+                    na == norm_q or ca == compact_query
+                    for na, ca in zip(norm_aliases, comp_aliases)
                 )
                 if n_full == norm_q or n_name == norm_q or c_full == compact_query or alias_matches:
                     full_exact.append(t)
                     continue
                 if len(query_tokens) > 1:
-                    full_tokens = n_full.split()
                     if all(tok in full_tokens for tok in query_tokens):
                         full_exact.append(t)
             if len(full_exact) == 1:
@@ -520,8 +615,8 @@ class SmartSearchService:
         elif len(matched_groups) > 0:
             group_exact = [
                 g for g in matched_groups
-                if normalize_cyrillic(g.get("name", "")).replace(" ", "") == compact_query
-                or normalize_cyrillic(g.get("name", "")) == norm_q
+                if self._ensure_group_indexed(g)[2] == compact_query
+                or self._ensure_group_indexed(g)[1] == norm_q
             ]
             if len(group_exact) == 1:
                 exact_group = group_exact[0]

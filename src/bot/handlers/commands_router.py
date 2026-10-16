@@ -238,14 +238,23 @@ async def handle_teacher_menu(message: Message) -> None:
         t_doc = None
         try:
             num_t_id = int(user_doc.teacher) if str(user_doc.teacher).isdigit() else user_doc.teacher
-            t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
+            if isinstance(num_t_id, int):
+                t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
+            else:
+                t_doc = await Teacher.find_one(Teacher.name == str(num_t_id)) or await Teacher.find_one({"name": str(num_t_id)})
             if t_doc:
                 enriched = teacher_directory_service.enrich(t_doc.model_dump(by_alias=True))
                 tch_name = enriched.get("fullName") or t_doc.name
         except Exception:
             pass
 
-        if not t_doc:
+        if not t_doc and user_doc.teacher:
+            matched_dir = teacher_directory_service.find_match(str(user_doc.teacher))
+            if matched_dir:
+                enriched = teacher_directory_service.enrich(matched_dir)
+                tch_name = enriched.get("fullName") or enriched.get("name") or str(user_doc.teacher)
+
+        if not t_doc and not tch_name:
             await message.answer(t("teacher_not_found", lang), parse_mode="HTML")
             return
 
@@ -372,11 +381,11 @@ async def handle_group_search_prefix(message: Message) -> None:
         await message.answer(t("search_bad_result", lang, searchQuery=query), parse_mode="HTML")
         return
 
+    curr_day = get_current_day_number()
     if len(matched) == 1:
         g = matched[0]
         g_id = g.get("id") or g.get("group_id")
         g_lang = g.get("language") or ("kz" if lang == "kz" else "ru")
-        curr_day = get_current_day_number()
         await render_student_day_schedule_message(
             target_msg=message,
             group_id=g_id,
@@ -388,7 +397,7 @@ async def handle_group_search_prefix(message: Message) -> None:
         )
         return
 
-    markup = get_search_results_keyboard(groups=matched, lang=lang)
+    markup = get_search_results_keyboard(groups=matched, lang=lang, current_day=curr_day)
     await message.answer(
         f"✨ По вашему запросу: <b>{query}</b> найдено групп: <b>{len(matched)}</b>\n\n"
         "Выберите нужную группу из списка:",
@@ -425,21 +434,22 @@ async def handle_teacher_search_prefix(message: Message) -> None:
         await message.answer(t("search_bad_result", lang, searchQuery=query), parse_mode="HTML")
         return
 
+    curr_day = get_current_day_number()
     if len(matched) == 1:
         tch = matched[0]
-        t_id = tch.get("id") or tch.get("teacher_id")
-        curr_day = get_current_day_number()
+        t_name = tch.get("fullName") or tch.get("name") or ""
+        t_id = tch.get("id") or tch.get("teacher_id") or tch.get("name") or t_name
         await render_teacher_day_schedule_message(
             target_msg=message,
             teacher_id=t_id,
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
-            teacher_name=tch.get("fullName") or tch.get("name"),
+            teacher_name=t_name,
         )
         return
 
-    markup = get_search_results_keyboard(teachers=matched, lang=lang)
+    markup = get_search_results_keyboard(teachers=matched, lang=lang, current_day=curr_day)
     await message.answer(
         f"✨ По вашему запросу: <b>{query}</b> найдено преподавателей: <b>{len(matched)}</b>\n\n"
         "Выберите преподавателя из списка:",

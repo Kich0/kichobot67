@@ -26,6 +26,14 @@ async def run_daily_data_update(is_startup: bool = False) -> None:
     mode_label = "стартовое" if is_startup else "ежедневное"
     logger.info(f"[Sync] Начинаю {mode_label} обновление данных из КарУ.")
 
+    try:
+        from src.services.smart_search import smart_search_service
+
+        smart_search_service.invalidate_caches()
+        await smart_search_service.warmup()
+    except Exception as e:
+        logger.debug(f"[Sync] Прогрев smart_search_service пропущен: {e}")
+
     if not settings.AUTO_KSU_AUTH:
         logger.info(
             "[Sync] Пропуск устаревшего обновления данных через скрейпер КарГУ: "

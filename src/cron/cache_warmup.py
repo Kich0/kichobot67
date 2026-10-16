@@ -171,6 +171,21 @@ class SmartWarmupEngine:
             from src.database.models.group import Group
 
             top_group_ids: list[int] = []
+            seen_ids: set[int] = set()
+
+            def _add_gid(val: Any) -> None:
+                if val is None:
+                    return
+                if isinstance(val, int):
+                    gid = val
+                elif isinstance(val, str) and val.strip().isdigit():
+                    gid = int(val.strip())
+                else:
+                    return
+                if gid > 0 and gid not in seen_ids and len(top_group_ids) < self.TOP_GROUPS_LIMIT:
+                    seen_ids.add(gid)
+                    top_group_ids.append(gid)
+
             try:
                 pipeline = [
                     {"$match": {"group": {"$exists": True, "$ne": None}}},
@@ -179,9 +194,29 @@ class SmartWarmupEngine:
                     {"$limit": self.TOP_GROUPS_LIMIT},
                 ]
                 agg_result = await User.aggregate(pipeline).to_list()
-                top_group_ids = [item["_id"] for item in agg_result if item.get("_id")]
+                for item in agg_result:
+                    _add_gid(item.get("_id"))
             except Exception as e:
                 logger.debug(f"[SmartWarmupEngine] User aggregate for top groups failed: {e}")
+
+            if len(top_group_ids) < self.TOP_GROUPS_LIMIT:
+                try:
+                    from src.database.models.user_action import UserAction
+
+                    act_pipeline = [
+                        {"$match": {"action": {"$regex": r"^(?:schedule|chooseScheduleLanguage)\|"}}} ,
+                        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": self.TOP_GROUPS_LIMIT},
+                    ]
+                    act_res = await UserAction.aggregate(act_pipeline).to_list()
+                    for item in act_res:
+                        act_str = str(item.get("_id") or "")
+                        parts = act_str.split("|")
+                        if len(parts) > 2:
+                            _add_gid(parts[2])
+                except Exception as e:
+                    logger.debug(f"[SmartWarmupEngine] UserAction aggregate for top groups failed: {e}")
 
             if len(top_group_ids) < self.TOP_GROUPS_LIMIT:
                 needed = self.TOP_GROUPS_LIMIT - len(top_group_ids)
@@ -192,7 +227,8 @@ class SmartWarmupEngine:
                         extra_groups = await Group.find(NotIn(Group.group_id, top_group_ids)).limit(needed).to_list()
                     else:
                         extra_groups = await Group.find().limit(needed).to_list()
-                    top_group_ids.extend([g.group_id for g in extra_groups if g.group_id is not None])
+                    for g in extra_groups:
+                        _add_gid(g.group_id)
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Group fallback query failed: {e}")
 
@@ -222,6 +258,25 @@ class SmartWarmupEngine:
             from src.database.models.teacher import Teacher
 
             top_teacher_ids: list[int | str] = []
+            seen_tids: set[int | str] = set()
+
+            def _add_tid(val: Any) -> None:
+                if val is None:
+                    return
+                tid: int | str
+                if isinstance(val, int):
+                    tid = val
+                elif isinstance(val, str):
+                    s = val.strip()
+                    if not s:
+                        return
+                    tid = int(s) if s.isdigit() else s
+                else:
+                    return
+                if tid not in seen_tids and len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
+                    seen_tids.add(tid)
+                    top_teacher_ids.append(tid)
+
             try:
                 pipeline = [
                     {"$match": {"teacher": {"$exists": True, "$ne": None}}},
@@ -230,20 +285,42 @@ class SmartWarmupEngine:
                     {"$limit": self.TOP_TEACHERS_LIMIT},
                 ]
                 agg_result = await User.aggregate(pipeline).to_list()
-                top_teacher_ids = [item["_id"] for item in agg_result if item.get("_id")]
+                for item in agg_result:
+                    _add_tid(item.get("_id"))
             except Exception as e:
                 logger.debug(f"[SmartWarmupEngine] User aggregate for top teachers failed: {e}")
+
+            if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
+                try:
+                    from src.database.models.user_action import UserAction
+
+                    act_pipeline = [
+                        {"$match": {"action": {"$regex": r"^(?:TeacherSchedule|teacherImg|teacherText)\|"}}},
+                        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": self.TOP_TEACHERS_LIMIT},
+                    ]
+                    act_res = await UserAction.aggregate(act_pipeline).to_list()
+                    for item in act_res:
+                        act_str = str(item.get("_id") or "")
+                        parts = act_str.split("|")
+                        if len(parts) > 1:
+                            _add_tid(parts[1])
+                except Exception as e:
+                    logger.debug(f"[SmartWarmupEngine] UserAction aggregate for top teachers failed: {e}")
 
             if len(top_teacher_ids) < self.TOP_TEACHERS_LIMIT:
                 needed = self.TOP_TEACHERS_LIMIT - len(top_teacher_ids)
                 try:
                     from beanie.operators import NotIn
 
-                    if top_teacher_ids:
-                        extra_teachers = await Teacher.find(NotIn(Teacher.teacher_id, top_teacher_ids)).limit(needed).to_list()
+                    num_ids = [t for t in top_teacher_ids if isinstance(t, int)]
+                    if num_ids:
+                        extra_teachers = await Teacher.find(NotIn(Teacher.teacher_id, num_ids)).limit(needed).to_list()
                     else:
                         extra_teachers = await Teacher.find().limit(needed).to_list()
-                    top_teacher_ids.extend([t.teacher_id for t in extra_teachers if t.teacher_id is not None])
+                    for t in extra_teachers:
+                        _add_tid(t.teacher_id)
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher fallback query failed: {e}")
 
@@ -252,11 +329,13 @@ class SmartWarmupEngine:
                 try:
                     from beanie.operators import In
 
-                    teachers = await Teacher.find(In(Teacher.teacher_id, top_teacher_ids)).to_list()
-                    for t in teachers:
-                        name = t.name or t.full_name
-                        if name:
-                            teacher_map[t.teacher_id] = name
+                    num_ids = [t for t in top_teacher_ids if isinstance(t, int)]
+                    if num_ids:
+                        teachers = await Teacher.find(In(Teacher.teacher_id, num_ids)).to_list()
+                        for t in teachers:
+                            name = t.name or t.full_name
+                            if name:
+                                teacher_map[t.teacher_id] = name
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] Teacher In query failed: {e}")
 
@@ -313,16 +392,16 @@ class SmartWarmupEngine:
 
             adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
             adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
-            now = time.time()
+            entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
             student_schedule_cache[f"{group_id}_ru"] = {
                 "data": adapted_ru,
-                "timestamp": now,
+                "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
             student_schedule_cache[f"{group_id}_kz"] = {
                 "data": adapted_kz,
-                "timestamp": now,
+                "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
             if not is_from_db and adapted_ru:
@@ -359,16 +438,16 @@ class SmartWarmupEngine:
 
             adapted_ru = schedule_api_adapter.adapt_teacher_schedule(records, "ru")
             adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
-            now = time.time()
+            entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
             teacher_text_cache[f"{teacher_id}_ru"] = {
                 "data": adapted_ru,
-                "timestamp": now,
+                "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
             teacher_text_cache[f"{teacher_id}_kz"] = {
                 "data": adapted_kz,
-                "timestamp": now,
+                "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
             if not is_from_db and adapted_ru:
@@ -478,6 +557,8 @@ async def warmup_top_schedules(limit: int = 30) -> int:
     try:
         from src.database.models.user import User
         from src.database.models.group import Group
+        from src.bot.handlers.callbacks_router import student_schedule_cache
+        from src.services.schedule_adapter import schedule_api_adapter
 
         # Find most frequent groups among registered users
         top_group_ids: list[int] = []
@@ -489,7 +570,12 @@ async def warmup_top_schedules(limit: int = 30) -> int:
                 {"$limit": limit},
             ]
             agg_result = await User.aggregate(pipeline).to_list()
-            top_group_ids = [item["_id"] for item in agg_result if item.get("_id")]
+            for item in agg_result:
+                raw_gid = item.get("_id")
+                if isinstance(raw_gid, int):
+                    top_group_ids.append(raw_gid)
+                elif isinstance(raw_gid, str) and raw_gid.isdigit():
+                    top_group_ids.append(int(raw_gid))
         except Exception as e:
             logger.debug(f"User aggregate for top groups failed: {e}")
 
@@ -520,11 +606,25 @@ async def warmup_top_schedules(limit: int = 30) -> int:
                 continue
 
             try:
-                # Pre-fetch and cache student schedule
-                await buketov_api_service.fetch_schedule(
-                    params={"groupId": group_obj.group_id, "group": group_obj.name},
-                    cache_type="student",
+                # Pre-fetch and cache student schedule using canonical get_group_schedule key
+                raw_data = await buketov_api_service.get_group_schedule(group_obj.name)
+                records = (
+                    raw_data.get("records", [])
+                    if isinstance(raw_data, dict)
+                    else (raw_data if isinstance(raw_data, list) else [])
                 )
+                is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
+                entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
+                student_schedule_cache[f"{group_obj.group_id}_ru"] = {
+                    "data": schedule_api_adapter.adapt_group_schedule(records, "ru"),
+                    "timestamp": entry_ts,
+                    "is_from_db": is_from_db,
+                }
+                student_schedule_cache[f"{group_obj.group_id}_kz"] = {
+                    "data": schedule_api_adapter.adapt_group_schedule(records, "kz"),
+                    "timestamp": entry_ts,
+                    "is_from_db": is_from_db,
+                }
                 warmed_count += 1
                 await asyncio.sleep(0.15)
             except Exception as e:

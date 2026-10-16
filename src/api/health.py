@@ -141,6 +141,10 @@ class HealthMonitor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
+    async def get_status(self) -> dict[str, Any]:
+        """Alias for is_healthy() used by admin /info diagnostics."""
+        return await self.is_healthy()
+
 
 # Singleton instance
 health_monitor = HealthMonitor()

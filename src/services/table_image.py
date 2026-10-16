@@ -289,7 +289,7 @@ class TeacherTableImageService:
             maxsize=CACHE_CAPACITY_TEACHER_IMAGES,
             ttl=CACHE_TEACHER_IMAGE_TTL.total_seconds(),
         )
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=500, ttl=3600.0)
         self._locks_guard = asyncio.Lock()
 
     async def get_teacher_lock(self, teacher_id: str | int) -> asyncio.Lock:

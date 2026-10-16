@@ -103,11 +103,13 @@ def resolve_day_name(day_val: Any) -> str:
         return CALLBACK_DAY_NAMES.get(idx, f"День {idx + 1}")
     return str(day_val)
 
-KNOWN_GROUPS: dict[int, str] = {}
-KNOWN_TEACHERS: dict[int, str] = {}
-KNOWN_FACULTIES: dict[int, str] = {}
-KNOWN_PROGRAMS: dict[int, str] = {}
-KNOWN_DEPARTMENTS: dict[int, str] = {}
+from cachetools import LRUCache, TTLCache
+
+KNOWN_GROUPS: LRUCache[int, str] = LRUCache(maxsize=2000)
+KNOWN_TEACHERS: LRUCache[int | str, str] = LRUCache(maxsize=2000)
+KNOWN_FACULTIES: LRUCache[int, str] = LRUCache(maxsize=200)
+KNOWN_PROGRAMS: LRUCache[int, str] = LRUCache(maxsize=1000)
+KNOWN_DEPARTMENTS: LRUCache[int, str] = LRUCache(maxsize=500)
 
 
 def register_group_name(group_id: int | str | None, name: str | None) -> None:
@@ -123,7 +125,8 @@ def register_teacher_name(teacher_id: int | str | None, name: str | None) -> Non
     """Registers or updates human-readable teacher name for ID."""
     if teacher_id is not None and name:
         try:
-            KNOWN_TEACHERS[int(teacher_id)] = str(name).strip()
+            key = int(teacher_id) if str(teacher_id).isdigit() else str(teacher_id).strip()
+            KNOWN_TEACHERS[key] = str(name).strip()
         except Exception:
             pass
 
@@ -347,66 +350,76 @@ def describe_callback_query(
 
     if raw_lower.startswith("refreshteacherschedule|") or raw_lower.startswith("refresh_teacherschedule|"):
         parts = raw.split("|")
-        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        raw_t = parts[1].strip() if len(parts) > 1 else ""
+        t_id = int(raw_t) if raw_t.isdigit() else None
         day_val = parts[2] if len(parts) > 2 else 0
         day_name = resolve_day_name(day_val)
+        lookup_key: Any = t_id if t_id is not None else (raw_t or None)
         t_name = (
-            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
-            if t_id is not None
+            (teacher_map.get(lookup_key) if teacher_map and lookup_key in teacher_map else KNOWN_TEACHERS.get(lookup_key))
+            if lookup_key is not None
             else None
-        )
+        ) or (raw_t if (raw_t and t_id is None) else None)
         tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
         desc = f"Обновил расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Обновил расписание преподавателя ({day_name})"
         return ("refresh_teacher", desc, t_id, t_name)
 
     if raw_lower.startswith("teacherschedule|"):
         parts = raw.split("|")
-        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        raw_t = parts[1].strip() if len(parts) > 1 else ""
+        t_id = int(raw_t) if raw_t.isdigit() else None
         day_val = parts[2] if len(parts) > 2 else 0
         day_name = resolve_day_name(day_val)
+        lookup_key = t_id if t_id is not None else (raw_t or None)
         t_name = (
-            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
-            if t_id is not None
+            (teacher_map.get(lookup_key) if teacher_map and lookup_key in teacher_map else KNOWN_TEACHERS.get(lookup_key))
+            if lookup_key is not None
             else None
-        )
+        ) or (raw_t if (raw_t and t_id is None) else None)
         tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
         desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
         return ("view_teacher", desc, t_id, t_name)
 
     if raw_lower.startswith("refreshteacherimg|") or raw_lower.startswith("refresh_teacherimg|"):
         parts = raw.split("|")
-        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        raw_t = parts[1].strip() if len(parts) > 1 else ""
+        t_id = int(raw_t) if raw_t.isdigit() else None
+        lookup_key = t_id if t_id is not None else (raw_t or None)
         t_name = (
-            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
-            if t_id is not None
+            (teacher_map.get(lookup_key) if teacher_map and lookup_key in teacher_map else KNOWN_TEACHERS.get(lookup_key))
+            if lookup_key is not None
             else None
-        )
+        ) or (raw_t if (raw_t and t_id is None) else None)
         tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
         desc = f"Обновил таблицу недели преподавателя {tch_label}" if tch_label else "Обновил таблицу недели преподавателя"
         return ("refresh_teacher_image", desc, t_id, t_name)
 
     if raw_lower.startswith("teacherimg|"):
         parts = raw.split("|")
-        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        raw_t = parts[1].strip() if len(parts) > 1 else ""
+        t_id = int(raw_t) if raw_t.isdigit() else None
+        lookup_key = t_id if t_id is not None else (raw_t or None)
         t_name = (
-            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
-            if t_id is not None
+            (teacher_map.get(lookup_key) if teacher_map and lookup_key in teacher_map else KNOWN_TEACHERS.get(lookup_key))
+            if lookup_key is not None
             else None
-        )
+        ) or (raw_t if (raw_t and t_id is None) else None)
         tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
         desc = f"Открыл таблицу недели преподавателя {tch_label}" if tch_label else "Открыл таблицу недели преподавателя"
         return ("view_teacher_image", desc, t_id, t_name)
 
     if raw_lower.startswith("teachertext|"):
         parts = raw.split("|")
-        t_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        raw_t = parts[1].strip() if len(parts) > 1 else ""
+        t_id = int(raw_t) if raw_t.isdigit() else None
         day_val = parts[2] if len(parts) > 2 else 0
         day_name = resolve_day_name(day_val)
+        lookup_key = t_id if t_id is not None else (raw_t or None)
         t_name = (
-            (teacher_map.get(t_id) if teacher_map and t_id in teacher_map else KNOWN_TEACHERS.get(t_id))
-            if t_id is not None
+            (teacher_map.get(lookup_key) if teacher_map and lookup_key in teacher_map else KNOWN_TEACHERS.get(lookup_key))
+            if lookup_key is not None
             else None
-        )
+        ) or (raw_t if (raw_t and t_id is None) else None)
         tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
         desc = f"Переключился на текстовый вид преподавателя {tch_label} ({day_name})" if tch_label else f"Переключился на текстовый вид ({day_name})"
         return ("view_teacher_text", desc, t_id, t_name)
@@ -438,31 +451,48 @@ def describe_callback_query(
     return ("button_click", raw, None, None)
 
 
+class _BoundedUserSet(TTLCache[int, bool]):
+    """Bounded TTL set compatible with set.add() and 'in' operator."""
+
+    def add(self, item: int) -> None:
+        self[item] = True
+
+
 class UserActionLoggingMiddleware(BaseMiddleware):
     """Asynchronously logs user interactions into the UserAction database."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._known_active_users: set[int] = set()
-        self._known_button_users: set[int] = set()
+        self._known_active_users: _BoundedUserSet = _BoundedUserSet(maxsize=10000, ttl=86400.0)
+        self._known_button_users: _BoundedUserSet = _BoundedUserSet(maxsize=10000, ttl=86400.0)
         self._queue: list[dict[str, Any]] = []
         self._batch_threshold = 25
         self._max_queue_size = 2000
         self._is_flushing = False
         self._flush_lock = asyncio.Lock()
+        self._log_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
+        self._bg_log_tasks: set[asyncio.Task[None]] = set()
 
     def clear_cache(self) -> None:
         """Clears in-memory active user sets and queue."""
         self._known_active_users.clear()
         self._known_button_users.clear()
         self._queue.clear()
+        for t_item in list(self._bg_log_tasks):
+            if not t_item.done():
+                t_item.cancel()
+        self._bg_log_tasks.clear()
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
         self._flush_task = None
 
     async def flush(self) -> None:
         """Flushes enqueued action records to MongoDB."""
+        pending = [t_item for t_item in list(self._bg_log_tasks) if not t_item.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
         async with self._flush_lock:
             if not self._queue:
                 return
@@ -564,6 +594,62 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         except Exception:
             return False
 
+    async def _process_log_action(
+        self,
+        user_id: int,
+        clean_username: str | None,
+        safe_action: str,
+        raw_text: str,
+        is_button_action: bool,
+        entity_id: int | None,
+        entity_name: str | None,
+        created_at: datetime,
+    ) -> None:
+        """Serializes first-time user DB checks and enqueues record without blocking handler."""
+        async with self._log_lock:
+            is_first_action = False
+            is_first_button = False
+
+            # First action check
+            if user_id not in self._known_active_users:
+                has_prior = await self._check_has_prior_action(user_id)
+                if not has_prior:
+                    is_first_action = True
+                self._known_active_users.add(user_id)
+
+            # First button click check
+            if is_button_action and user_id not in self._known_button_users:
+                has_prior_button = await self._check_has_prior_button(user_id)
+                if not has_prior_button:
+                    is_first_button = True
+                self._known_button_users.add(user_id)
+
+            is_first = False
+            safe_text = raw_text
+
+            if is_first_action:
+                is_first = True
+                if is_button_action:
+                    safe_text = f"🆕 [Первое действие пользователя (кнопка)] {raw_text}"
+                else:
+                    safe_text = f"🆕 [Первое сообщение пользователя] {raw_text}"
+            elif is_first_button:
+                is_first = True
+                safe_text = f"🆕 [Первое нажатие кнопки] {raw_text}"
+
+            record = {
+                "user_id": user_id,
+                "username": clean_username,
+                "action": safe_action,
+                "text": safe_text,
+                "is_first": is_first,
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "created_at": created_at,
+            }
+
+            await self._save_record(record)
+
     async def log_action(
         self,
         user_id: int,
@@ -573,13 +659,14 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         entity_id: int | None = None,
         entity_name: str | None = None,
     ) -> None:
-        """Logs an action with first-time interaction checking."""
+        """Logs an action asynchronously (fire-and-forget when DB check is needed)."""
         if not user_id:
             return
 
         clean_username = username.lstrip("@") if username else None
         safe_action = (action or "action").strip()
         raw_text = format_capped_text(text) or safe_action
+        now_dt = datetime.now(timezone.utc)
 
         NON_BUTTON_ACTIONS = (
             "command",
@@ -594,49 +681,40 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             and not safe_action.startswith("search_")
         )
 
-        is_first_action = False
-        is_first_button = False
+        # Fast path: user is already known in RAM and no background log tasks are pending -> 0ms
+        if (
+            not self._bg_log_tasks
+            and user_id in self._known_active_users
+            and (not is_button_action or user_id in self._known_button_users)
+        ):
+            record = {
+                "user_id": user_id,
+                "username": clean_username,
+                "action": safe_action,
+                "text": raw_text,
+                "is_first": False,
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "created_at": now_dt,
+            }
+            await self._save_record(record)
+            return
 
-        # First action check
-        if user_id not in self._known_active_users:
-            has_prior = await self._check_has_prior_action(user_id)
-            if not has_prior:
-                is_first_action = True
-            self._known_active_users.add(user_id)
-
-        # First button click check
-        if is_button_action and user_id not in self._known_button_users:
-            has_prior_button = await self._check_has_prior_button(user_id)
-            if not has_prior_button:
-                is_first_button = True
-            self._known_button_users.add(user_id)
-
-        is_first = False
-        safe_text = raw_text
-
-        if is_first_action:
-            is_first = True
-            if is_button_action:
-                safe_text = f"🆕 [Первое действие пользователя (кнопка)] {raw_text}"
-            else:
-                safe_text = f"🆕 [Первое сообщение пользователя] {raw_text}"
-        elif is_first_button:
-            is_first = True
-            safe_text = f"🆕 [Первое нажатие кнопки] {raw_text}"
-
-        record = {
-            "user_id": user_id,
-            "username": clean_username,
-            "action": safe_action,
-            "text": safe_text,
-            "is_first": is_first,
-            "entity_id": entity_id,
-            "entity_name": entity_name,
-            "created_at": datetime.now(timezone.utc),
-        }
-
-        # Save record through micro-batch queue
-        await self._save_record(record)
+        # Slow path (first action/button check in DB): run in background task so handler executes in 0ms
+        bg_task = asyncio.create_task(
+            self._process_log_action(
+                user_id=user_id,
+                clean_username=clean_username,
+                safe_action=safe_action,
+                raw_text=raw_text,
+                is_button_action=is_button_action,
+                entity_id=entity_id,
+                entity_name=entity_name,
+                created_at=now_dt,
+            )
+        )
+        self._bg_log_tasks.add(bg_task)
+        bg_task.add_done_callback(self._bg_log_tasks.discard)
 
     async def __call__(
         self,

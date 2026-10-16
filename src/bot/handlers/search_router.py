@@ -119,8 +119,8 @@ async def handle_text_search(message: Message) -> None:
     # 2. Exact Teacher Match -> direct display of teacher schedule
     if result.result_type == SearchResultType.EXACT_TEACHER and result.exact_teacher:
         tch = result.exact_teacher
-        t_id = tch.get("id") or tch.get("teacher_id")
         t_name = tch.get("fullName") or tch.get("name")
+        t_id = tch.get("id") or tch.get("teacher_id") or tch.get("name") or t_name
 
         if t_id and t_name:
             register_teacher_name(t_id, t_name)
@@ -164,8 +164,8 @@ async def handle_text_search(message: Message) -> None:
             if gid and gname:
                 register_group_name(gid, gname)
         for tch in (result.teachers or []):
-            tid = tch.get("id") or tch.get("teacher_id")
             tname = tch.get("fullName") or tch.get("name")
+            tid = tch.get("id") or tch.get("teacher_id") or tch.get("name") or tname
             if tid and tname:
                 register_teacher_name(tid, tname)
 
@@ -179,6 +179,9 @@ async def handle_text_search(message: Message) -> None:
         except Exception:
             pass
 
+        from src.bot.handlers.callbacks_router import get_current_day_number
+        curr_day = get_current_day_number()
+
         total_matches = len(result.groups) + len(result.teachers)
         heading = (
             f"✨ По вашему запросу: <b>{text}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
@@ -188,6 +191,7 @@ async def handle_text_search(message: Message) -> None:
             groups=result.groups,
             teachers=result.teachers,
             lang=lang,
+            current_day=curr_day,
         )
         await message.answer(heading, reply_markup=markup, parse_mode="HTML")
         return
@@ -204,8 +208,8 @@ async def handle_text_search(message: Message) -> None:
                     if gid and gname:
                         register_group_name(gid, gname)
                 else:
-                    tid = item.get("id") or item.get("teacher_id")
                     tname = item.get("fullName") or item.get("name")
+                    tid = item.get("id") or item.get("teacher_id") or item.get("name") or tname
                     if tid and tname:
                         register_teacher_name(tid, tname)
 
@@ -219,11 +223,18 @@ async def handle_text_search(message: Message) -> None:
         except Exception:
             pass
 
+        from src.bot.handlers.callbacks_router import get_current_day_number
+        curr_day = get_current_day_number()
+
         prompt = (
             f"🔍 По запросу <b>{text}</b> ничего точного не найдено.\n\n"
             "Возможно, вы имели в виду:"
         )
-        markup = get_fuzzy_suggestions_keyboard(result.fuzzy_suggestions, lang=lang)
+        markup = get_fuzzy_suggestions_keyboard(
+            result.fuzzy_suggestions,
+            lang=lang,
+            current_day=curr_day,
+        )
         await message.answer(prompt, reply_markup=markup, parse_mode="HTML")
         return
 
