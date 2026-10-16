@@ -1382,10 +1382,14 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
             entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
             cached = {
                 "data": adapted,
-                "timestamp": now if is_refresh else entry_ts,
+                "timestamp": now,
                 "is_from_db": bool(raw_sch.get("_fromDb", False)) if isinstance(raw_sch, dict) else False,
             }
             teacher_table_cache[t_id_str] = cached
+            if str(teacher_id) != t_id_str:
+                teacher_table_cache[str(teacher_id)] = cached
+            if teacher_name:
+                teacher_table_cache[teacher_name] = cached
             if not cached["is_from_db"] and adapted:
                 asyncio.create_task(_bg_persist_teacher_schedule(teacher_id, adapted))
         except Exception as e:
@@ -1406,6 +1410,10 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                             "is_from_db": True,
                         }
                         teacher_table_cache[t_id_str] = cached
+                        if str(teacher_id) != t_id_str:
+                            teacher_table_cache[str(teacher_id)] = cached
+                        if teacher_name:
+                            teacher_table_cache[teacher_name] = cached
                 except Exception:
                     pass
             if not cached:
@@ -1415,6 +1423,10 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                     "is_from_db": True,
                 }
                 teacher_table_cache[t_id_str] = cached
+                if str(teacher_id) != t_id_str:
+                    teacher_table_cache[str(teacher_id)] = cached
+                if teacher_name:
+                    teacher_table_cache[teacher_name] = cached
     else:
         await call.answer()
 

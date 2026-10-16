@@ -481,3 +481,75 @@ async def test_touch_teacher_cache_stability_no_thrashing():
         mock_agg.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_teacher_text_and_table_schedule_separate_timestamps():
+    """Verifies that teacher text schedule and week table image have completely separate timestamps."""
+    from aiogram.types import CallbackQuery, Chat, Message, User
+    from src.bot.handlers.callbacks_router import handle_teacher_table_image
+    from src.services.buketov_api import buketov_api_service
+
+    u = User(id=88200, is_bot=False, first_name="Тестер", username="tester")
+    c = Chat(id=88200, type="private")
+    msg = Message(message_id=99, date=datetime.now(timezone.utc), chat=c, from_user=u, text="msg")
+    object.__setattr__(msg, "answer", AsyncMock())
+    object.__setattr__(msg, "delete", AsyncMock())
+    object.__setattr__(msg, "edit_caption", AsyncMock())
+    bot_mock = AsyncMock()
+    object.__setattr__(msg, "_bot", bot_mock)
+
+    call = CallbackQuery(id="call_99", from_user=u, chat_instance="inst_99", message=msg, data="teacherImg|770|0")
+    object.__setattr__(call, "answer", AsyncMock())
+    object.__setattr__(call, "_bot", bot_mock)
+
+    t_text_time = 1700000000.0
+    t_table_time = 1700000050.0  # 50 seconds later
+
+    with patch.object(buketov_api_service, "get_teacher_schedule", new_callable=AsyncMock) as mock_api, \
+         patch("src.bot.handlers.callbacks_router.resolve_teacher_identity", new_callable=AsyncMock) as mock_resolve, \
+         patch("src.services.table_image.table_image_service.render_table_image", new_callable=AsyncMock) as mock_render:
+
+        mock_resolve.return_value = (770, "Попова Н. В.", 10, "Попова Н. В.")
+        mock_api.return_value = {
+            "records": [{"teacher": "Попова Н. В.", "day": "Понедельник", "time": "8.30-9.20", "subject": "Математика"}],
+            "_cacheTimestamp": t_text_time,
+            "_fromDb": False,
+        }
+        mock_render.return_value = b"fake_png_bytes"
+
+        # 1. Fetch text schedule at t_text_time
+        with patch("time.time", return_value=t_text_time):
+            text_cached = await get_or_fetch_teacher_text_schedule(
+                teacher_id=770,
+                ui_lang="ru",
+                is_refresh=False,
+                teacher_name="Попова Н. В.",
+            )
+
+        assert text_cached["timestamp"] == t_text_time
+        # Table cache must be empty initially!
+        assert len(teacher_table_cache) == 0
+
+        # 2. User clicks "Таблица недели" 50 seconds later at t_table_time
+        with patch("time.time", return_value=t_table_time):
+            await handle_teacher_table_image(call)
+
+        # Table cache must now be populated with t_table_time, NOT t_text_time!
+        assert "770" in teacher_table_cache
+        assert teacher_table_cache["770"]["timestamp"] == t_table_time
+        assert teacher_table_cache["770"]["timestamp"] != text_cached["timestamp"]
+
+        # Text cache timestamp must be preserved at t_text_time
+        assert text_cached["timestamp"] == t_text_time
+        assert teacher_text_cache["770_ru"]["timestamp"] == t_text_time
+
+        # bot.send_photo should have been called with caption containing clock of t_table_time
+        assert bot_mock.send_photo.call_count == 1
+        caption = bot_mock.send_photo.call_args.kwargs.get("caption", "")
+        from src.bot.handlers.callbacks_router import format_timestamp_clock
+        table_clock = format_timestamp_clock(t_table_time)
+        text_clock = format_timestamp_clock(t_text_time)
+        assert table_clock in caption
+        assert table_clock != text_clock
+
+
+
