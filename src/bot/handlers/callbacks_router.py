@@ -812,19 +812,23 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
 
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
-        await call.answer()
         text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
         if call.message:
-            try:
-                await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
-            except Exception as e:
-                if "message is not modified" not in str(e):
-                    logger.debug(f"editMessageText error: {e}")
+            async def _safe_edit() -> None:
+                try:
+                    await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+                except Exception as e:
+                    if "message is not modified" not in str(e):
+                        logger.debug(f"editMessageText error: {e}")
+            await asyncio.gather(call.answer(), _safe_edit())
+        else:
+            await call.answer()
         return
 
     # 2. Need fresh data (refresh after cooldown or cache older than 30m or missing)
-    cached = await get_or_fetch_student_schedule(group_id, sch_lang, is_refresh=is_refresh)
+    # Acknowledge callback immediately to unfreeze the Telegram button spinner in 0 ms
     await call.answer()
+    cached = await get_or_fetch_student_schedule(group_id, sch_lang, is_refresh=is_refresh)
 
     if not cached or not cached.get("data"):
         if call.message:
@@ -1261,19 +1265,22 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
 
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
-        await call.answer()
         if call.message and call.message.photo:
-            try:
-                elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
-                clock = format_timestamp_clock(cached["timestamp"])
-                caption = (
-                    f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
-                    f"🕒 <i><b>{elapsed} || {clock}</b></i>"
-                )
-                markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
-                await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
-            except Exception:
-                pass
+            elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
+            clock = format_timestamp_clock(cached["timestamp"])
+            caption = (
+                f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
+                f"🕒 <i><b>{elapsed} || {clock}</b></i>"
+            )
+            markup = get_teacher_table_keyboard(teacher_id, day_num, department_id=dept_id, lang=ui_lang)
+            async def _safe_edit_caption() -> None:
+                try:
+                    await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
+                except Exception:
+                    pass
+            await asyncio.gather(call.answer(), _safe_edit_caption())
+        else:
+            await call.answer()
         return
 
     # 2. Fetch fresh data if needed
@@ -1426,23 +1433,27 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
     cached = teacher_text_cache.get(cache_key) or teacher_text_cache.get(f"{teacher_id}_{ui_lang}")
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
-        await call.answer()
         text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
         if call.message:
-            try:
-                await call.message.edit_text(
-                    text,
-                    reply_markup=markup,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception as e:
-                if "message is not modified" not in str(e):
-                    logger.debug(f"editMessageText error: {e}")
+            async def _safe_edit_text() -> None:
+                try:
+                    await call.message.edit_text(
+                        text,
+                        reply_markup=markup,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception as e:
+                    if "message is not modified" not in str(e):
+                        logger.debug(f"editMessageText error: {e}")
+            await asyncio.gather(call.answer(), _safe_edit_text())
+        else:
+            await call.answer()
         return
 
-    cached = await get_or_fetch_teacher_text_schedule(teacher_id, ui_lang, is_refresh=is_refresh)
+    # Acknowledge callback immediately to unfreeze button spinner in 0 ms
     await call.answer()
+    cached = await get_or_fetch_teacher_text_schedule(teacher_id, ui_lang, is_refresh=is_refresh)
 
     text, markup = await build_teacher_day_text_view(cached, teacher_id, day_num, ui_lang)
     if call.message:
