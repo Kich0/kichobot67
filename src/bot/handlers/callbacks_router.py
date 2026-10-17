@@ -339,14 +339,23 @@ def get_current_day_number() -> int:
     return day
 
 
-def format_elapsed_time(timestamp: float, lang: str = "ru", is_from_db: bool = False) -> str:
-    """Formats elapsed time indicator with emoji badges (🟢 / 🟡 / 🔴 / 🔵)."""
+def format_elapsed_time(
+    timestamp: float,
+    lang: str = "ru",
+    is_from_db: bool = False,
+    is_from_cache: bool = False,
+) -> str:
+    """Formats elapsed time indicator with emoji badges (🟢 / 🟣 / 🟡 / 🔴 / 🔵)."""
     now = time.time()
     diff = max(0, int(now - timestamp))
     hours = diff // 3600
 
-    status_emoji = "🔵" if is_from_db else "🟢"
-    if not is_from_db:
+    if is_from_db:
+        status_emoji = "🔵"
+    elif is_from_cache:
+        status_emoji = "🟣"
+    else:
+        status_emoji = "🟢"
         if hours >= 24:
             status_emoji = "🔴"
         elif hours >= 5:
@@ -852,6 +861,11 @@ async def get_or_fetch_student_schedule(
     max_age_sec = 1800.0  # 30 minutes
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= max_age_sec)
 
+    if not needs_fetch and cached:
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        return cached
+
     if needs_fetch:
         lock = _get_fetch_lock(f"group_{group_id}")
         async with lock:
@@ -860,6 +874,8 @@ async def get_or_fetch_student_schedule(
             # If recently fetched by a concurrent request, reuse without duplicate fetch (Bug #8)
             min_cooldown = 5.0 if is_refresh else max_age_sec
             if cached and (now - cached["timestamp"] < min_cooldown):
+                if not cached.get("is_from_db"):
+                    cached["is_from_cache"] = True
                 return cached
 
             grp_name = group_name
@@ -928,11 +944,13 @@ async def get_or_fetch_student_schedule(
                                     "data": localized_ru,
                                     "timestamp": doc_ts,
                                     "is_from_db": True,
+                                    "is_from_cache": False,
                                 }
                                 cached_kz = {
                                     "data": localized_kz,
                                     "timestamp": doc_ts,
                                     "is_from_db": True,
+                                    "is_from_cache": False,
                                 }
                                 student_schedule_cache[f"{group_id}_ru"] = cached_ru
                                 student_schedule_cache[f"{group_id}_kz"] = cached_kz
@@ -950,11 +968,13 @@ async def get_or_fetch_student_schedule(
                         "data": adapted_ru,
                         "timestamp": ts,
                         "is_from_db": is_from_db or not has_lessons,
+                        "is_from_cache": False,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
                         "is_from_db": is_from_db or not has_lessons,
+                        "is_from_cache": False,
                     }
 
                     # Populate caches for both RU and KZ with identical timestamp to prevent cooldown bypass (Bug #8)
@@ -985,11 +1005,13 @@ async def get_or_fetch_student_schedule(
                             "data": localized_ru,
                             "timestamp": doc_ts,
                             "is_from_db": True,
+                            "is_from_cache": False,
                         }
                         cached_kz = {
                             "data": localized_kz,
                             "timestamp": doc_ts,
                             "is_from_db": True,
+                            "is_from_cache": False,
                         }
                         student_schedule_cache[f"{group_id}_ru"] = cached_ru
                         student_schedule_cache[f"{group_id}_kz"] = cached_kz
@@ -1009,6 +1031,7 @@ async def build_student_day_schedule_view(
     day_num: int,
     ui_lang: str,
     group_name: str | None = None,
+    is_from_cache: bool | None = None,
 ) -> tuple[str, Any]:
     """Builds formatted message text and pagination markup for student schedule."""
     days = cached.get("data", [])
@@ -1110,7 +1133,13 @@ async def build_student_day_schedule_view(
             items.append(f"⌚️ {s_time}\n{clean_s}")
         body = "\n\n".join(items) + "\n\n"
 
-    elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
+    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+    elapsed = format_elapsed_time(
+        cached["timestamp"],
+        ui_lang,
+        is_from_db=cached.get("is_from_db", False),
+        is_from_cache=from_cache,
+    )
     clock = format_timestamp_clock(cached["timestamp"])
     footer = (
         f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
@@ -1203,7 +1232,11 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
 
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
-        text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        text, markup = await build_student_day_schedule_view(
+            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=True
+        )
         if call.message:
             try:
                 await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
@@ -1373,6 +1406,8 @@ async def get_or_fetch_teacher_text_schedule(
 
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1800.0)
     if not needs_fetch and cached:
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
         # Propagate cache across all alias keys
         for k in alias_keys:
             if k not in teacher_text_cache:
@@ -1390,6 +1425,8 @@ async def get_or_fetch_teacher_text_schedule(
             # If recently fetched by concurrent request, reuse without duplicate fetch (Bug #8)
             min_cooldown = 5.0 if is_refresh else 1800.0
             if cached and (now - cached["timestamp"] < min_cooldown):
+                if not cached.get("is_from_db"):
+                    cached["is_from_cache"] = True
                 return cached
 
             if lookup_name:
@@ -1414,6 +1451,8 @@ async def get_or_fetch_teacher_text_schedule(
                         if cached and cached.get("data") and _has_any_lessons(cached["data"]):
                             logger.info(f"Preserving existing valid text schedule for teacher {lookup_name} (id={canonical_id})")
                             cached["timestamp"] = now if is_refresh else cached.get("timestamp", now)
+                            if not cached.get("is_from_db"):
+                                cached["is_from_cache"] = True
                             return cached
 
                         # 2. Check MongoDB TeacherSchedule fallback
@@ -1430,11 +1469,13 @@ async def get_or_fetch_teacher_text_schedule(
                                     "data": localized_ru,
                                     "timestamp": doc_ts,
                                     "is_from_db": True,
+                                    "is_from_cache": False,
                                 }
                                 cached_kz = {
                                     "data": localized_kz,
                                     "timestamp": doc_ts,
                                     "is_from_db": True,
+                                    "is_from_cache": False,
                                 }
                                 for base in (canonical_id, teacher_id, tch_name, lookup_name):
                                     if not base:
@@ -1455,11 +1496,13 @@ async def get_or_fetch_teacher_text_schedule(
                         "data": adapted_ru,
                         "timestamp": ts,
                         "is_from_db": is_from_db or not has_lessons,
+                        "is_from_cache": False,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
                         "is_from_db": is_from_db or not has_lessons,
+                        "is_from_cache": False,
                     }
 
                     # Populate caches for both RU and KZ across alias keys (Bug #8)
@@ -1494,11 +1537,13 @@ async def get_or_fetch_teacher_text_schedule(
                             "data": localized_ru,
                             "timestamp": doc_ts,
                             "is_from_db": True,
+                            "is_from_cache": False,
                         }
                         cached_kz = {
                             "data": localized_kz,
                             "timestamp": doc_ts,
                             "is_from_db": True,
+                            "is_from_cache": False,
                         }
                         for base in (canonical_id, teacher_id, tch_name, lookup_name):
                             if not base:
@@ -1531,6 +1576,7 @@ async def build_teacher_day_text_view(
     day_num: int,
     ui_lang: str,
     teacher_name: str | None = None,
+    is_from_cache: bool | None = None,
 ) -> tuple[str, Any]:
     """Builds formatted message text and pagination markup for teacher text schedule."""
     days = cached.get("data", [])
@@ -1606,7 +1652,13 @@ async def build_teacher_day_text_view(
             formatted_items.append(text.rstrip())
         body = "\n\n".join(formatted_items) + "\n\n"
 
-    elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
+    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+    elapsed = format_elapsed_time(
+        cached["timestamp"],
+        ui_lang,
+        is_from_db=cached.get("is_from_db", False),
+        is_from_cache=from_cache,
+    )
     clock = format_timestamp_clock(cached["timestamp"])
     footer = (
         f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
@@ -1695,7 +1747,14 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
         if call.message and call.message.photo:
-            elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
+            if not cached.get("is_from_db"):
+                cached["is_from_cache"] = True
+            elapsed = format_elapsed_time(
+                cached["timestamp"],
+                ui_lang,
+                is_from_db=cached.get("is_from_db", False),
+                is_from_cache=True,
+            )
             clock = format_timestamp_clock(cached["timestamp"])
             caption = (
                 f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
@@ -1773,6 +1832,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                             "data": adapted_ru,
                             "timestamp": now,
                             "is_from_db": is_from_db,
+                            "is_from_cache": False,
                         }
                         teacher_table_cache[t_id_str] = cached
                         if str(teacher_id) != t_id_str:
@@ -1795,6 +1855,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                                     "data": canonical_days,
                                     "timestamp": doc.updated_at.timestamp() if doc.updated_at else now,
                                     "is_from_db": True,
+                                    "is_from_cache": False,
                                 }
                                 teacher_table_cache[t_id_str] = cached
                                 if str(teacher_id) != t_id_str:
@@ -1809,6 +1870,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                             "data": schedule_api_adapter.adapt_teacher_schedule([], "ru"),
                             "timestamp": now - 1180.0,
                             "is_from_db": True,
+                            "is_from_cache": False,
                         }
                         teacher_table_cache[t_id_str] = cached
                         if str(teacher_id) != t_id_str:
@@ -1823,7 +1885,16 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     sch_hash = table_image_service.compute_schedule_hash(table_data)
     cached_file_id = table_image_service.get_cached_file_id(can_id_num, ui_lang, sch_hash)
 
-    elapsed = format_elapsed_time(cached["timestamp"], ui_lang, cached.get("is_from_db", False))
+    from_cache = cached.get("is_from_cache", False)
+    if not needs_fetch and not cached.get("is_from_db"):
+        from_cache = True
+        cached["is_from_cache"] = True
+    elapsed = format_elapsed_time(
+        cached["timestamp"],
+        ui_lang,
+        is_from_db=cached.get("is_from_db", False),
+        is_from_cache=from_cache,
+    )
     clock = format_timestamp_clock(cached["timestamp"])
     caption = (
         f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
@@ -1941,7 +2012,11 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
             break
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
-        text, markup = await build_teacher_day_text_view(cached, canonical_id, day_num, ui_lang, teacher_name=tch_name)
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        text, markup = await build_teacher_day_text_view(
+            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=True
+        )
         if call.message:
             try:
                 await call.message.edit_text(

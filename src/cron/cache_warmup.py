@@ -821,11 +821,13 @@ class SmartWarmupEngine:
                 "data": adapted_ru,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
+                "is_from_cache": True,
             }
             student_schedule_cache[f"{group_id}_kz"] = {
                 "data": adapted_kz,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
+                "is_from_cache": True,
             }
             if not is_from_db and adapted_ru and has_lessons:
                 self._create_background_task(_bg_persist_student_schedule(group_id, adapted_ru))
@@ -913,11 +915,13 @@ class SmartWarmupEngine:
                 "data": adapted_ru,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
+                "is_from_cache": True,
             }
             cache_entry_kz = {
                 "data": adapted_kz,
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
+                "is_from_cache": True,
             }
 
             # Multi-key alias caching: restrict to canonical keys to prevent TTLCache thrashing
