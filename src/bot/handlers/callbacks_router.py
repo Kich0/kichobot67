@@ -692,6 +692,12 @@ async def get_or_fetch_student_schedule(
     group_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Retrieves student schedule from RAM cache, Buketov API, or MongoDB fallback."""
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        smart_warmup_engine.touch_group(group_id, group_name)
+    except Exception:
+        pass
     norm_lang = _norm_cache_lang(sch_lang)
     cache_key = f"{group_id}_{norm_lang}"
     now = time.time()
@@ -940,6 +946,13 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
     ui_lang = await user_service.get_user_language(user_id)
     if user_id and group_id:
         asyncio.create_task(user_service.set_user_schedule_preference(user_id, "student", group=group_id))
+    if group_id:
+        try:
+            from src.cron.cache_warmup import smart_warmup_engine
+
+            smart_warmup_engine.touch_group(group_id)
+        except Exception:
+            pass
 
     norm_lang = _norm_cache_lang(sch_lang)
     cache_key = f"{group_id}_{norm_lang}"

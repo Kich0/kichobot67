@@ -313,6 +313,31 @@ async def test_smart_warmup_engine_rate_limit_headroom_skip():
 
 
 @pytest.mark.asyncio
+async def test_smart_warmup_engine_touch_group_and_carousel():
+    """Verifies that touch_group dynamically enrolls group into priority queue and carousel."""
+    engine = SmartWarmupEngine()
+    engine.set_top_groups([(1, "G-1"), (2, "G-2"), (3, "G-3")])
+    assert len(engine._groups_cache) == 3
+
+    # Touch a new group
+    engine.touch_group(105, "CS-25")
+    assert 105 in engine._priority_groups
+    assert engine._priority_groups[105][0] == "CS-25"
+    assert any(gid == 105 for gid, _ in engine._groups_cache)
+
+    # Calling _get_top_groups returns active priority groups
+    top_groups = await engine._get_top_groups()
+    assert top_groups[0][0] == 105
+    assert top_groups[0][1] == "CS-25"
+
+    # Touch teacher
+    engine.set_top_teachers([(10, "T-1"), (20, "T-2")])
+    engine.touch_teacher(99, "Сидоров С. С.")
+    assert 99 in engine._priority_teachers
+    assert any(tid == 99 for tid, _ in engine._teachers_cache)
+
+
+@pytest.mark.asyncio
 async def test_smart_warmup_engine_warm_group_and_teacher(mock_db):
     """Tests _warm_group and _warm_teacher fetch, adaptation, caching, and persistence."""
     engine = SmartWarmupEngine()
