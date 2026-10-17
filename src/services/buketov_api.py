@@ -29,8 +29,9 @@ from src.core.constants import (
     SCHEDULE_API_RATE_LIMIT,
     SCHEDULE_API_TIMEOUT,
 )
+from beanie.operators import Or, RegEx
 from src.core.logging import get_logger
-from src.services.teacher_directory import clean_titles, normalize_cyrillic
+from src.services.teacher_directory import clean_titles, is_kazakh_text, normalize_cyrillic
 
 logger = get_logger("buketov_api")
 
@@ -252,10 +253,11 @@ class BuketovApiService:
 
     def _extract_surname(self, name: str) -> str:
         """Extracts surname from teacher name, supporting 'Попова Н. В.', 'Н. В. Попова', and 'Н.В.Попова'."""
-        spaced = re.sub(r"\.([^\s])", r". \1", name).strip()
+        cleaned = clean_titles(name)
+        spaced = re.sub(r"\.([^\s])", r". \1", cleaned).strip()
         words = spaced.split()
         if not words:
-            return name
+            return cleaned or name
         if len(words) >= 2 and (len(words[0].rstrip(".")) == 1 or len(words[0]) == 1):
             return words[-1].rstrip(".")
         return words[0].rstrip(".")
@@ -491,7 +493,7 @@ class BuketovApiService:
                         try:
                             t_num = int(teacher_id)
                             teacher_doc = await Teacher.find_one(
-                                {"$or": [{"id": t_num}, {"teacherId": t_num}, {"teacher_id": t_num}]}
+                                Or({"id": t_num}, {"teacherId": t_num}, {"teacher_id": t_num})
                             )
                         except Exception:
                             teacher_doc = None
@@ -503,12 +505,10 @@ class BuketovApiService:
                         try:
                             escaped_surname = re.escape(surname)
                             teacher_docs = await Teacher.find(
-                                {
-                                    "$or": [
-                                        {"name": {"$regex": escaped_surname, "$options": "i"}},
-                                        {"fullName": {"$regex": escaped_surname, "$options": "i"}},
-                                    ]
-                                }
+                                Or(
+                                    RegEx("name", escaped_surname, "i"),
+                                    RegEx("fullName", escaped_surname, "i"),
+                                )
                             ).to_list()
                             if teacher_docs:
                                 teacher_doc = next(
@@ -542,7 +542,10 @@ class BuketovApiService:
 
                     if target_teacher_id is not None:
                         sched_doc = await TeacherSchedule.find_one(
-                            {"$or": [{"teacherId": target_teacher_id}, {"teacher_id": target_teacher_id}]}
+                            Or(
+                                {"teacherId": target_teacher_id},
+                                {"teacher_id": target_teacher_id},
+                            )
                         )
                         if sched_doc:
                             days_data = getattr(sched_doc, "data", None) or getattr(sched_doc, "schedule", None)
@@ -559,28 +562,29 @@ class BuketovApiService:
                 group_id = params.get("groupId")
 
                 if group_name or group_id:
-                    from beanie.operators import RegEx
                     from src.database.models.group import Group
                     from src.database.models.schedule import Schedule
 
                     group_doc = None
                     if group_id is not None:
                         try:
-                            group_doc = await Group.find_one(Group.group_id == int(group_id))
+                            g_num = int(group_id)
+                            group_doc = await Group.find_one(Or({"id": g_num}, {"groupId": g_num}))
                         except Exception:
                             group_doc = None
 
                     if not group_doc and group_name:
                         escaped = re.escape(str(group_name).strip())
                         try:
-                            group_doc = await Group.find_one(RegEx(Group.name, f"^{escaped}$", "i"))
+                            group_doc = await Group.find_one(RegEx("name", f"^{escaped}$", "i"))
                             if not group_doc:
-                                group_doc = await Group.find_one(RegEx(Group.name, escaped, "i"))
+                                group_doc = await Group.find_one(RegEx("name", escaped, "i"))
                         except Exception:
                             group_doc = None
 
                     if group_doc:
-                        sched_doc = await Schedule.find_one(Schedule.group_id == group_doc.group_id)
+                        gid = getattr(group_doc, "group_id", None) or getattr(group_doc, "id", None)
+                        sched_doc = await Schedule.find_one(Or({"groupId": gid}, {"group_id": gid}))
                         if sched_doc:
                             days_data = getattr(sched_doc, "data", None) or getattr(sched_doc, "schedule", None)
                             records = self._db_schedule_to_records(days_data, group_doc.name)
@@ -880,6 +884,28 @@ class BuketovApiService:
                 offset = next_offset
             else:
                 break
+
+        if not all_records:
+            alt_surname = None
+            if is_kazakh_text(surname):
+                alt_surname = normalize_cyrillic(surname)
+            if alt_surname and alt_surname.lower() != surname.lower():
+                alt_params = dict(fetch_params)
+                alt_params["q"] = alt_surname
+                alt_params["offset"] = 0
+                alt_res = await self.fetch_schedule(
+                    alt_params,
+                    cache_type="teacher",
+                    force_refresh=force_refresh,
+                )
+                if alt_res and isinstance(alt_res.get("records"), list):
+                    matched = [
+                        r for r in alt_res["records"]
+                        if self.match_teacher_record(r.get("teacher"), teacher_name)
+                    ]
+                    if matched:
+                        all_records.extend(matched)
+                        result = alt_res
 
         res_dict = dict(result) if isinstance(result, dict) else {}
         res_dict["records"] = all_records

@@ -16,12 +16,14 @@ from src.core.logging import get_logger
 
 logger = get_logger("teacher_directory")
 
-# Regex for academic titles and ranks (supports Russian and Kazakh degrees e.g. к.т.ғ.н., PhD докторы)
+# Regex for academic titles and ranks (supports Russian and Kazakh degrees e.g. к.т.ғ.н., PhD докторы, м.п.н., магистр, зав. каф.)
 TITLE_PATTERN = re.compile(
     r"^(?:ст\.?\s*преп(?:одаватель)?\.?|преп(?:одаватель)?\.?|ст\.?\s*пр\.?|пр\.?|доц(?:ент)?\.?|"
     r"проф(?:ессор)?\.?|асс(?:истент)?\.?|ассоц\.?\s*проф(?:ессор)?\.?|ассис\.?\s*проф(?:ессор)?\.?|"
-    r"аcсоц\.?\s*проф(?:ессор)?\.?|аcсис\.?\s*проф(?:ессор)?\.?|аға\s+оқытушы|оқытушы|м\.т\.ғ\.к\.?|"
-    r"п\.ғ\.к\.?|(?:к|д)\.[а-яё\-әіңғүұқөһ.]+\.?|phd(?:\s*докторы)?)\s+",
+    r"аcсоц\.?\s*проф(?:ессор)?\.?|аcсис\.?\s*проф(?:ессор)?\.?|аға\s+оқытушы|оқытушы|"
+    r"сениор-лектор|сениор\s+лектор|лектор|зав\.?\s*каф(?:едрой)?\.?|кафедра\s+меңгерушісі|"
+    r"магистр(?:\s*наук)?|магистрі|м\.т\.ғ\.к\.?|п\.ғ\.к\.?|"
+    r"(?:к|д|м)\.[а-яё\-әіңғүұқөһ.]+\.?|phd(?:\s*докторы)?)[,.\s]+",
     re.IGNORECASE,
 )
 
@@ -99,8 +101,10 @@ def clean_titles(text: str | None) -> str:
     prev = ""
     while s != prev:
         prev = s
-        s = TITLE_PATTERN.sub("", s).strip()
-    return s
+        s = TITLE_PATTERN.sub("", s)
+        s = re.sub(r"^[,\s.:;]+", "", s)
+        s = re.sub(r"[,;:\s]+$", "", s)
+    return s.strip()
 
 
 def format_title_case(text: str | None) -> str:
@@ -337,19 +341,20 @@ class TeacherDirectoryService:
                         return match_dept
                 return found1[0]
 
-        # 4. Surname only
-        found_surname = self.by_surname_map.get(surname)
-        if found_surname:
-            if len(found_surname) == 1:
+        # 4. Surname only (when no conflicting initials were provided)
+        if not inits:
+            found_surname = self.by_surname_map.get(surname)
+            if found_surname:
+                if len(found_surname) == 1:
+                    return found_surname[0]
+                if dept_id is not None:
+                    match_dept = next(
+                        (t for t in found_surname if str(t.get("departmentId")) == str(dept_id)),
+                        None,
+                    )
+                    if match_dept:
+                        return match_dept
                 return found_surname[0]
-            if dept_id is not None:
-                match_dept = next(
-                    (t for t in found_surname if str(t.get("departmentId")) == str(dept_id)),
-                    None,
-                )
-                if match_dept:
-                    return match_dept
-            return found_surname[0]
 
         return None
 
@@ -435,7 +440,18 @@ class TeacherDirectoryService:
             return match["initials"]
         if len(words) >= 2:
             surname = format_title_case(words[0])
-            inits = [f"{w[0].upper()}." for w in words[1:] if w]
+            inits: list[str] = []
+            for w in words[1:]:
+                if not w:
+                    continue
+                if "." in w:
+                    letters = re.findall(r"[a-zA-Zа-яА-ЯёЁәіңғүұқөһӘІҢҒҮҰҚӨҺ]", w)
+                    if letters:
+                        inits.extend(f"{l.upper()}." for l in letters)
+                    else:
+                        inits.append(f"{w[0].upper()}.")
+                else:
+                    inits.append(f"{w[0].upper()}.")
             return f"{surname} {' '.join(inits)}".strip()
         return clean
 

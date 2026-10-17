@@ -97,18 +97,36 @@ class SmartWarmupEngine:
             return
 
         g_name = (group_name or "").strip()
-        if not g_name:
+        if not g_name or (g_name.startswith("Группа ") and g_name.replace("Группа ", "").strip().isdigit()):
             try:
                 from src.database.connection import get_client
                 from src.bot.handlers.callbacks_router import _group_meta_cache
 
                 meta = _group_meta_cache.get((id(get_client()), gid))
-                if meta and meta.get("name"):
+                if meta and meta.get("name") and not (meta["name"].startswith("Группа ") and meta["name"].replace("Группа ", "").strip().isdigit()):
                     g_name = meta["name"]
             except Exception:
                 pass
-        if not g_name:
-            g_name = f"Группа {gid}"
+
+        if not g_name or (g_name.startswith("Группа ") and g_name.replace("Группа ", "").strip().isdigit()):
+            existing_p = self._priority_groups.get(gid)
+            if existing_p and existing_p[0] and not (existing_p[0].startswith("Группа ") and existing_p[0].replace("Группа ", "").strip().isdigit()):
+                g_name = existing_p[0]
+            else:
+                existing_c = next(
+                    (
+                        name for (i, name) in self._groups_cache
+                        if i == gid and name and not (name.startswith("Группа ") and name.replace("Группа ", "").strip().isdigit())
+                    ),
+                    None,
+                )
+                if existing_c:
+                    g_name = existing_c
+
+        # If still no valid name resolved, do not poison priority warmup with a stub
+        if not g_name or (g_name.startswith("Группа ") and g_name.replace("Группа ", "").strip().isdigit()):
+            logger.debug(f"[SmartWarmupEngine] Skipping touch_group for gid={gid}: real name not resolved.")
+            return
 
         now = time.time()
         expires_at = now + 7200.0  # 2 hours
@@ -180,17 +198,48 @@ class SmartWarmupEngine:
                 return
 
         t_name = (teacher_name or "").strip()
-        if not t_name:
+        if not t_name or str(t_name).isdigit() or str(t_name).startswith("ID "):
+            try:
+                from src.database.connection import get_client
+                from src.bot.handlers.callbacks_router import _teacher_meta_cache
+
+                meta = _teacher_meta_cache.get((id(get_client()), norm_id))
+                if meta and (meta.get("lookup_name") or meta.get("name")):
+                    cand_name = meta.get("lookup_name") or meta.get("name")
+                    if cand_name and not str(cand_name).isdigit() and not str(cand_name).startswith("ID "):
+                        t_name = cand_name
+            except Exception:
+                pass
+
+        if not t_name or str(t_name).isdigit() or str(t_name).startswith("ID "):
             try:
                 from src.services.teacher_directory import teacher_directory_service
 
                 profile = teacher_directory_service.find_by_id(norm_id) if isinstance(norm_id, int) else None
                 if profile:
-                    t_name = profile.get("name") or profile.get("fullName") or str(norm_id)
-                else:
-                    t_name = str(norm_id)
+                    t_name = profile.get("name") or profile.get("fullName") or ""
             except Exception:
-                t_name = str(norm_id)
+                pass
+
+        if not t_name or str(t_name).isdigit() or str(t_name).startswith("ID "):
+            existing_p = self._priority_teachers.get(norm_id)
+            if existing_p and existing_p[0] and not str(existing_p[0]).isdigit() and not str(existing_p[0]).startswith("ID "):
+                t_name = existing_p[0]
+            else:
+                existing_c = next(
+                    (
+                        name for (tid, name) in self._teachers_cache
+                        if tid == norm_id and name and not str(name).isdigit() and not str(name).startswith("ID ")
+                    ),
+                    None,
+                )
+                if existing_c:
+                    t_name = existing_c
+
+        # If still no valid name, do not poison priority queue with a bare ID stub
+        if not t_name or str(t_name).isdigit() or str(t_name).startswith("ID "):
+            logger.debug(f"[SmartWarmupEngine] Skipping touch_teacher for id={norm_id}: real name not resolved.")
+            return
 
         now = time.time()
         expires_at = now + 7200.0  # 2 hours
@@ -692,9 +741,37 @@ class SmartWarmupEngine:
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_student_schedule,
+                _has_any_lessons,
                 student_schedule_cache,
             )
             from src.services.schedule_adapter import schedule_api_adapter
+
+            # Resolve real group name if given stub or empty
+            if not group_name or (group_name.startswith("Группа ") and group_name.replace("Группа ", "").strip().isdigit()):
+                from src.bot.handlers.callbacks_router import _group_meta_cache
+                from src.database.connection import get_client
+                meta = _group_meta_cache.get((id(get_client()), group_id))
+                if meta and meta.get("name"):
+                    group_name = meta["name"]
+                else:
+                    try:
+                        from src.database.models.group import Group
+
+                        num_gid = int(group_id) if str(group_id).isdigit() else group_id
+                        g_doc = await Group.find_one({"id": num_gid}) or await Group.find_one({"groupId": num_gid})
+                        if g_doc and getattr(g_doc, "name", None):
+                            group_name = g_doc.name
+                            _group_meta_cache[(id(get_client()), group_id)] = {
+                                "name": group_name,
+                                "back_callback": "faculty|0",
+                                "age": getattr(g_doc, "age", None),
+                            }
+                    except Exception:
+                        pass
+
+            if not group_name or (group_name.startswith("Группа ") and group_name.replace("Группа ", "").strip().isdigit()):
+                logger.debug(f"[SmartWarmupEngine] Skipping warmup for group id={group_id}: name not resolved.")
+                return
 
             # Skip redundant network fetch if already recently cached (< 3 min) and not from DB fallback
             existing_entry = student_schedule_cache.get(f"{group_id}_ru")
@@ -725,17 +802,19 @@ class SmartWarmupEngine:
             )
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
 
-            # If fallback from DB is completely empty, preserve existing valid cache
-            if is_from_db and not records:
+            adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
+            adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
+            has_lessons = bool(records) and _has_any_lessons(adapted_ru)
+
+            # If fallback from DB is completely empty or API returned 0 lessons, preserve existing valid cache
+            if not has_lessons:
                 existing = student_schedule_cache.get(f"{group_id}_ru")
-                if existing and existing.get("data"):
+                if existing and existing.get("data") and _has_any_lessons(existing["data"]):
                     logger.debug(
-                        f"[SmartWarmupEngine] Keeping existing cache for group {group_name}; DB returned empty."
+                        f"[SmartWarmupEngine] Keeping existing valid cache for group {group_name}; fetch returned 0 lessons."
                     )
                     return
 
-            adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
-            adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
             student_schedule_cache[f"{group_id}_ru"] = {
@@ -748,7 +827,7 @@ class SmartWarmupEngine:
                 "timestamp": entry_ts,
                 "is_from_db": is_from_db,
             }
-            if not is_from_db and adapted_ru:
+            if not is_from_db and adapted_ru and has_lessons:
                 self._create_background_task(_bg_persist_student_schedule(group_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for group {group_name} (id={group_id})")
         except Exception as e:
@@ -759,6 +838,7 @@ class SmartWarmupEngine:
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_teacher_schedule,
+                _has_any_lessons,
                 resolve_teacher_identity,
                 teacher_text_cache,
             )
@@ -811,20 +891,22 @@ class SmartWarmupEngine:
             )
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
 
-            # If fallback from DB is completely empty, preserve existing valid cache
-            if is_from_db and not records:
+            adapted_ru = schedule_api_adapter.adapt_teacher_schedule(records, "ru")
+            adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
+            has_lessons = bool(records) and _has_any_lessons(adapted_ru)
+
+            # If fallback from DB is completely empty or fetch returned 0 lessons, preserve existing valid cache
+            if not has_lessons:
                 existing = (
                     (teacher_text_cache.get(f"{canonical_id}_ru") if canonical_id is not None else None)
                     or (teacher_text_cache.get(f"{teacher_id}_ru") if teacher_id is not None else None)
                 )
-                if existing and existing.get("data"):
+                if existing and existing.get("data") and _has_any_lessons(existing["data"]):
                     logger.debug(
-                        f"[SmartWarmupEngine] Keeping existing cache for teacher {api_lookup}; DB returned empty."
+                        f"[SmartWarmupEngine] Keeping existing valid cache for teacher {api_lookup}; fetch returned 0 lessons."
                     )
                     return
 
-            adapted_ru = schedule_api_adapter.adapt_teacher_schedule(records, "ru")
-            adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
             cache_entry_ru = {
@@ -892,7 +974,7 @@ class SmartWarmupEngine:
                     teacher_text_cache[f"{a_id}_ru"] = cache_entry_ru
                     teacher_text_cache[f"{a_id}_kz"] = cache_entry_kz
 
-            if not is_from_db and adapted_ru:
+            if not is_from_db and adapted_ru and has_lessons:
                 self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for teacher {api_lookup} (id={canonical_id})")
         except Exception as e:

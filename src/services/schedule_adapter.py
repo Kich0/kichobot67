@@ -22,7 +22,19 @@ class ScheduleApiAdapter:
 
     def get_day_index(self, record: dict[str, Any]) -> int:
         """Determines 1-based day index (1=Mon ... 7=Sun) from record."""
-        day_idx = record.get("dayIndex") if record.get("dayIndex") is not None else record.get("day_index")
+        day_idx = (
+            record.get("dayIndex")
+            if record.get("dayIndex") is not None
+            else (
+                record.get("day_index")
+                if record.get("day_index") is not None
+                else (
+                    record.get("dayOfWeek")
+                    if record.get("dayOfWeek") is not None
+                    else record.get("day_of_week")
+                )
+            )
+        )
         if day_idx is not None:
             try:
                 idx = int(day_idx)

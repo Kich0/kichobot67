@@ -398,21 +398,33 @@ def get_schedule_pagination_keyboard(
 
 
 def _safe_teacher_cb_id(raw_id: Any, fallback_name: str = "") -> int | str:
-    """Normalizes teacher callback ID and ensures UTF-8 byte length fits within Telegram's 64-byte limit."""
+    """Normalizes teacher callback ID and ensures UTF-8 byte length fits within Telegram's 64-byte limit without losing initials."""
     if isinstance(raw_id, int) and raw_id > 0:
         return raw_id
     s = str(raw_id if raw_id else fallback_name).strip()
     if s.isdigit() and int(s) > 0:
         return int(s)
+
+    from src.services.teacher_directory import clean_titles, format_initials
+
+    s = clean_titles(s)
+    formatted = format_initials(s)
+    if formatted:
+        s = formatted.replace(". ", ".")
+
     max_bytes = 38  # 64 - len("refreshTeacherSchedule||0") == 39 bytes
     if len(s.encode("utf-8")) > max_bytes:
-        words = s.split()
-        if len(words) >= 2 and all(len(w) > 2 for w in words[:2]):
-            inits = "".join(f"{w[0].upper()}." for w in words[1:3] if w)
-            s = f"{words[0]} {inits}".strip()
-        s = s.replace(". ", ".")
-        while len(s.encode("utf-8")) > max_bytes and len(s) > 1:
-            s = s[:-1].rstrip()
+        # Check if initials exist at the end (e.g., " И.О." or " И.")
+        m = re.search(r"\s+([A-Za-zА-Яа-яЁёӘәІіҢңҒғҮүҰұҚқӨөҺһ]\.[A-Za-zА-Яа-яЁёӘәІіҢңҒғҮүҰұҚқӨөҺһ]?\.?)$", s)
+        if m:
+            inits_part = m.group(0)
+            surname_part = s[:m.start()]
+            while len((surname_part + inits_part).encode("utf-8")) > max_bytes and len(surname_part) > 1:
+                surname_part = surname_part[:-1].rstrip()
+            s = f"{surname_part}{inits_part}"
+        else:
+            while len(s.encode("utf-8")) > max_bytes and len(s) > 1:
+                s = s[:-1].rstrip()
     return s
 
 
