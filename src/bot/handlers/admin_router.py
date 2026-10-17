@@ -93,8 +93,19 @@ async def handle_sync_new_data(message: Message) -> None:
             logger.info("Starting background university catalog sync...")
             from src.cron.daily_update import run_daily_data_update
 
-            await run_daily_data_update()
-            await message.answer("✅ <b>Синхронизация каталогов успешно завершена!</b>", parse_mode="HTML")
+            res = await run_daily_data_update(force_scan=True)
+            if isinstance(res, dict):
+                result = res
+            else:
+                result = {"elapsed_seconds": 0, "new_groups": 0, "new_teachers": 0}
+
+            await message.answer(
+                f"✅ <b>Синхронизация каталога завершена!</b>\n\n"
+                f"⏱ Время: <code>{result.get('elapsed_seconds', 0)} сек</code>\n"
+                f"👥 Новых групп: <b>{result.get('new_groups', 0)}</b>\n"
+                f"👨‍🏫 Новых преподавателей: <b>{result.get('new_teachers', 0)}</b>",
+                parse_mode="HTML",
+            )
         except Exception as e:
             logger.error(f"Catalog sync error: {e}")
             await message.answer(f"❌ <b>Ошибка синхронизации:</b> {e}", parse_mode="HTML")
