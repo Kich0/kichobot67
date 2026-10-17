@@ -53,6 +53,7 @@ class UserAction(BaseMongoDoc):
         indexes = [
             IndexModel([("userId", ASCENDING), ("createdAt", DESCENDING)]),
             IndexModel([("createdAt", ASCENDING)], expireAfterSeconds=45 * 24 * 60 * 60),
+            IndexModel([("createdAt", DESCENDING), ("action", ASCENDING)]),
             IndexModel([("username", ASCENDING)]),
             IndexModel([("isFirst", ASCENDING)]),
         ]

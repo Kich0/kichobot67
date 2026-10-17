@@ -403,3 +403,217 @@ async def test_fetch_schedule_from_db_teacher_id(mock_db):
     assert result["records"][0]["teacher"] == "Смагулов А. Б."
     assert result["records"][0]["subject"] == "Сети"
 
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_falls_back_to_mongodb_when_available(mock_db):
+    """Verifies that when Circuit Breaker is OPEN, MongoDB fallback is returned if data exists."""
+    service = BuketovApiService()
+    service.circuit_state = "API_DOWN"
+    service.circuit_tripped_at = time.time()
+    service.student_cache.clear()
+
+    group = Group(group_id=901, name="ИС-22-1")
+    await group.insert()
+
+    sched = Schedule(
+        group_id=901,
+        data=[
+            ScheduleDay(
+                day="Понедельник",
+                subjects=[
+                    SubjectItem(time="08:30-09:20", subject="Компьютерные сети /Лекция/\nИванов С. П.\nАуд. 201/1")
+                ],
+            )
+        ],
+    )
+    await sched.insert()
+
+    result = await service.fetch_schedule({"group": "ИС-22-1"}, cache_type="student")
+    assert result.get("_fromDb") is True
+    assert result.get("total") == 1
+    assert "Компьютерные сети" in result["records"][0]["subject"]
+
+
+@pytest.mark.asyncio
+async def test_network_error_falls_back_to_mongodb_when_available(mock_db):
+    """Verifies that when network error occurs without cache, MongoDB fallback is returned."""
+    service = BuketovApiService()
+    service.student_cache.clear()
+
+    group = Group(group_id=902, name="ВТ-23-1")
+    await group.insert()
+
+    sched = Schedule(
+        group_id=902,
+        data=[
+            ScheduleDay(
+                day="Среда",
+                subjects=[
+                    SubjectItem(time="10:00-11:20", subject="Философия /Лекция/\nПетров А. А.\nАуд. 105/2")
+                ],
+            )
+        ],
+    )
+    await sched.insert()
+
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(error_handler))
+    service._client = mock_client
+
+    try:
+        result = await service.fetch_schedule({"group": "ВТ-23-1"}, cache_type="student")
+        assert result.get("_fromDb") is True
+        assert result.get("total") == 1
+        assert "Философия" in result["records"][0]["subject"]
+    finally:
+        await mock_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_teacher_namesakes_db_fallback(mock_db):
+    """Verifies that teachers sharing the same surname match their specific schedule in DB fallback."""
+    service = BuketovApiService()
+
+    # Teacher 1: Иванов А. Б.
+    teacher1 = Teacher(teacher_id=701, name="Иванов А. Б.", full_name="Иванов Алексей Борисович")
+    await teacher1.insert()
+    sched1 = TeacherSchedule(
+        teacher_id=701,
+        data=[
+            TeacherScheduleDay(
+                day="Вторник",
+                groups=[
+                    TeacherLessonItem(time="08:30-09:20", group="ИТ-20", subject="История", lesson_type="Лекция")
+                ],
+            )
+        ],
+    )
+    await sched1.insert()
+
+    # Teacher 2: Иванов С. П. (Namesake)
+    teacher2 = Teacher(teacher_id=702, name="Иванов С. П.", full_name="Иванов Серик Полатович")
+    await teacher2.insert()
+    sched2 = TeacherSchedule(
+        teacher_id=702,
+        data=[
+            TeacherScheduleDay(
+                day="Четверг",
+                groups=[
+                    TeacherLessonItem(time="10:00-11:20", group="ИС-21", subject="Физика", lesson_type="Прак.зан.")
+                ],
+            )
+        ],
+    )
+    await sched2.insert()
+
+    # Buketov API throws error so it falls back to DB
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="Bad Gateway")
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(error_handler))
+    service._client = mock_client
+
+    try:
+        res2 = await service.get_teacher_schedule("Иванов С. П.")
+        assert res2.get("_fromDb") is True
+        assert len(res2["records"]) == 1
+        assert res2["records"][0]["subject"] == "Физика"
+        assert res2["records"][0]["teacher"] == "Иванов С. П."
+
+        res1 = await service.get_teacher_schedule("Иванов А. Б.")
+        assert res1.get("_fromDb") is True
+        assert len(res1["records"]) == 1
+        assert res1["records"][0]["subject"] == "История"
+        assert res1["records"][0]["teacher"] == "Иванов А. Б."
+    finally:
+        await mock_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pagination_stops_when_rate_limit_headroom_exhausted():
+    """Verifies that pagination stops if rate limit headroom (2 req) is exhausted."""
+    service = BuketovApiService()
+    now = time.time()
+    # Fill timestamps so only 1 request is available before reaching 110 (109 filled)
+    # Headroom = 2 requires < 108 requests, so can_make_api_call(headroom=2) is False
+    service.outbound_request_timestamps = [now] * 109
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "records": [{"subject": f"Page {calls}"}],
+                "pagination": {"hasMore": True, "nextOffset": calls * 200},
+            },
+        )
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service._client = mock_client
+
+    try:
+        # Page 1 passes via check_rate_limit (109 < 110), but page 2 is blocked by can_make_api_call(headroom=2)
+        res = await service.get_group_schedule("TEST-HEADROOM")
+        assert calls == 1
+        assert len(res["records"]) == 1
+        assert res["records"][0]["subject"] == "Page 1"
+    finally:
+        await mock_client.aclose()
+
+
+def test_match_teacher_record_different_second_initial():
+    """Verifies that teachers with same surname and same first initial but different second initial do NOT match."""
+    service = BuketovApiService()
+    assert service.match_teacher_record("Попова Н. С.", "Попова Н. В.") is False
+    assert service.match_teacher_record("Попова Н. В.", "Попова Н. С.") is False
+    assert service.match_teacher_record("Н. С. Попова", "Попова Н. В.") is False
+    assert service.match_teacher_record("Попова Н. В.", "Попова Надежда Викторовна") is True
+    assert service.match_teacher_record("Н. В. Попова", "Попова Н. В.") is True
+
+
+@pytest.mark.asyncio
+async def test_teacher_fallback_resolves_via_directory_when_db_has_conflicting_namesake(mock_db):
+    """Verifies that DB fallback does not take a single namesake with conflicting initials, and falls back to directory."""
+    service = BuketovApiService()
+
+    # In DB: only Иванов А. Б. (id=701) exists
+    teacher1 = Teacher(teacher_id=701, name="Иванов А. Б.", full_name="Иванов Алексей Борисович")
+    await teacher1.insert()
+    sched1 = TeacherSchedule(
+        teacher_id=701,
+        data=[
+            TeacherScheduleDay(
+                day="Вторник",
+                groups=[TeacherLessonItem(time="08:30-09:20", group="ИТ-20", subject="История", lesson_type="Лекция")],
+            )
+        ],
+    )
+    await sched1.insert()
+
+    # Schedule for Иванов С. П. (id=702) exists in TeacherSchedule
+    sched2 = TeacherSchedule(
+        teacher_id=702,
+        data=[
+            TeacherScheduleDay(
+                day="Четверг",
+                groups=[TeacherLessonItem(time="10:00-11:20", group="ИС-21", subject="Физика", lesson_type="Прак.зан.")],
+            )
+        ],
+    )
+    await sched2.insert()
+
+    # Mock teacher_directory_service.find_match to resolve "Иванов С. П." to id 702
+    from unittest.mock import patch
+    with patch("src.services.teacher_directory.teacher_directory_service.find_match", return_value={"id": 702, "name": "Иванов С. П."}):
+        result = await service.fetch_schedule_from_db({"_teacher_full": "Иванов С. П."}, cache_type="teacher")
+        assert result.get("_fromDb") is True
+        assert len(result["records"]) == 1
+        assert result["records"][0]["subject"] == "Физика"
+        assert result["records"][0]["teacher"] == "Иванов С. П."
+
+

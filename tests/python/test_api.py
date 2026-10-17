@@ -325,7 +325,7 @@ async def test_get_user_schedule_teacher(mock_db):
         }],
         "total": 1,
     })
-    with patch("src.api.app.buketov_api_service.fetch_teacher_schedule", mock_api):
+    with patch("src.api.app.buketov_api_service.get_teacher_schedule", mock_api):
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             res = await client.get("/bot/get_user_schedule?userId=8888")
             assert res.status_code == 200
@@ -341,7 +341,7 @@ async def test_get_user_schedule_teacher(mock_db):
     )
     await t_sched.insert()
 
-    with patch("src.api.app.buketov_api_service.fetch_teacher_schedule", AsyncMock(side_effect=Exception("API Down"))):
+    with patch("src.api.app.buketov_api_service.get_teacher_schedule", AsyncMock(side_effect=Exception("API Down"))):
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             res = await client.get("/bot/get_user_schedule?userId=8888")
             assert res.status_code == 200
@@ -360,4 +360,88 @@ async def test_cron_sync_rejects_when_key_unconfigured():
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             res = await client.post("/api/cron/sync")
             assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_health_monitor_backward_compat_keys(mock_db):
+    """GET /health and GET /bot/health include uptime_seconds, memory_mb, and buketov_api."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/health")
+        assert res.status_code == 200
+        data = res.json()
+        assert "uptime_seconds" in data
+        assert "memory_mb" in data
+        assert "buketov_api" in data
+        assert data["uptime_seconds"] == data["uptime"]
+        assert data["memory_mb"] == data["memory"]["rss_mb"]
+
+
+@pytest.mark.asyncio
+async def test_cron_sync_concurrency_guard():
+    """POST /api/cron/sync prevents concurrent background syncs while one is running."""
+    secret = "cron_test_secret"
+    block_event = asyncio.Event()
+
+    async def _mock_slow_sync():
+        await block_event.wait()
+
+    with patch.object(settings, "WEBHOOK_SECRET_TOKEN", secret), \
+         patch("src.api.app.run_daily_data_update", _mock_slow_sync), \
+         patch("src.api.app.warmup_top_schedules", AsyncMock()):
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # 1. First request starts background sync
+            res1 = await client.post(f"/api/cron/sync?key={secret}")
+            assert res1.status_code == 200
+            assert res1.json() == {"ok": True, "message": "Daily sync triggered"}
+
+            # 2. Second request while first is still running -> rejected with concurrent message
+            res2 = await client.post(f"/api/cron/sync?key={secret}")
+            assert res2.status_code == 200
+            assert res2.json() == {"ok": True, "message": "Daily sync already in progress"}
+
+            # Release block
+            block_event.set()
+            await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_get_user_schedule_teacher_calls_get_teacher_schedule(mock_db):
+    """GET /bot/get_user_schedule calls get_teacher_schedule with teacher_name and teacher_id."""
+    from src.database.models.teacher import Teacher
+    from src.database.models.user import User
+
+    teacher = Teacher(id=9901, name="Сериков А. Б.", department=5)
+    await teacher.insert()
+
+    user = User(userId=99001, teacher=9901, scheduleType="teacher")
+    await user.insert()
+
+    mock_get = AsyncMock(return_value={
+        "records": [{
+            "day": "Вторник",
+            "dayIndex": 2,
+            "slot": 1,
+            "time": "10:00-10:50",
+            "teacher": "Сериков А. Б.",
+            "group": "ИС-22",
+            "subject": "Базы данных",
+            "type": "Лекция",
+            "room": "205",
+            "building": "3",
+        }],
+        "total": 1,
+    })
+
+    with patch("src.api.app.buketov_api_service.get_teacher_schedule", mock_get):
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get("/bot/get_user_schedule?userId=99001")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["teacherSchedule"] is not None
+            assert data["teacherSchedule"]["teacher"]["name"] == "Сериков А. Б."
+            assert mock_get.await_count == 1
+            call_kwargs = mock_get.call_args.kwargs
+            assert call_kwargs["teacher_name"] == "Сериков А. Б."
+            assert call_kwargs["teacher_id"] == 9901
+
 

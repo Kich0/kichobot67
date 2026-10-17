@@ -11,8 +11,10 @@ services:
         value: Asia/Almaty
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
       - key: MALLOC_TRIM_THRESHOLD_
-        value: "65536"
+        value: "262144"
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: PORT

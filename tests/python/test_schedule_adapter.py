@@ -238,3 +238,103 @@ def test_adapt_teacher_schedule_streaming_retains_room():
     assert "РЭТ-21-1, РЭТ-21-2" in group_entry["group"]
     assert "205/2" in group_entry["group"]
 
+
+def test_localize_schedule_days():
+    """Verifies localize_schedule_days translates day names between RU and KZ."""
+    days_ru = [
+        {"day": "Понедельник", "subjects": []},
+        {"day": "Среда", "subjects": []},
+    ]
+    localized_kz = schedule_api_adapter.localize_schedule_days(days_ru, "kz")
+    assert localized_kz[0]["day"] == "Дүйсенбі"
+    assert localized_kz[1]["day"] == "Сәрсенбі"
+
+    localized_ru = schedule_api_adapter.localize_schedule_days(localized_kz, "ru")
+    assert localized_ru[0]["day"] == "Понедельник"
+    assert localized_ru[1]["day"] == "Среда"
+
+
+def test_format_lesson_type_kazakh_terms():
+    """Verifies that Kazakh lesson type terms are properly normalized."""
+    assert schedule_api_adapter.format_lesson_type("дәріс") == "/Лекция/"
+    assert schedule_api_adapter.format_lesson_type("тәжірибелік сабақ") == "/Прак.зан./"
+    assert schedule_api_adapter.format_lesson_type("зертханалық сабақ") == "/Лаб.раб./"
+    assert schedule_api_adapter.format_lesson_type("СОӨЖ") == "/СРОП/"
+    assert schedule_api_adapter.format_lesson_type("/Лекция/") == "/Лекция/"
+
+    assert schedule_api_adapter.format_lesson_type_badge("дәріс") == "Лекция"
+    assert schedule_api_adapter.format_lesson_type_badge("тәжірибе") == "Прак.зан."
+    assert schedule_api_adapter.format_lesson_type_badge("зертхана") == "Лаб.раб."
+    assert schedule_api_adapter.format_lesson_type_badge("соөж") == "СРОП"
+
+
+def test_adapt_group_schedule_exact_duplicate_deduplication():
+    """Verifies that identical duplicate lesson blocks in the same slot are deduplicated."""
+    raw_records = [
+        {
+            "dayIndex": 1,
+            "time": "08:30-09:20",
+            "slot": 1,
+            "subject": "Физика",
+            "type": "лекция",
+            "teacher": "Попова Н. В.",
+            "room": "315",
+            "building": "1",
+        },
+        {
+            "dayIndex": 1,
+            "time": "08:30-09:20",
+            "slot": 1,
+            "subject": "Физика",
+            "type": "лекция",
+            "teacher": "Попова Н. В.",
+            "room": "315",
+            "building": "1",
+        },
+    ]
+    schedule = schedule_api_adapter.adapt_group_schedule(raw_records, "рус")
+    mon = schedule[0]
+    assert len(mon["subjects"]) == 1
+    assert "📚" not in mon["subjects"][0]["subject"]
+
+
+def test_adapt_teacher_schedule_no_double_building_slash():
+    """Verifies that room already containing building slash is not duplicated into e.g. 305/1/1."""
+    raw_records = [
+        {
+            "dayIndex": 1,
+            "time": "08:30-09:20",
+            "slot": 1,
+            "subject": "Информатика",
+            "type": "лекция",
+            "group": "ИС-21",
+            "room": "305/1",
+            "building": "1",
+        }
+    ]
+    schedule = schedule_api_adapter.adapt_teacher_schedule(raw_records, "рус")
+    group_str = schedule[0]["groups"][0]["group"]
+    assert "305/1/1" not in group_str
+    assert "305/1" in group_str
+
+
+def test_adapt_teacher_schedule_preformatted_group_room_deduplication():
+    """Verifies that pre-formatted group strings containing classroom do not duplicate room string."""
+    raw_records = [
+        {
+            "dayIndex": 1,
+            "time": "10:00-11:20",
+            "slot": 2,
+            "subject": "Базы данных",
+            "type": "лекция",
+            "group": "ИС-21-1 (Ауд. 305/1)",
+            "room": "305",
+            "building": "1",
+        }
+    ]
+    schedule = schedule_api_adapter.adapt_teacher_schedule(raw_records, "рус")
+    group_str = schedule[0]["groups"][0]["group"]
+    assert "(Ауд. 305/1) (305/1)" not in group_str
+    assert group_str == "ИС-21-1 (305/1)"
+
+

@@ -58,7 +58,7 @@ class SmartWarmupEngine:
     TEACHER_INTERVAL_SEC: float = 5.0  # 60 teachers over 300s (5 min) = 12 req/min
     TOP_GROUPS_LIMIT: int = 150
     TOP_TEACHERS_LIMIT: int = 60
-    TOP_LISTS_CACHE_TTL: float = 900.0  # 15 minutes
+    TOP_LISTS_CACHE_TTL: float = 3600.0  # 1 hour (was 900.0)
     HEADROOM: int = 5  # Leave at least 5 req/min margin under 110 limit
 
     SLEEP_CHECK_INTERVAL_SEC: float = 60.0
@@ -114,15 +114,51 @@ class SmartWarmupEngine:
         expires_at = now + 7200.0  # 2 hours
         self._priority_groups[gid] = (g_name, expires_at)
 
-        # Update in-memory cache directly placing touched group at the front
-        existing = [
-            (i, n)
-            for i, n in self._groups_cache
-            if i != gid and (n.strip().lower() != g_name.strip().lower() if g_name and n else True)
-        ]
-        self._groups_cache = [(gid, g_name)] + existing[: self.TOP_GROUPS_LIMIT - 1]
-        self._group_cursor = 0
+        # Update in-memory cache: if not in cache, prepend it to priority queue,
+        # but NEVER reset background rotation cursor to 0 (prevents starvation of downstream groups).
+        existing_idx = next(
+            (
+                idx
+                for idx, (i, name) in enumerate(self._groups_cache)
+                if i == gid or (g_name and name and name.strip().lower() == g_name.strip().lower())
+            ),
+            None,
+        )
+        if existing_idx is not None:
+            if g_name and self._groups_cache[existing_idx][1] != g_name:
+                self._groups_cache[existing_idx] = (gid, g_name)
+        else:
+            self._groups_cache = [(gid, g_name)] + self._groups_cache[: self.TOP_GROUPS_LIMIT - 1]
+            if self._group_cursor > 0:
+                self._group_cursor += 1
         logger.debug(f"[SmartWarmupEngine] Touched group {g_name} (id={gid}) for priority warmup (2h).")
+
+    def add_urgent_group(self, group_name: str, group_id: int | None = None) -> None:
+        """Enrolls a group into priority warmup queue without resetting cursor."""
+        if group_id is not None and group_id > 0:
+            self.touch_group(group_id, group_name)
+            return
+
+        gid: int | None = None
+        for cid, cname in self._groups_cache:
+            if cname and group_name and cname.strip().lower() == group_name.strip().lower():
+                gid = cid
+                break
+        if not gid:
+            try:
+                from src.services.smart_search import smart_search_service
+
+                matches = smart_search_service.search_groups(group_name, limit=1)
+                if matches and matches[0].get("id"):
+                    gid = int(matches[0]["id"])
+            except Exception:
+                pass
+
+        self.touch_group(gid if gid and gid > 0 else 0, group_name)
+
+    def add_urgent_teacher(self, teacher_name: str, teacher_id: int | str | None = None) -> None:
+        """Enrolls a teacher into priority warmup queue without resetting cursor."""
+        self.touch_teacher(teacher_id or teacher_name, teacher_name)
 
     def touch_teacher(self, teacher_id: int | str, teacher_name: str | None = None) -> None:
         """Dynamically enrolls or refreshes a teacher in the priority warmup queue for 2 hours (7200s).
@@ -160,14 +196,24 @@ class SmartWarmupEngine:
         expires_at = now + 7200.0  # 2 hours
         self._priority_teachers[norm_id] = (t_name, expires_at)
 
-        # Update in-memory cache directly placing touched teacher at the front
-        existing = [
-            (tid, name)
-            for tid, name in self._teachers_cache
-            if tid != norm_id and (name.strip().lower() != t_name.strip().lower() if t_name and name else True)
-        ]
-        self._teachers_cache = [(norm_id, t_name)] + existing[: self.TOP_TEACHERS_LIMIT - 1]
-        self._teacher_cursor = 0
+        # Update in-memory cache: if not in cache, prepend it to priority queue,
+        # but NEVER reset background rotation cursor to 0 (prevents starvation of downstream teachers).
+        existing_idx = next(
+            (
+                idx
+                for idx, (tid, name) in enumerate(self._teachers_cache)
+                if tid == norm_id
+                or (t_name and name and name.strip().lower() == t_name.strip().lower())
+            ),
+            None,
+        )
+        if existing_idx is not None:
+            if t_name and self._teachers_cache[existing_idx][1] != t_name:
+                self._teachers_cache[existing_idx] = (norm_id, t_name)
+        else:
+            self._teachers_cache = [(norm_id, t_name)] + self._teachers_cache[: self.TOP_TEACHERS_LIMIT - 1]
+            if self._teacher_cursor > 0:
+                self._teacher_cursor += 1
         logger.debug(f"[SmartWarmupEngine] Touched teacher {t_name} (id={norm_id}) for priority warmup (2h).")
 
     def _create_background_task(self, coro: Any) -> asyncio.Task[Any]:
@@ -321,8 +367,14 @@ class SmartWarmupEngine:
                 try:
                     from src.database.models.user_action import UserAction
 
+                    cutoff_groups = datetime.now(timezone.utc) - timedelta(days=14)
                     act_pipeline = [
-                        {"$match": {"action": {"$regex": r"^(?:schedule|chooseScheduleLanguage)\|"}}} ,
+                        {
+                            "$match": {
+                                "createdAt": {"$gte": cutoff_groups},
+                                "action": {"$regex": r"^(?:schedule|chooseScheduleLanguage)\|"},
+                            }
+                        },
                         {"$group": {"_id": "$action", "count": {"$sum": 1}}},
                         {"$sort": {"count": -1}},
                         {"$limit": self.TOP_GROUPS_LIMIT},
@@ -644,6 +696,27 @@ class SmartWarmupEngine:
             )
             from src.services.schedule_adapter import schedule_api_adapter
 
+            # Skip redundant network fetch if already recently cached (< 3 min) and not from DB fallback
+            existing_entry = student_schedule_cache.get(f"{group_id}_ru")
+            entry_cached_ts = 0.0
+            if existing_entry and isinstance(existing_entry, dict):
+                try:
+                    entry_cached_ts = float(existing_entry.get("timestamp") or 0.0)
+                except (ValueError, TypeError):
+                    entry_cached_ts = 0.0
+
+            if (
+                existing_entry
+                and existing_entry.get("data")
+                and not existing_entry.get("is_from_db")
+                and entry_cached_ts > 0.0
+                and (time.time() - entry_cached_ts < 180.0)
+            ):
+                logger.debug(
+                    f"[SmartWarmupEngine] Skipping redundant warmup for group {group_name}; recently cached."
+                )
+                return
+
             raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
             records = (
                 raw_data.get("records", [])
@@ -695,6 +768,30 @@ class SmartWarmupEngine:
             canonical_id, tch_name, dept_id, lookup_name = await resolve_teacher_identity(teacher_id, teacher_name)
             api_lookup = lookup_name or teacher_name
 
+            # Skip redundant network fetch if already recently cached (< 2 min) and not from DB fallback
+            existing_teacher = (
+                (teacher_text_cache.get(f"{canonical_id}_ru") if canonical_id is not None else None)
+                or (teacher_text_cache.get(f"{teacher_id}_ru") if teacher_id is not None else None)
+            )
+            t_cached_ts = 0.0
+            if existing_teacher and isinstance(existing_teacher, dict):
+                try:
+                    t_cached_ts = float(existing_teacher.get("timestamp") or 0.0)
+                except (ValueError, TypeError):
+                    t_cached_ts = 0.0
+
+            if (
+                existing_teacher
+                and existing_teacher.get("data")
+                and not existing_teacher.get("is_from_db")
+                and t_cached_ts > 0.0
+                and (time.time() - t_cached_ts < 120.0)
+            ):
+                logger.debug(
+                    f"[SmartWarmupEngine] Skipping redundant warmup for teacher {api_lookup}; recently cached."
+                )
+                return
+
             if not api_lookup or str(api_lookup).isdigit() or str(api_lookup).startswith("ID "):
                 profile_cand = None
                 if isinstance(canonical_id, int):
@@ -716,7 +813,10 @@ class SmartWarmupEngine:
 
             # If fallback from DB is completely empty, preserve existing valid cache
             if is_from_db and not records:
-                existing = teacher_text_cache.get(f"{canonical_id}_ru") or teacher_text_cache.get(f"{teacher_id}_ru")
+                existing = (
+                    (teacher_text_cache.get(f"{canonical_id}_ru") if canonical_id is not None else None)
+                    or (teacher_text_cache.get(f"{teacher_id}_ru") if teacher_id is not None else None)
+                )
                 if existing and existing.get("data"):
                     logger.debug(
                         f"[SmartWarmupEngine] Keeping existing cache for teacher {api_lookup}; DB returned empty."
@@ -738,26 +838,20 @@ class SmartWarmupEngine:
                 "is_from_db": is_from_db,
             }
 
-            # Multi-key alias caching across numbers, names, and initials
+            # Multi-key alias caching: restrict to canonical keys to prevent TTLCache thrashing
             alias_ids: set[str] = set()
 
             def _add_alias(val: Any) -> None:
                 if val is None:
                     return
                 s = str(val).strip()
-                if s:
+                if s and s not in alias_ids:
                     alias_ids.add(s)
 
-            _add_alias(canonical_id)
-            _add_alias(teacher_id)
-            _add_alias(tch_name)
-            _add_alias(lookup_name)
-            _add_alias(teacher_name)
-
-            for a_name in list(alias_ids):
-                clean_n = clean_titles(a_name)
-                if clean_n:
-                    alias_ids.add(clean_n)
+            if canonical_id is not None:
+                _add_alias(canonical_id)
+            if teacher_id is not None:
+                _add_alias(teacher_id)
 
             # Match in directory for canonical full name and short initials
             profile = None
@@ -777,15 +871,21 @@ class SmartWarmupEngine:
                 _add_alias(profile.get("initials"))
                 _add_alias(profile.get("name"))
 
-            # Derive initials from all string names
+            for cand in (tch_name, lookup_name, teacher_name):
+                if cand:
+                    cl = clean_titles(cand)
+                    if cl:
+                        _add_alias(cl)
+
+            # Derive formatted and compact initials for string names
             for a_name in list(alias_ids):
                 if not a_name.isdigit():
                     inits = format_initials(a_name)
                     if inits:
-                        alias_ids.add(inits)
+                        _add_alias(inits)
                         compact_inits = inits.replace(". ", ".")
                         if compact_inits != inits:
-                            alias_ids.add(compact_inits)
+                            _add_alias(compact_inits)
 
             for a_id in alias_ids:
                 if a_id:
@@ -974,8 +1074,14 @@ async def warmup_top_schedules(limit: int = 30) -> int:
                 continue
 
             try:
-                # Pre-fetch and cache student schedule using canonical get_group_schedule key
-                raw_data = await buketov_api_service.get_group_schedule(group_obj.name, force_refresh=True)
+                # Check headroom to protect API limit when running alongside SmartWarmupEngine
+                if not buketov_api_service.can_make_api_call(headroom=5):
+                    logger.debug(f"[Warmup] Skipping group {group_obj.name}: API headroom reached or API down.")
+                    continue
+
+                # When SmartWarmupEngine is actively running, avoid force-refresh cache stampede
+                force_val = not smart_warmup_engine.is_running
+                raw_data = await buketov_api_service.get_group_schedule(group_obj.name, force_refresh=force_val)
                 records = (
                     raw_data.get("records", [])
                     if isinstance(raw_data, dict)
@@ -994,7 +1100,7 @@ async def warmup_top_schedules(limit: int = 30) -> int:
                     "is_from_db": is_from_db,
                 }
                 warmed_count += 1
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.6)
             except Exception as e:
                 logger.warning(f"[Warmup] Ошибка прогрева для группы {group_obj.name}: {e}")
 

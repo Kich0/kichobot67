@@ -89,3 +89,29 @@ async def test_admin_router_security_rejection(mock_db):
     await handle_stat(fake_message)
 
     fake_message.answer.assert_called_once_with("🚫 У вас нет доступа к этой прекрасной команде!")
+
+
+@pytest.mark.asyncio
+async def test_user_service_duplicate_key_race_condition(mock_db):
+    """Verifies that UserService handles DuplicateKeyError gracefully on concurrent inserts."""
+    user_id = 77712345
+    # Concurrent get_or_create_user calls for a brand new user_id
+    res1, res2 = await asyncio.gather(
+        user_service.get_or_create_user(user_id=user_id, username="first_runner"),
+        user_service.get_or_create_user(user_id=user_id, username="second_runner"),
+    )
+    assert res1 is not None
+    assert res2 is not None
+    assert res1.user_id == user_id
+    assert res2.user_id == user_id
+
+    # Concurrent set_user_language calls for a brand new user_id
+    user_id_2 = 88812345
+    await asyncio.gather(
+        user_service.set_user_language(user_id=user_id_2, language="kz"),
+        user_service.set_user_language(user_id=user_id_2, language="ru"),
+    )
+    user_doc = await User.find_one({"userId": user_id_2})
+    assert user_doc is not None
+    assert user_doc.user_id == user_id_2
+    assert user_doc.language in ("ru", "kz")

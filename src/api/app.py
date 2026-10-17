@@ -59,6 +59,8 @@ logger = get_logger("api_app")
 
 # Retain strong references to background tasks to prevent Python GC collection mid-flight
 _background_tasks: set[asyncio.Task[Any]] = set()
+_cron_sync_lock = asyncio.Lock()
+_is_sync_running = False
 
 
 def _create_background_task(coro: Any) -> asyncio.Task[Any]:
@@ -382,7 +384,11 @@ def create_app() -> FastAPI:
             teacher = await Teacher.find_one({"id": user.teacher})
             if teacher:
                 try:
-                    sched = await buketov_api_service.fetch_teacher_schedule(teacher.name)
+                    target_teacher_id = getattr(teacher, "teacher_id", getattr(teacher, "id", None))
+                    sched = await buketov_api_service.get_teacher_schedule(
+                        teacher_name=teacher.name,
+                        teacher_id=target_teacher_id,
+                    )
                     records = sched.get("records") if isinstance(sched, dict) else sched
                     adapted = schedule_api_adapter.adapt_teacher_schedule(records, user.language or "рус")
                     data["teacherSchedule"] = {
@@ -392,7 +398,8 @@ def create_app() -> FastAPI:
                         "isNew": True,
                     }
                 except Exception:
-                    db_sched = await TeacherSchedule.find_one({"teacherId": teacher.teacher_id})
+                    target_teacher_id = getattr(teacher, "teacher_id", getattr(teacher, "id", None))
+                    db_sched = await TeacherSchedule.find_one({"$or": [{"teacherId": target_teacher_id}, {"teacher_id": target_teacher_id}]})
                     if db_sched:
                         raw_records = getattr(db_sched, "data", None) or getattr(db_sched, "schedule", None) or []
                         serialized = [
@@ -414,17 +421,46 @@ def create_app() -> FastAPI:
         request: Request,
         key: str | None = Query(default=None),
         x_cron_key: str | None = Header(default=None),
+        x_cron_secret: str | None = Header(default=None),
     ) -> ORJSONResponse:
-        provided_key = key or x_cron_key or request.headers.get("x-cron-key")
+        provided_key = (
+            key
+            or x_cron_key
+            or x_cron_secret
+            or request.headers.get("x-cron-key")
+            or request.headers.get("x-cron-secret")
+        )
         expected_key = settings.resolved_webhook_secret or settings.WEBHOOK_SECRET_TOKEN
 
         if not expected_key or provided_key != expected_key:
             logger.warning("[Cron Sync Security] Unauthorized attempt to trigger cron sync")
             return ORJSONResponse(content={"error": "Unauthorized"}, status_code=403)
 
+        global _is_sync_running
+        async with _cron_sync_lock:
+            if _is_sync_running:
+                logger.info("[Cron Sync] Daily sync already in progress, skipping concurrent run")
+                health_monitor.update_activity()
+                return ORJSONResponse(
+                    content={"ok": True, "message": "Daily sync already in progress"},
+                    status_code=200,
+                )
+            _is_sync_running = True
+
+        health_monitor.update_activity()
         logger.info("[Cron Sync] Triggering background daily sync and warmup...")
-        _create_background_task(run_daily_data_update())
-        _create_background_task(warmup_top_schedules())
+
+        async def _run_sync_worker() -> None:
+            global _is_sync_running
+            try:
+                await run_daily_data_update()
+                await warmup_top_schedules()
+            except Exception as e:
+                logger.error(f"[Cron Sync] Background daily sync error: {e}")
+            finally:
+                _is_sync_running = False
+
+        _create_background_task(_run_sync_worker())
 
         return ORJSONResponse(
             content={"ok": True, "message": "Daily sync triggered"},

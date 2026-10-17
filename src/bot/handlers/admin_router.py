@@ -45,6 +45,17 @@ from src.services.user_toll_service import user_toll_service
 
 logger = get_logger("admin_router")
 admin_router = Router(name="admin_router")
+_admin_bg_tasks: set[asyncio.Task[Any]] = set()
+_admin_sync_lock = asyncio.Lock()
+_is_admin_sync_running = False
+
+
+def _create_admin_task(coro: Any) -> asyncio.Task[Any]:
+    """Retains strong reference to background admin tasks to avoid GC drop."""
+    task = asyncio.create_task(coro)
+    _admin_bg_tasks.add(task)
+    task.add_done_callback(_admin_bg_tasks.discard)
+    return task
 
 
 def escape_html(text: Any) -> str:
@@ -69,16 +80,28 @@ async def handle_sync_new_data(message: Message) -> None:
     if not await _check_admin(message):
         return
 
+    global _is_admin_sync_running
+    async with _admin_sync_lock:
+        if _is_admin_sync_running:
+            await message.answer("⚠️ <b>Синхронизация уже выполняется...</b>", parse_mode="HTML")
+            return
+        _is_admin_sync_running = True
+
     async def _run_sync_task() -> None:
+        global _is_admin_sync_running
         try:
             logger.info("Starting background university catalog sync...")
-            await asyncio.sleep(0.5)
+            from src.cron.daily_update import run_daily_data_update
+
+            await run_daily_data_update()
             await message.answer("✅ <b>Синхронизация каталогов успешно завершена!</b>", parse_mode="HTML")
         except Exception as e:
             logger.error(f"Catalog sync error: {e}")
             await message.answer(f"❌ <b>Ошибка синхронизации:</b> {e}", parse_mode="HTML")
+        finally:
+            _is_admin_sync_running = False
 
-    asyncio.create_task(_run_sync_task())
+    _create_admin_task(_run_sync_task())
     await message.answer("⏳ <b>Синхронизация запущена в фоновом режиме...</b>", parse_mode="HTML")
 
 
@@ -253,7 +276,7 @@ async def handle_sms(message: Message) -> None:
                 parse_mode="HTML",
             )
 
-        asyncio.create_task(_run_broadcast_task())
+        _create_admin_task(_run_broadcast_task())
         await message.answer("📢 <b>Разовое оповещение запущено в фоновом режиме...</b>", parse_mode="HTML")
         return
 
@@ -288,7 +311,7 @@ async def handle_backup_logs(message: Message) -> None:
         except Exception as e:
             await message.answer(f"❌ Ошибка архивации: {e}")
 
-    asyncio.create_task(_run_backup_task())
+    _create_admin_task(_run_backup_task())
     await message.answer("⏳ <b>Архивация логов запущена в фоновом режиме...</b>", parse_mode="HTML")
 
 
@@ -502,12 +525,19 @@ async def handle_info(message: Message) -> None:
     from src.api.health import health_monitor
 
     health = await health_monitor.get_status()
+    uptime_sec = health.get("uptime_seconds") if health.get("uptime_seconds") is not None else health.get("uptime", 0)
+    memory_val = health.get("memory_mb")
+    if memory_val is None:
+        mem_dict = health.get("memory")
+        memory_val = mem_dict.get("rss_mb", 0) if isinstance(mem_dict, dict) else 0
+
+    api_val = health.get("buketov_api", "OK")
     info_text = (
         "ℹ️ <b>ДИАГНОСТИЧЕСКАЯ ИНФОРМАЦИЯ:</b>\n\n"
         f"• <b>Время (UTC+5):</b> {now_kz.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"• <b>Аптайм:</b> {health.get('uptime_seconds', 0)} сек.\n"
-        f"• <b>RAM процесс:</b> {health.get('memory_mb', 0)} MB\n"
-        f"• <b>Статус API КарУ:</b> {health.get('buketov_api', 'OK')}\n"
+        f"• <b>Аптайм:</b> {uptime_sec} сек.\n"
+        f"• <b>RAM процесс:</b> {memory_val} MB\n"
+        f"• <b>Статус API КарУ:</b> {api_val}\n"
     )
     await message.answer(info_text, parse_mode="HTML")
 
@@ -546,19 +576,67 @@ async def handle_get_callback(message: Message) -> None:
 
 # === Moderation: Ban, Mute, Unban, Unmute, Bans ===
 
+def _parse_duration(duration_str: str) -> timedelta | None:
+    """Parses duration string like '10m', '2h', '7d', '1w', '10 мин', '2 часа' into timedelta."""
+    if not duration_str:
+        return None
+    match = re.match(
+        r"^(\d+)\s*(m|min|mins|minute|minutes|м|мин|минута|минуты|минут|h|hr|hrs|hour|hours|ч|час|часа|часов|d|day|days|д|дн|дня|дней|день|w|wk|wks|week|weeks|н|нед|неделя|недели|недель|mo|mon|month|months|мес|месяц|месяца|месяцев|s|sec|secs|second|seconds|с|сек|секунда|секунды|секунд)$",
+        duration_str.strip().lower(),
+    )
+    if not match:
+        return None
+    val = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit in ("m", "min", "mins", "minute", "minutes", "м", "мин", "минута", "минуты", "минут"):
+        return timedelta(minutes=val)
+    elif unit in ("h", "hr", "hrs", "hour", "hours", "ч", "час", "часа", "часов"):
+        return timedelta(hours=val)
+    elif unit in ("d", "day", "days", "д", "дн", "дня", "дней", "день"):
+        return timedelta(days=val)
+    elif unit in ("w", "wk", "wks", "week", "weeks", "н", "нед", "неделя", "недели", "недель"):
+        return timedelta(weeks=val)
+    elif unit in ("mo", "mon", "month", "months", "мес", "месяц", "месяца", "месяцев"):
+        return timedelta(days=val * 30)
+    elif unit in ("s", "sec", "secs", "second", "seconds", "с", "сек", "секунда", "секунды", "секунд"):
+        return timedelta(seconds=val)
+    return None
+
+
 @admin_router.message(Command("ban"))
 async def handle_ban_command(message: Message) -> None:
-    """Restricts a user by adding them to BlackList."""
+    """Restricts a user by adding them to BlackList or muting them."""
     if not await _check_admin(message):
         return
 
     parts = (message.text or "").split()[1:]
     if not parts:
-        await message.answer("ℹ️ Использование: <code>/ban [ID/@ник] [причина]</code>", parse_mode="HTML")
+        await message.answer("ℹ️ Использование: <code>/ban [ID/@ник] [время/mute] [причина]</code>", parse_mode="HTML")
         return
 
     target = parts[0]
-    reason = " ".join(parts[1:]) if len(parts) > 1 else None
+    is_mute = False
+    rest_parts = parts[1:]
+
+    if rest_parts and rest_parts[0].lower() in ("mute", "мут"):
+        is_mute = True
+        rest_parts = rest_parts[1:]
+
+    duration_delta: timedelta | None = None
+    reason: str | None = None
+
+    if len(rest_parts) > 0:
+        duration_delta = _parse_duration(rest_parts[0])
+        if duration_delta is not None:
+            reason = " ".join(rest_parts[1:]) if len(rest_parts) > 1 else None
+        elif len(rest_parts) > 1:
+            duration_delta = _parse_duration(f"{rest_parts[0]} {rest_parts[1]}")
+            if duration_delta is not None:
+                reason = " ".join(rest_parts[2:]) if len(rest_parts) > 2 else None
+            else:
+                reason = " ".join(rest_parts)
+        else:
+            reason = " ".join(rest_parts)
 
     target_user = await user_service.find_user(target)
     if not target_user:
@@ -567,13 +645,36 @@ async def handle_ban_command(message: Message) -> None:
 
     from src.services.black_list_service import black_list_service
 
-    await black_list_service.add_ban(
-        user_id=target_user.user_id,
-        reason=reason,
-        username=target_user.username,
-        banned_by=message.from_user.id if message.from_user else None,
-    )
-    await message.answer(f"⛔ Пользователь {target_user.user_id} заблокирован.")
+    until: datetime | None = None
+    if duration_delta is not None:
+        until = datetime.now(timezone.utc) + duration_delta
+
+    if is_mute:
+        await black_list_service.add_mute(
+            user_id=target_user.user_id,
+            until=until,
+            reason=reason,
+            username=target_user.username,
+            banned_by=message.from_user.id if message.from_user else None,
+        )
+        if until:
+            until_kz = until.astimezone(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %H:%M:%S")
+            await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут до {until_kz} (UTC+5).")
+        else:
+            await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут.")
+    else:
+        await black_list_service.add_ban(
+            user_id=target_user.user_id,
+            until=until,
+            reason=reason,
+            username=target_user.username,
+            banned_by=message.from_user.id if message.from_user else None,
+        )
+        if until:
+            until_kz = until.astimezone(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %H:%M:%S")
+            await message.answer(f"⛔ Пользователь {target_user.user_id} заблокирован до {until_kz} (UTC+5).")
+        else:
+            await message.answer(f"⛔ Пользователь {target_user.user_id} заблокирован.")
 
 
 @admin_router.message(Command("mute"))
@@ -584,11 +685,26 @@ async def handle_mute_command(message: Message) -> None:
 
     parts = (message.text or "").split()[1:]
     if not parts:
-        await message.answer("ℹ️ Использование: <code>/mute [ID/@ник] [причина]</code>", parse_mode="HTML")
+        await message.answer("ℹ️ Использование: <code>/mute [ID/@ник] [длительность?] [причина?]</code>", parse_mode="HTML")
         return
 
     target = parts[0]
-    reason = " ".join(parts[1:]) if len(parts) > 1 else None
+    rest_parts = parts[1:]
+    duration_delta: timedelta | None = None
+    reason: str | None = None
+
+    if len(rest_parts) > 0:
+        duration_delta = _parse_duration(rest_parts[0])
+        if duration_delta is not None:
+            reason = " ".join(rest_parts[1:]) if len(rest_parts) > 1 else None
+        elif len(rest_parts) > 1:
+            duration_delta = _parse_duration(f"{rest_parts[0]} {rest_parts[1]}")
+            if duration_delta is not None:
+                reason = " ".join(rest_parts[2:]) if len(rest_parts) > 2 else None
+            else:
+                reason = " ".join(rest_parts)
+        else:
+            reason = " ".join(rest_parts)
 
     target_user = await user_service.find_user(target)
     if not target_user:
@@ -597,13 +713,22 @@ async def handle_mute_command(message: Message) -> None:
 
     from src.services.black_list_service import black_list_service
 
+    until: datetime | None = None
+    if duration_delta is not None:
+        until = datetime.now(timezone.utc) + duration_delta
+
     await black_list_service.add_mute(
         user_id=target_user.user_id,
+        until=until,
         reason=reason,
         username=target_user.username,
         banned_by=message.from_user.id if message.from_user else None,
     )
-    await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут.")
+    if until:
+        until_kz = until.astimezone(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %H:%M:%S")
+        await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут до {until_kz} (UTC+5).")
+    else:
+        await message.answer(f"🔇 Пользователю {target_user.user_id} выдан мут.")
 
 
 @admin_router.message(Command("unban"))
@@ -654,7 +779,15 @@ async def handle_bans_list(message: Message) -> None:
 
     lines = [f"⛔ <b>Список блокировок ({len(restrictions)}):</b>\n"]
     for r in restrictions:
-        lines.append(f"• ID: <code>{r.user_id}</code> (@{escape_html(r.username or '—')}) — [{r.type}] Причина: {escape_html(r.reason or 'не указана')}")
+        exp_str = ""
+        if r.until:
+            exp_kz = r.until.astimezone(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %H:%M")
+            exp_str = f" (до {exp_kz})"
+        else:
+            exp_str = " (бессрочно)"
+        lines.append(
+            f"• ID: <code>{r.user_id}</code> (@{escape_html(r.username or '—')}) — [{r.type}]{exp_str} Причина: {escape_html(r.reason or 'не указана')}"
+        )
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 

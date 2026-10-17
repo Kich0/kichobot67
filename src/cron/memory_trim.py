@@ -20,8 +20,19 @@ from src.core.logging import get_logger
 logger = get_logger("memory_trim")
 
 
-def trim_process_memory() -> None:
-    """Frees expired API cache entries, dead Python objects, and invokes glibc malloc_trim on Linux."""
+HEALTHY_RSS_CEILING_MB: float = 280.0
+_last_rss_mb: float = 0.0
+
+
+def trim_process_memory(force_os_trim: bool = False, min_rss_mb: float = HEALTHY_RSS_CEILING_MB) -> None:
+    """Frees expired API cache entries and dead Python objects.
+
+    Only invokes glibc malloc_trim on Linux if RSS memory exceeds min_rss_mb
+    (default 280 MB / ~55% of 512 MB Render limit), if there is meaningful memory growth
+    (e.g., >= 35 MB growth since last trim while above 240 MB), or if force_os_trim is True.
+    """
+    global _last_rss_mb
+
     purged = 0
     try:
         from src.services.buketov_api import buketov_api_service
@@ -30,10 +41,22 @@ def trim_process_memory() -> None:
     except Exception as e:
         logger.debug(f"purge_expired call skipped or failed: {e}")
 
+    current_mem_mb = 0.0
+    try:
+        from src.api.health import get_process_memory_mb
+
+        current_mem_mb = get_process_memory_mb()
+    except Exception as e:
+        logger.debug(f"get_process_memory_mb call failed in trim: {e}")
+
     collected = gc.collect()
     trimmed = False
 
-    if sys.platform.startswith("linux"):
+    growth = (current_mem_mb - _last_rss_mb) if (_last_rss_mb > 0.0 and current_mem_mb > 0.0) else 0.0
+    meaningful_growth = growth >= 35.0 and current_mem_mb >= 240.0
+    should_trim_os = force_os_trim or (current_mem_mb >= min_rss_mb) or meaningful_growth
+
+    if should_trim_os and sys.platform.startswith("linux"):
         try:
             import ctypes
 
@@ -43,9 +66,13 @@ def trim_process_memory() -> None:
         except Exception as e:
             logger.debug(f"malloc_trim call skipped or failed: {e}")
 
+    if current_mem_mb > 0.0:
+        _last_rss_mb = current_mem_mb
+
     logger.debug(
-        f"Memory trim executed: {purged} expired cache entries purged, "
-        f"{collected} objects collected, malloc_trim={trimmed}"
+        f"Memory trim executed: RSS={current_mem_mb:.1f}MB (growth={growth:+.1f}MB), "
+        f"{purged} expired cache entries purged, {collected} objects collected, "
+        f"malloc_trim={trimmed} (forced={force_os_trim})"
     )
 
 
@@ -104,7 +131,7 @@ def check_and_enforce_memory_limit(threshold_mb: float = 430.0) -> bool:
         logger.debug(f"[OOM-GUARD] Error pausing smart_warmup_engine: {e}")
 
     # 5. Force GC and malloc_trim
-    trim_process_memory()
+    trim_process_memory(force_os_trim=True)
 
     return True
 
@@ -129,6 +156,7 @@ def setup_memory_trim(scheduler: AsyncIOScheduler) -> None:
 
 
 __all__ = [
+    "HEALTHY_RSS_CEILING_MB",
     "check_and_enforce_memory_limit",
     "setup_memory_trim",
     "trim_process_memory",

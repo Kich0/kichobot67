@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -564,6 +565,245 @@ async def test_teacher_warmup_and_text_fetch_cache_isolation():
         assert teacher_table_cache["555"]["timestamp"] == 2000.0
 
     clear_schedule_caches()
+
+
+def test_trim_process_memory_rss_threshold():
+    """Verifies that trim_process_memory only trims OS heap when memory >= 280 MB or force_os_trim=True."""
+    from src.cron.memory_trim import HEALTHY_RSS_CEILING_MB, trim_process_memory
+
+    assert HEALTHY_RSS_CEILING_MB == 280.0
+
+    mock_libc = MagicMock()
+    with patch("sys.platform", "linux"), \
+         patch("ctypes.CDLL", return_value=mock_libc), \
+         patch("src.api.health.get_process_memory_mb", return_value=220.0), \
+         patch("src.services.buketov_api.buketov_api_service.purge_expired", return_value=0):
+
+        # 1. Under threshold and force_os_trim=False: malloc_trim should NOT be called
+        trim_process_memory(force_os_trim=False)
+        mock_libc.malloc_trim.assert_not_called()
+
+        # 2. Under threshold but force_os_trim=True: malloc_trim SHOULD be called
+        trim_process_memory(force_os_trim=True)
+        mock_libc.malloc_trim.assert_called_once_with(0)
+
+    # 3. Over threshold (e.g. 310 MB): malloc_trim SHOULD be called even with force_os_trim=False
+    mock_libc_high = MagicMock()
+    with patch("sys.platform", "linux"), \
+         patch("ctypes.CDLL", return_value=mock_libc_high), \
+         patch("src.api.health.get_process_memory_mb", return_value=310.0), \
+         patch("src.services.buketov_api.buketov_api_service.purge_expired", return_value=0):
+
+        trim_process_memory(force_os_trim=False)
+        mock_libc_high.malloc_trim.assert_called_once_with(0)
+
+
+def test_touch_group_preserves_cursor_and_cache():
+    """Verifies that touch_group does not reset cursor to 0 and does not reorder existing items."""
+    engine = SmartWarmupEngine()
+    engine.set_top_groups([(10, "G-10"), (20, "G-20"), (30, "G-30")])
+    engine._group_cursor = 2
+
+    # Touch existing group 20: cursor should remain 2, cache order preserved
+    engine.touch_group(20, "G-20")
+    assert engine._group_cursor == 2
+    assert engine._groups_cache[0][0] == 10
+    assert engine._groups_cache[1][0] == 20
+    assert engine._groups_cache[2][0] == 30
+
+    # Touch new group 99: prepends to cache and adjusts cursor by +1 (no starvation)
+    engine.touch_group(99, "G-99")
+    assert engine._group_cursor == 3
+    assert engine._groups_cache[0][0] == 99
+
+
+def test_touch_teacher_preserves_cursor():
+    """Verifies that touch_teacher does not reset cursor to 0."""
+    engine = SmartWarmupEngine()
+    engine.set_top_teachers([(101, "T-1"), (102, "T-2"), (103, "T-3")])
+    engine._teacher_cursor = 1
+
+    # Touch existing teacher 103: cursor should remain 1
+    engine.touch_teacher(103, "T-3")
+    assert engine._teacher_cursor == 1
+
+    # Touch new teacher 999: prepends to cache and adjusts cursor by +1
+    engine.touch_teacher(999, "T-999")
+    assert engine._teacher_cursor == 2
+    assert engine._teachers_cache[0][0] == 999
+
+
+@pytest.mark.asyncio
+async def test_warm_group_skips_recent_cache():
+    """Verifies that _warm_group skips API network calls if group was cached < 180s ago."""
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    # Pre-populate cache with fresh timestamp (10s ago)
+    now = time.time()
+    student_schedule_cache["555_ru"] = {
+        "data": [{"day": "Понедельник", "time": "09:00", "subject": "Math"}],
+        "timestamp": now - 10.0,
+        "is_from_db": False,
+    }
+
+    with patch("src.cron.cache_warmup.buketov_api_service.get_group_schedule") as mock_get:
+        await engine._warm_group(555, "CS-55")
+        mock_get.assert_not_called()
+
+    clear_schedule_caches()
+
+
+@pytest.mark.asyncio
+async def test_warm_teacher_skips_recent_cache():
+    """Verifies that _warm_teacher skips API network calls if teacher was cached < 120s ago."""
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    # Pre-populate cache with fresh timestamp (10s ago)
+    now = time.time()
+    teacher_text_cache["777_ru"] = {
+        "data": [{"day": "Вторник", "time": "10:00", "subject": "Physics"}],
+        "timestamp": now - 10.0,
+        "is_from_db": False,
+    }
+
+    with patch("src.bot.handlers.callbacks_router.resolve_teacher_identity", AsyncMock(return_value=(777, "Иванов И. И.", None, "Иванов И. И."))), \
+         patch("src.cron.cache_warmup.buketov_api_service.get_teacher_schedule") as mock_get:
+        await engine._warm_teacher(777, "Иванов И. И.")
+        mock_get.assert_not_called()
+
+    clear_schedule_caches()
+
+
+@pytest.mark.asyncio
+async def test_get_top_groups_14_day_filter():
+    """Verifies that _get_top_groups adds a 14-day createdAt filter to UserAction aggregate."""
+    engine = SmartWarmupEngine()
+    captured_pipelines = []
+
+    mock_agg = AsyncMock()
+    mock_agg.to_list = AsyncMock(return_value=[])
+
+    def capture_aggregate(pipeline):
+        captured_pipelines.append(pipeline)
+        return mock_agg
+
+    with patch("src.database.models.user.User.aggregate") as mock_user_agg, \
+         patch("src.database.models.user_action.UserAction.aggregate", side_effect=capture_aggregate), \
+         patch("src.database.models.group.Group.find") as mock_find_grp:
+
+        mock_user_agg.return_value.to_list = AsyncMock(return_value=[])
+        mock_find_grp.return_value.to_list = AsyncMock(return_value=[])
+        mock_find_grp.return_value.limit.return_value.to_list = AsyncMock(return_value=[])
+
+        await engine._get_top_groups()
+
+        assert len(captured_pipelines) >= 1
+        pipe = captured_pipelines[0]
+        match_stage = pipe[0]["$match"]
+        assert "createdAt" in match_stage
+        assert "$gte" in match_stage["createdAt"]
+        delta = datetime.now(timezone.utc) - match_stage["createdAt"]["$gte"]
+        assert 13.9 <= delta.total_seconds() / (24 * 3600) <= 14.1
+
+
+def test_trim_process_memory_meaningful_growth():
+    """Verifies that meaningful memory growth (>= 35MB growth at >= 240MB) triggers malloc_trim."""
+    import src.cron.memory_trim as mt
+    from src.cron.memory_trim import trim_process_memory
+
+    # Set initial baseline memory
+    mt._last_rss_mb = 205.0
+
+    mock_libc = MagicMock()
+    # Grow from 205 to 250 MB (+45 MB growth at >= 240 MB)
+    with patch("sys.platform", "linux"), \
+         patch("ctypes.CDLL", return_value=mock_libc), \
+         patch("src.api.health.get_process_memory_mb", return_value=250.0), \
+         patch("src.services.buketov_api.buketov_api_service.purge_expired", return_value=0):
+
+        trim_process_memory(force_os_trim=False, min_rss_mb=280.0)
+        mock_libc.malloc_trim.assert_called_once_with(0)
+
+    # Reset
+    mt._last_rss_mb = 0.0
+
+
+@pytest.mark.asyncio
+async def test_warm_group_null_timestamp_does_not_crash():
+    """Verifies that _warm_group does not throw TypeError when existing cache entry has timestamp=None."""
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    student_schedule_cache["999_ru"] = {
+        "data": [{"day": "Понедельник", "time": "09:00", "subject": "Math"}],
+        "timestamp": None,
+        "is_from_db": False,
+    }
+
+    dummy_raw = {
+        "records": [{"day": "Понедельник", "time": "09:00", "subject": "Math"}],
+        "_cacheTimestamp": time.time(),
+        "_fromDb": False,
+    }
+
+    with patch("src.cron.cache_warmup.buketov_api_service.get_group_schedule", AsyncMock(return_value=dummy_raw)):
+        # Must not raise TypeError: float() argument must be a string or a real number, not 'NoneType'
+        await engine._warm_group(999, "CS-99")
+        assert "999_ru" in student_schedule_cache
+
+    clear_schedule_caches()
+
+
+@pytest.mark.asyncio
+async def test_warm_teacher_null_timestamp_and_none_canonical_id():
+    """Verifies that _warm_teacher handles None canonical_id and timestamp=None safely."""
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    teacher_text_cache["Петров_ru"] = {
+        "data": [{"day": "Среда", "time": "12:00", "subject": "History"}],
+        "timestamp": None,
+        "is_from_db": False,
+    }
+
+    dummy_raw = {
+        "records": [{"day": "Среда", "time": "12:00", "subject": "History"}],
+        "_cacheTimestamp": time.time(),
+        "_fromDb": False,
+    }
+
+    with patch("src.bot.handlers.callbacks_router.resolve_teacher_identity", AsyncMock(return_value=(None, "Петров", None, "Петров"))), \
+         patch("src.services.buketov_api.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=dummy_raw)), \
+         patch("src.database.models.teacher.Teacher.find_one", AsyncMock(return_value=None)):
+
+        await engine._warm_teacher(None, "Петров")
+        assert "Петров_ru" in teacher_text_cache
+        assert "None_ru" not in teacher_text_cache
+
+    clear_schedule_caches()
+
+
+def test_add_urgent_group_and_teacher():
+    """Verifies that add_urgent_group and add_urgent_teacher enroll items into priority lists without resetting cursors."""
+    engine = SmartWarmupEngine()
+    engine.set_top_groups([(1, "G-1"), (2, "G-2")])
+    engine.set_top_teachers([(10, "T-1"), (20, "T-2")])
+    engine._group_cursor = 1
+    engine._teacher_cursor = 1
+
+    engine.add_urgent_group("G-New", 55)
+    assert engine._group_cursor == 2
+    assert 55 in engine._priority_groups
+    assert engine._groups_cache[0][0] == 55
+
+    engine.add_urgent_teacher("T-New", 77)
+    assert engine._teacher_cursor == 2
+    assert 77 in engine._priority_teachers
+    assert engine._teachers_cache[0][0] == 77
+
+
 
 
 

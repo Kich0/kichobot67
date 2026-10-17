@@ -749,5 +749,36 @@ async def test_check_has_prior_button_ignores_media_rejected():
     user_action_logging_middleware._queue.clear()
 
 
+@pytest.mark.asyncio
+async def test_user_action_logger_flush_no_deadlock(mock_db):
+    """Verifies that flush() does not deadlock when invoked re-entrantly or from background log tasks."""
+    from src.bot.middlewares.user_action_logger import UserActionLoggingMiddleware
+
+    logger_mid = UserActionLoggingMiddleware()
+    logger_mid._queue.append({
+        "user_id": 111,
+        "username": "user1",
+        "action": "test",
+        "text": "sample",
+        "is_first": False,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    # Spawn a background task that itself calls flush()
+    async def _worker_calling_flush():
+        await asyncio.sleep(0.01)
+        await logger_mid.flush()
+
+    task = asyncio.create_task(_worker_calling_flush())
+    logger_mid._bg_log_tasks.add(task)
+
+    # Calling flush directly concurrently should not deadlock or raise
+    await asyncio.wait_for(logger_mid.flush(), timeout=2.0)
+    await asyncio.wait_for(task, timeout=2.0)
+    assert len(logger_mid._queue) == 0
+    logger_mid.clear_cache()
+
+
+
 
 

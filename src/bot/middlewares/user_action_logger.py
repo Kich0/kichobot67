@@ -472,7 +472,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         self._flush_lock = asyncio.Lock()
         self._log_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
-        self._bg_log_tasks: set[asyncio.Task[None]] = set()
+        self._bg_log_tasks: set[asyncio.Task[Any]] = set()
 
     def clear_cache(self) -> None:
         """Clears in-memory active user sets and queue."""
@@ -489,7 +489,9 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
     async def flush(self) -> None:
         """Flushes enqueued action records to MongoDB."""
-        pending = [t_item for t_item in list(self._bg_log_tasks) if not t_item.done()]
+        current = asyncio.current_task()
+        pending = [t_item for t_item in list(self._bg_log_tasks) if not t_item.done() and t_item is not current]
+        self._bg_log_tasks.clear()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
@@ -545,13 +547,17 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             self._queue.pop(0)
 
         if len(self._queue) >= self._batch_threshold:
-            asyncio.create_task(self.flush())
+            flush_t = asyncio.create_task(self.flush())
+            self._bg_log_tasks.add(flush_t)
+            flush_t.add_done_callback(self._bg_log_tasks.discard)
         elif self._flush_task is None or self._flush_task.done():
             async def _debounced() -> None:
                 await asyncio.sleep(0.02)
                 await self.flush()
 
             self._flush_task = asyncio.create_task(_debounced())
+            self._bg_log_tasks.add(self._flush_task)
+            self._flush_task.add_done_callback(self._bg_log_tasks.discard)
 
     async def _check_has_prior_action(self, user_id: int) -> bool:
         """Checks whether user has performed any prior interaction in queue or DB."""

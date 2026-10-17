@@ -32,6 +32,7 @@ class UserService:
     ) -> Any:
         """Retrieves an existing user document or creates a new one."""
         try:
+            from pymongo.errors import DuplicateKeyError
             from src.database.models.user import User
 
             client_id = id(get_client())
@@ -64,9 +65,30 @@ class UserService:
                 language="ru",
                 isAdmin=False,
             )
-            await new_user.insert()
-            self._lang_cache[(client_id, user_id)] = "ru"
-            return new_user
+            try:
+                await new_user.insert()
+                self._lang_cache[(client_id, user_id)] = "ru"
+                return new_user
+            except DuplicateKeyError:
+                existing = await User.find_one({"userId": user_id})
+                if existing:
+                    changed = False
+                    clean_username = username.lstrip("@") if username else None
+                    if clean_username and existing.username != clean_username:
+                        existing.username = clean_username
+                        changed = True
+                    if first_name and existing.first_name != first_name:
+                        existing.first_name = first_name
+                        changed = True
+                    if last_name and existing.last_name != last_name:
+                        existing.last_name = last_name
+                        changed = True
+                    if changed:
+                        await existing.save()
+                    if existing.language:
+                        self._lang_cache[(client_id, user_id)] = I18n.normalize_lang(existing.language)
+                    return existing
+                return new_user
         except Exception as e:
             logger.debug(f"User get_or_create skipped or errored: {e}")
             return None
@@ -97,6 +119,7 @@ class UserService:
         client_id = id(get_client())
         self._lang_cache[(client_id, user_id)] = norm_lang
         try:
+            from pymongo.errors import DuplicateKeyError
             from src.database.models.user import User
 
             user = await User.find_one({"userId": user_id})
@@ -105,7 +128,13 @@ class UserService:
                 await user.save()
             else:
                 new_user = User(userId=user_id, language=norm_lang)
-                await new_user.insert()
+                try:
+                    await new_user.insert()
+                except DuplicateKeyError:
+                    existing = await User.find_one({"userId": user_id})
+                    if existing:
+                        existing.language = norm_lang
+                        await existing.save()
         except Exception as e:
             logger.debug(f"Failed to set user language: {e}")
 

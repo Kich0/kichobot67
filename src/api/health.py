@@ -123,11 +123,19 @@ class HealthMonitor:
         rss_mb = get_process_memory_mb()
         overall_healthy = bot_ok and db_ok
 
+        try:
+            from src.services.buketov_api import buketov_api_service
+
+            buketov_api_status = getattr(buketov_api_service, "circuit_state", "CLOSED")
+        except Exception:
+            buketov_api_status = "UNKNOWN"
+
         return {
             "status": "healthy" if overall_healthy else "unhealthy",
             "healthy": overall_healthy,
             "mode": settings.BOT_MODE,
             "uptime": uptime,
+            "uptime_seconds": uptime,
             "timeSinceLastActivity": time_since_activity,
             "checks": {
                 "bot": bot_ok,
@@ -138,6 +146,8 @@ class HealthMonitor:
             "memory": {
                 "rss_mb": rss_mb,
             },
+            "memory_mb": rss_mb,
+            "buketov_api": buketov_api_status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

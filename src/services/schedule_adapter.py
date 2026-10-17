@@ -22,7 +22,7 @@ class ScheduleApiAdapter:
 
     def get_day_index(self, record: dict[str, Any]) -> int:
         """Determines 1-based day index (1=Mon ... 7=Sun) from record."""
-        day_idx = record.get("dayIndex")
+        day_idx = record.get("dayIndex") if record.get("dayIndex") is not None else record.get("day_index")
         if day_idx is not None:
             try:
                 idx = int(day_idx)
@@ -71,43 +71,70 @@ class ScheduleApiAdapter:
         """Formats lesson type badge with slashes (e.g. '/Лекция/')."""
         if not lesson_type:
             return ""
-        lower = str(lesson_type).lower().strip()
-        if "лекц" in lower or lower == "лек":
+        clean = str(lesson_type).strip().strip("/")
+        lower = clean.lower()
+        if "лекц" in lower or lower == "лек" or "дәріс" in lower or "дарис" in lower:
             return "/Лекция/"
-        if "прак" in lower or "семин" in lower or lower == "пр":
+        if "прак" in lower or "семин" in lower or lower == "пр" or "тәжірибе" in lower or "тажирибе" in lower:
             return "/Прак.зан./"
-        if "лаб" in lower:
+        if "лаб" in lower or "зертхана" in lower:
             return "/Лаб.раб./"
-        if "сроп" in lower:
+        if "сроп" in lower or "соөж" in lower or "соож" in lower:
             return "/СРОП/"
-        return f"/{str(lesson_type).strip()}/"
+        return f"/{clean}/"
 
     def format_lesson_type_badge(self, lesson_type: str | None) -> str:
         """Formats plain text lesson type (e.g. 'Лекция')."""
         if not lesson_type:
             return ""
-        lower = str(lesson_type).lower().strip()
-        if "лекц" in lower or lower == "лек":
+        clean = str(lesson_type).strip().strip("/")
+        lower = clean.lower()
+        if "лекц" in lower or lower == "лек" or "дәріс" in lower or "дарис" in lower:
             return "Лекция"
-        if "прак" in lower or "семин" in lower or lower == "пр":
+        if "прак" in lower or "семин" in lower or lower == "пр" or "тәжірибе" in lower or "тажирибе" in lower:
             return "Прак.зан."
-        if "лаб" in lower:
+        if "лаб" in lower or "зертхана" in lower:
             return "Лаб.раб."
-        if "сроп" in lower:
+        if "сроп" in lower or "соөж" in lower or "соож" in lower:
             return "СРОП"
-        return str(lesson_type).strip()
+        return clean
 
     def format_room(self, room: str | None, building: str | None) -> str:
         """Formats classroom and university building string."""
         if not room and not building:
             return ""
-        clean_room = re.sub(r"^Ауд\.?\s*", "", str(room or ""), flags=re.IGNORECASE).strip()
-        clean_building = re.sub(r"^Корп(?:ус)?\.?\s*", "", str(building or ""), flags=re.IGNORECASE).strip()
+        clean_room = re.sub(r"^(?:Ауд(?:итория)?\.?)\s*", "", str(room or ""), flags=re.IGNORECASE).strip()
+        clean_building = re.sub(r"^(?:Корп(?:ус)?\.?|Ғимарат(?:ы)?\.?)\s*", "", str(building or ""), flags=re.IGNORECASE).strip()
         if clean_room and clean_building:
             if clean_room.endswith(f"/{clean_building}"):
                 return f"Ауд.{clean_room}"
             return f"Ауд.{clean_room}/{clean_building}"
         return f"Ауд.{clean_room or clean_building}"
+
+    def localize_schedule_days(
+        self,
+        days_data: list[Any] | None,
+        language: str = "рус",
+    ) -> list[dict[str, Any]]:
+        """Translates day names in an adapted schedule to Russian or Kazakh."""
+        if not days_data:
+            return []
+        norm_lang = str(language or "").lower().strip()
+        is_kz = norm_lang in ("каз", "kz", "kaz", "қаз")
+        target_days = self.days_kz if is_kz else self.days_ru
+
+        localized: list[dict[str, Any]] = []
+        for d in days_data:
+            d_dict = (
+                d if isinstance(d, dict)
+                else (d.model_dump() if hasattr(d, "model_dump") else getattr(d, "__dict__", {}))
+            )
+            d_copy = dict(d_dict)
+            day_idx = self.get_day_index(d_copy)
+            if 1 <= day_idx <= len(target_days):
+                d_copy["day"] = target_days[day_idx - 1]
+            localized.append(d_copy)
+        return localized
 
     def adapt_group_schedule(
         self,
@@ -169,7 +196,9 @@ class ScheduleApiAdapter:
                 lesson_block = "\n".join(item_lines)
 
                 if time_val in time_slot_map:
-                    time_slot_map[time_val] += f"\n📚 {lesson_block}"
+                    existing_blocks = time_slot_map[time_val].split("\n📚 ")
+                    if lesson_block not in existing_blocks:
+                        time_slot_map[time_val] += f"\n📚 {lesson_block}"
                 else:
                     time_slot_map[time_val] = lesson_block
 
@@ -203,9 +232,19 @@ class ScheduleApiAdapter:
                 if not time_val:
                     continue
 
-                room = r.get("room") or ""
-                building = r.get("building") or ""
-                group_name = r.get("group") or "Занятие"
+                room = str(r.get("room") or "").strip()
+                building = str(r.get("building") or "").strip()
+                raw_group = str(r.get("group") or "Занятие").strip()
+
+                if room and building:
+                    room_str = f" ({room})" if room.endswith(f"/{building}") else f" ({room}/{building})"
+                elif room or building:
+                    room_str = f" ({room or building})"
+                else:
+                    room_str = ""
+
+                clean_group = re.sub(r"\s*\([^)]*\)", "", raw_group).strip()
+                group_name = clean_group if (room_str and clean_group) else raw_group
 
                 if time_val in time_slot_map:
                     slot_data = time_slot_map[time_val]
@@ -216,7 +255,12 @@ class ScheduleApiAdapter:
                         slot_data["building"] = building
                     eff_room = slot_data.get("room") or room
                     eff_bld = slot_data.get("building") or building
-                    eff_room_str = f" ({eff_room}/{eff_bld})" if (eff_room or eff_bld) else ""
+                    if eff_room and eff_bld:
+                        eff_room_str = f" ({eff_room})" if eff_room.endswith(f"/{eff_bld}") else f" ({eff_room}/{eff_bld})"
+                    elif eff_room or eff_bld:
+                        eff_room_str = f" ({eff_room or eff_bld})"
+                    else:
+                        eff_room_str = ""
 
                     if "groupsList" not in slot_data:
                         existing_clean = re.sub(r"\s*\([^)]*\)", "", slot_data.get("group", "")).strip()
@@ -234,7 +278,6 @@ class ScheduleApiAdapter:
                             r.get("type") or r.get("lessonType")
                         )
                 else:
-                    room_str = f" ({room}/{building})" if (room or building) else ""
                     time_slot_map[time_val] = {
                         "time": time_val,
                         "group": f"{group_name}{room_str}",

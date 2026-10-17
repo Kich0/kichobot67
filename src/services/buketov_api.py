@@ -225,21 +225,29 @@ class BuketovApiService:
         if not target_parts or not record_parts:
             return False
 
-        def _extract_surname_and_initial(parts: list[str]) -> tuple[str, str]:
+        def _extract_surname_and_initials(parts: list[str]) -> tuple[str, str, str]:
             if len(parts) >= 2 and len(parts[0]) == 1:
-                return parts[-1], parts[0]
+                surname = parts[-1]
+                init1 = parts[0]
+                init2 = parts[1][0] if len(parts) > 2 and parts[1] else ""
+                return surname, init1, init2
             surname = parts[0]
-            init = parts[1][0] if len(parts) > 1 and parts[1] else ""
-            return surname, init
+            init1 = parts[1][0] if len(parts) > 1 and parts[1] else ""
+            init2 = parts[2][0] if len(parts) > 2 and parts[2] else ""
+            return surname, init1, init2
 
-        target_surname, target_initial = _extract_surname_and_initial(target_parts)
-        record_surname, record_initial = _extract_surname_and_initial(record_parts)
+        target_surname, target_init1, target_init2 = _extract_surname_and_initials(target_parts)
+        record_surname, record_init1, record_init2 = _extract_surname_and_initials(record_parts)
 
         if target_surname != record_surname:
             return False
 
-        if target_initial and record_initial and target_initial != record_initial:
+        if target_init1 and record_init1 and target_init1 != record_init1:
             return False
+
+        if target_init2 and record_init2 and target_init2 != record_init2:
+            return False
+
         return True
 
     def _extract_surname(self, name: str) -> str:
@@ -465,12 +473,14 @@ class BuketovApiService:
             or bool(params.get("teacher"))
             or bool(params.get("q"))
             or bool(params.get("teacherId"))
+            or bool(params.get("_teacher_id"))
+            or bool(params.get("_teacher_full"))
         )
 
         try:
             if is_teacher:
-                teacher_query = params.get("teacher") or params.get("q")
-                teacher_id = params.get("teacherId")
+                teacher_query = params.get("_teacher_full") or params.get("teacher") or params.get("q")
+                teacher_id = params.get("_teacher_id") or params.get("teacherId")
 
                 if teacher_query or teacher_id:
                     from src.database.models.teacher import Teacher
@@ -479,34 +489,65 @@ class BuketovApiService:
                     teacher_doc = None
                     if teacher_id is not None:
                         try:
-                            teacher_doc = await Teacher.find_one(Teacher.teacher_id == int(teacher_id))
+                            t_num = int(teacher_id)
+                            teacher_doc = await Teacher.find_one(
+                                {"$or": [{"id": t_num}, {"teacherId": t_num}, {"teacher_id": t_num}]}
+                            )
                         except Exception:
                             teacher_doc = None
 
                     if not teacher_doc and teacher_query:
                         clean_name = self.clean_teacher_name(str(teacher_query))
                         surname = self._extract_surname(clean_name)
-                        # Search by surname regex
+                        # Search by surname regex across name and fullName
                         try:
-                            from beanie.operators import RegEx
+                            escaped_surname = re.escape(surname)
                             teacher_docs = await Teacher.find(
-                                RegEx(Teacher.name, surname, "i")
+                                {
+                                    "$or": [
+                                        {"name": {"$regex": escaped_surname, "$options": "i"}},
+                                        {"fullName": {"$regex": escaped_surname, "$options": "i"}},
+                                    ]
+                                }
                             ).to_list()
                             if teacher_docs:
                                 teacher_doc = next(
-                                    (t for t in teacher_docs if self.match_teacher_record(t.name, teacher_query)),
-                                    teacher_docs[0],
+                                    (
+                                        t for t in teacher_docs
+                                        if self.match_teacher_record(t.name, teacher_query)
+                                        or (t.full_name and self.match_teacher_record(t.full_name, teacher_query))
+                                    ),
+                                    None,
                                 )
                         except Exception:
                             teacher_doc = None
 
+                    if not teacher_doc and not teacher_id and teacher_query:
+                        try:
+                            from src.services.teacher_directory import teacher_directory_service
+                            match_dir = teacher_directory_service.find_match(str(teacher_query))
+                            if match_dir and match_dir.get("id"):
+                                teacher_id = int(match_dir["id"])
+                        except Exception:
+                            pass
+
+                    target_teacher_id = None
                     if teacher_doc:
+                        target_teacher_id = teacher_doc.teacher_id
+                    elif teacher_id is not None:
+                        try:
+                            target_teacher_id = int(teacher_id)
+                        except (ValueError, TypeError):
+                            target_teacher_id = None
+
+                    if target_teacher_id is not None:
                         sched_doc = await TeacherSchedule.find_one(
-                            TeacherSchedule.teacher_id == teacher_doc.teacher_id
+                            {"$or": [{"teacherId": target_teacher_id}, {"teacher_id": target_teacher_id}]}
                         )
                         if sched_doc:
                             days_data = getattr(sched_doc, "data", None) or getattr(sched_doc, "schedule", None)
-                            records = self._db_teacher_schedule_to_records(days_data, teacher_doc.name)
+                            display_name = teacher_doc.name if teacher_doc else str(teacher_query or f"Teacher {target_teacher_id}")
+                            records = self._db_teacher_schedule_to_records(days_data, display_name)
                             return {
                                 "records": records,
                                 "total": len(records),
@@ -576,6 +617,8 @@ class BuketovApiService:
             or bool(params.get("teacher"))
             or bool(params.get("q"))
             or bool(params.get("teacherId"))
+            or bool(params.get("_teacher_id"))
+            or bool(params.get("_teacher_full"))
         )
         target_cache = self.teacher_cache if is_teacher else self.student_cache
         target_capacity = self.TEACHER_CAPACITY if is_teacher else self.STUDENT_CAPACITY
@@ -584,7 +627,7 @@ class BuketovApiService:
         clean_params = {
             k: str(v)
             for k, v in params.items()
-            if v is not None and str(v) != ""
+            if v is not None and str(v) != "" and not k.startswith("_")
         }
         query_string = urllib.parse.urlencode(sorted(clean_params.items()))
         if query_string:
@@ -607,6 +650,15 @@ class BuketovApiService:
                         f"Circuit Breaker OPEN (API_DOWN). Returning cached data for {cache_key}."
                     )
                     return cached.data
+                try:
+                    db_res = await self.fetch_schedule_from_db(params, cache_type)
+                    if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
+                        logger.warning(
+                            f"Circuit Breaker OPEN (API_DOWN). Falling back to MongoDB records for {cache_key}."
+                        )
+                        return db_res
+                except Exception as db_err:
+                    logger.debug(f"DB fallback during Circuit Breaker OPEN failed: {db_err}")
                 raise CircuitBreakerError()
             else:
                 self.circuit_state = "HALF_OPEN"
@@ -619,6 +671,8 @@ class BuketovApiService:
             logger.warning(
                 "Reached outbound rate limit 110 req/min. Falling back to MongoDB."
             )
+            if cached and cached.data:
+                return cached.data
             return await self.fetch_schedule_from_db(params, cache_type)
 
         # Record permitted outbound request timestamp
@@ -680,6 +734,14 @@ class BuketovApiService:
                 logger.warning(f"Returning stale cached data for {cache_key} due to network error.")
                 return cached.data
 
+            try:
+                db_res = await self.fetch_schedule_from_db(params, cache_type)
+                if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
+                    logger.warning(f"Returning MongoDB fallback data for {cache_key} due to network error.")
+                    return db_res
+            except Exception as db_err:
+                logger.debug(f"DB fallback during network error failed: {db_err}")
+
             raise
 
     async def get_group_schedule(self, group_name: str, force_refresh: bool = False) -> dict[str, Any]:
@@ -696,6 +758,11 @@ class BuketovApiService:
 
         while page < max_pages:
             page += 1
+            if page > 1 and not self.can_make_api_call(headroom=2):
+                logger.warning(
+                    f"Outbound rate limit headroom exhausted in get_group_schedule for {group_name} at page {page}. Stopping pagination."
+                )
+                break
             result = await self.fetch_schedule(
                 {"group": group_name, "limit": limit, "offset": offset},
                 cache_type="student",
@@ -736,12 +803,14 @@ class BuketovApiService:
             or bool(params.get("teacher"))
             or bool(params.get("q"))
             or bool(params.get("teacherId"))
+            or bool(params.get("_teacher_id"))
+            or bool(params.get("_teacher_full"))
         )
         target_cache = self.teacher_cache if is_teacher else self.student_cache
         clean_params = {
             k: str(v)
             for k, v in params.items()
-            if v is not None and str(v) != ""
+            if v is not None and str(v) != "" and not k.startswith("_")
         }
         query_string = urllib.parse.urlencode(sorted(clean_params.items()))
         if query_string:
@@ -751,7 +820,12 @@ class BuketovApiService:
         entry = target_cache.get(cache_key)
         return entry.timestamp if entry is not None else None
 
-    async def get_teacher_schedule(self, teacher_name: str, force_refresh: bool = False) -> dict[str, Any]:
+    async def get_teacher_schedule(
+        self,
+        teacher_name: str,
+        force_refresh: bool = False,
+        teacher_id: int | str | None = None,
+    ) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial."""
         if not teacher_name:
             raise ValueError("Teacher name is required for schedule request")
@@ -765,10 +839,28 @@ class BuketovApiService:
         page_count = 0
         max_pages = 5
 
+        fetch_params: dict[str, Any] = {
+            "q": surname,
+            "limit": limit,
+            "offset": offset,
+            "_teacher_full": teacher_name,
+        }
+        if teacher_id is not None:
+            try:
+                fetch_params["_teacher_id"] = int(teacher_id)
+            except (ValueError, TypeError):
+                pass
+
         while page_count < max_pages:
             page_count += 1
+            if page_count > 1 and not self.can_make_api_call(headroom=2):
+                logger.warning(
+                    f"Outbound rate limit headroom exhausted in get_teacher_schedule for {teacher_name} at page {page_count}. Stopping pagination."
+                )
+                break
+            fetch_params["offset"] = offset
             result = await self.fetch_schedule(
-                {"q": surname, "limit": limit, "offset": offset},
+                fetch_params,
                 cache_type="teacher",
                 force_refresh=force_refresh,
             )
@@ -799,9 +891,14 @@ class BuketovApiService:
         res_dict["_cacheTimestamp"] = entry_ts or time.time()
         return res_dict
 
-    async def fetch_teacher_schedule(self, teacher_name: str, force_refresh: bool = False) -> dict[str, Any]:
+    async def fetch_teacher_schedule(
+        self,
+        teacher_name: str,
+        force_refresh: bool = False,
+        teacher_id: int | str | None = None,
+    ) -> dict[str, Any]:
         """Fetches complete schedule of a teacher filtering by surname and initial (alias for get_teacher_schedule)."""
-        return await self.get_teacher_schedule(teacher_name, force_refresh=force_refresh)
+        return await self.get_teacher_schedule(teacher_name, force_refresh=force_refresh, teacher_id=teacher_id)
 
     async def health_check(self) -> bool:
         """Checks whether Buketov Schedule API is reachable and Circuit Breaker is healthy."""

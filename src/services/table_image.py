@@ -272,7 +272,7 @@ def _render_sync(svg_markup: str, fonts_dir: str | Path | None = None) -> bytes:
     return resvg_py.svg_to_bytes(
         svg_string=svg_markup,
         font_dirs=font_dirs if font_dirs else None,
-        width=1920,
+        width=1440,
         background="#ffffff",
         shape_rendering="geometric_precision",
         text_rendering="optimize_legibility",

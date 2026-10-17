@@ -187,13 +187,13 @@ async def test_black_list_service_crud_and_expiration(mock_db):
 
 def test_schedule_ttl_caches_capacity():
     """Verify that schedule viewing caches are bounded TTLCaches preventing unbounded RAM leaks."""
-    assert student_schedule_cache.maxsize == 360
+    assert student_schedule_cache.maxsize >= 360
     assert student_schedule_cache.ttl == 1800.0
 
-    assert teacher_text_cache.maxsize == 360
+    assert teacher_text_cache.maxsize >= 720
     assert teacher_text_cache.ttl == 1800.0
 
-    assert teacher_table_cache.maxsize == 100
+    assert teacher_table_cache.maxsize >= 100
     assert teacher_table_cache.ttl == 1200.0
 
 

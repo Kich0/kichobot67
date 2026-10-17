@@ -1,17 +1,19 @@
 """Unit tests for Phase 5 Handlers and Routers: commands, callbacks, search, and admin."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiogram.types import CallbackQuery, Chat, Message, ReplyKeyboardRemove, User
 
 from src.bot.handlers.admin_router import (
+    _parse_duration,
     handle_ahelp,
     handle_ban_command,
     handle_bans_list,
     handle_get_group,
     handle_get_user,
+    handle_info,
     handle_mute_command,
     handle_sms,
     handle_stat,
@@ -636,5 +638,204 @@ async def test_search_action_logging_integration(mock_db):
         assert args[2] == "search_exact_group"
         assert 'Поиск группы "ЮР-21": найдена группа "ЮР-21"' in args[3]
         assert KNOWN_GROUPS.get(5555) == "ЮР-21"
+
+
+@pytest.mark.asyncio
+async def test_admin_sync_triggers_real_data_update(mock_db):
+    """Verifies that /sync triggers run_daily_data_update in background."""
+    from src.database.models.user import User as UserModel
+
+    admin_id = 99991
+    await UserModel(userId=admin_id, username="admin_sync", isAdmin=True).insert()
+    msg = make_message(user_id=admin_id, text="/sync")
+    with patch("src.cron.daily_update.run_daily_data_update", AsyncMock()) as mock_update:
+        await handle_sync_new_data(msg)
+        assert msg.answer.call_count >= 1
+        assert "Синхронизация запущена" in msg.answer.call_args[0][0]
+        # Wait briefly for background task
+        await asyncio.sleep(0.05)
+        assert mock_update.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_ban_and_mute_with_duration(mock_db):
+    """Verifies that /ban and /mute correctly parse durations and store until timestamps."""
+    from datetime import timedelta
+    from src.database.models.user import User as UserModel
+    from src.database.models.black_list import BlackList
+
+    admin_id = 99992
+    await UserModel(userId=admin_id, username="admin_mod", isAdmin=True).insert()
+    target_ban = UserModel(userId=8881, username="spammer8881")
+    await target_ban.insert()
+    target_mute = UserModel(userId=8882, username="spammer8882")
+    await target_mute.insert()
+
+    # 1. Ban for 30 minutes
+    now_before = datetime.now(timezone.utc)
+    msg_ban = make_message(user_id=admin_id, text="/ban 8881 30m Спам реклама")
+    await handle_ban_command(msg_ban)
+    assert msg_ban.answer.call_count == 1
+    assert "заблокирован" in msg_ban.answer.call_args[0][0]
+
+    banned_rec = await BlackList.find_one({"userId": 8881})
+    assert banned_rec is not None
+    assert banned_rec.type == "ban"
+    assert banned_rec.reason == "Спам реклама"
+    assert banned_rec.until is not None
+    ban_until_utc = banned_rec.until.replace(tzinfo=timezone.utc) if banned_rec.until.tzinfo is None else banned_rec.until
+    assert ban_until_utc > now_before + timedelta(minutes=25)
+    assert ban_until_utc < now_before + timedelta(minutes=35)
+
+    # 2. Mute for 2 hours
+    msg_mute = make_message(user_id=admin_id, text="/mute 8882 2h Флуд в чате")
+    await handle_mute_command(msg_mute)
+    assert msg_mute.answer.call_count == 1
+    assert "выдан мут" in msg_mute.answer.call_args[0][0]
+
+    muted_rec = await BlackList.find_one({"userId": 8882})
+    assert muted_rec is not None
+    assert muted_rec.type == "mute"
+    assert muted_rec.reason == "Флуд в чате"
+    assert muted_rec.until is not None
+    mute_until_utc = muted_rec.until.replace(tzinfo=timezone.utc) if muted_rec.until.tzinfo is None else muted_rec.until
+    assert mute_until_utc > now_before + timedelta(hours=1, minutes=50)
+    assert mute_until_utc < now_before + timedelta(hours=2, minutes=10)
+
+
+@pytest.mark.asyncio
+async def test_admin_info_displays_health_metrics(mock_db):
+    """Verifies that /info displays accurate uptime and memory from HealthMonitor."""
+    from src.database.models.user import User as UserModel
+    from src.api.health import health_monitor
+
+    admin_id = 99993
+    await UserModel(userId=admin_id, username="admin_info", isAdmin=True).insert()
+    msg = make_message(user_id=admin_id, text="/info")
+
+    with patch.object(health_monitor, "get_status", AsyncMock(return_value={
+        "uptime": 1234,
+        "uptime_seconds": 1234,
+        "memory_mb": 142.5,
+        "memory": {"rss_mb": 142.5},
+        "buketov_api": "CLOSED",
+    })):
+        await handle_info(msg)
+        assert msg.answer.call_count == 1
+        output = msg.answer.call_args[0][0]
+        assert "1234 сек." in output
+        assert "142.5 MB" in output
+        assert "CLOSED" in output
+
+
+@pytest.mark.asyncio
+async def test_admin_ban_mute_subaction_and_russian_durations(mock_db):
+    """Verifies that /ban supports 'mute' subaction, Russian units, and two-token durations."""
+    from datetime import timedelta
+    from src.database.models.user import User as UserModel
+    from src.database.models.black_list import BlackList
+
+    admin_id = 99994
+    await UserModel(userId=admin_id, username="admin_mod2", isAdmin=True).insert()
+    u1 = UserModel(userId=8891, username="target8891")
+    await u1.insert()
+    u2 = UserModel(userId=8892, username="target8892")
+    await u2.insert()
+    u3 = UserModel(userId=8893, username="target8893")
+    await u3.insert()
+
+    now_before = datetime.now(timezone.utc)
+
+    # 1. /ban with mute subaction and Russian duration: "mute 30мин"
+    msg1 = make_message(user_id=admin_id, text="/ban 8891 mute 30мин Спам реклама")
+    await handle_ban_command(msg1)
+    assert "выдан мут" in msg1.answer.call_args[0][0]
+    rec1 = await BlackList.find_one({"userId": 8891})
+    assert rec1 is not None
+    assert rec1.type == "mute"
+    assert rec1.reason == "Спам реклама"
+    assert rec1.until is not None
+    rec1_until = rec1.until.replace(tzinfo=timezone.utc) if rec1.until.tzinfo is None else rec1.until
+    assert rec1_until > now_before + timedelta(minutes=25)
+
+    # 2. /mute with two-token duration: "2 часа"
+    msg2 = make_message(user_id=admin_id, text="/mute 8892 2 часа Флуд в группе")
+    await handle_mute_command(msg2)
+    assert "выдан мут" in msg2.answer.call_args[0][0]
+    rec2 = await BlackList.find_one({"userId": 8892})
+    assert rec2 is not None
+    assert rec2.type == "mute"
+    assert rec2.reason == "Флуд в группе"
+    assert rec2.until is not None
+    rec2_until = rec2.until.replace(tzinfo=timezone.utc) if rec2.until.tzinfo is None else rec2.until
+    assert rec2_until > now_before + timedelta(hours=1, minutes=50)
+
+    # 3. /ban with Russian short unit: "2ч"
+    msg3 = make_message(user_id=admin_id, text="/ban 8893 2ч Нарушение правил")
+    await handle_ban_command(msg3)
+    assert "заблокирован" in msg3.answer.call_args[0][0]
+    rec3 = await BlackList.find_one({"userId": 8893})
+    assert rec3 is not None
+    assert rec3.type == "ban"
+    assert rec3.reason == "Нарушение правил"
+    assert rec3.until is not None
+    rec3_until = rec3.until.replace(tzinfo=timezone.utc) if rec3.until.tzinfo is None else rec3.until
+    assert rec3_until > now_before + timedelta(hours=1, minutes=50)
+
+
+@pytest.mark.asyncio
+async def test_admin_bans_list_with_expiry(mock_db):
+    """Verifies that /bans displays expiration timestamps for temporary and permanent restrictions."""
+    from src.database.models.user import User as UserModel
+    from src.database.models.black_list import BlackList
+    from src.services.black_list_service import black_list_service
+
+    admin_id = 99995
+    await UserModel(userId=admin_id, username="admin_bans", isAdmin=True).insert()
+
+    black_list_service.clear_cache()
+    now_dt = datetime.now(timezone.utc) + timedelta(days=2)
+    await black_list_service.add_ban(user_id=7701, until=now_dt, reason="Спам", username="temp_user")
+    await black_list_service.add_mute(user_id=7702, until=None, reason="Мат", username="perm_user")
+
+    msg = make_message(user_id=admin_id, text="/bans")
+    await handle_bans_list(msg)
+    assert msg.answer.call_count == 1
+    output = msg.answer.call_args[0][0]
+    assert "7701" in output
+    assert "до" in output
+    assert "7702" in output
+    assert "бессрочно" in output
+
+
+@pytest.mark.asyncio
+async def test_admin_sync_concurrency_guard(mock_db):
+    """Verifies that concurrent /sync requests are blocked by the concurrency lock."""
+    from src.database.models.user import User as UserModel
+
+    admin_id = 99996
+    await UserModel(userId=admin_id, username="admin_sync_guard", isAdmin=True).insert()
+
+    block_event = asyncio.Event()
+
+    async def _slow_update():
+        await block_event.wait()
+
+    msg1 = make_message(user_id=admin_id, text="/sync")
+    msg2 = make_message(user_id=admin_id, text="/sync")
+
+    with patch("src.cron.daily_update.run_daily_data_update", _slow_update):
+        # First sync starts
+        await handle_sync_new_data(msg1)
+        assert "Синхронизация запущена" in msg1.answer.call_args[0][0]
+
+        # Second sync while first is running -> blocked
+        await handle_sync_new_data(msg2)
+        assert "уже выполняется" in msg2.answer.call_args[0][0]
+
+        # Finish first sync
+        block_event.set()
+        await asyncio.sleep(0.05)
+
 
 

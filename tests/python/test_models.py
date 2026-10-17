@@ -463,3 +463,21 @@ async def test_mongoose_null_and_empty_edge_cases(mock_db):
     assert toll.paid_credits == 0
     assert toll.added_by is None
 
+
+def test_user_action_compound_index():
+    """Verifies that UserAction model specifies [('createdAt', -1), ('action', 1)] compound index."""
+    from pymongo import ASCENDING, DESCENDING
+    from src.database.models.user_action import UserAction
+
+    compound_idx = next(
+        (
+            idx
+            for idx in UserAction.Settings.indexes
+            if list(getattr(idx.document.get("key"), "items", lambda: [])())
+            == [("createdAt", DESCENDING), ("action", ASCENDING)]
+        ),
+        None,
+    )
+    assert compound_idx is not None, "Compound index [('createdAt', -1), ('action', 1)] not found in UserAction"
+
+
