@@ -16,10 +16,14 @@ class Group(BaseMongoDoc):
     age: int | None = Field(default=None)
     student_count: int | None = Field(default=None, alias="studentCount")
     program: int | None = Field(default=None, description="Program ID reference")
+    faculty: Any | None = Field(default=None, alias="facultyId", description="Faculty ID reference")
+    has_schedule: bool | None = Field(default=None, alias="hasSchedule")
+    permanent_empty: bool | None = Field(default=None, alias="permanentEmpty")
+    last_checked_at: Any | None = Field(default=None, alias="lastCheckedAt")
 
     item_id: ClassVar[Any] = ItemIdDescriptor("group_id")
 
-    @field_validator("age", "student_count", "program", mode="before")
+    @field_validator("age", "student_count", "program", "faculty", mode="before")
     @classmethod
     def _empty_to_none(cls, v: Any) -> Any:
         if v == "" or v is None:

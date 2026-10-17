@@ -794,6 +794,33 @@ class SmartWarmupEngine:
                 )
                 return
 
+            from src.bot.handlers.callbacks_router import _is_college_group
+
+            num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+            g_doc = None
+            try:
+                from src.database.models.group import Group
+
+                g_doc = await Group.find_one({"id": num_g_id}) or await Group.find_one({"groupId": num_g_id})
+            except Exception:
+                g_doc = None
+
+            fac_val = getattr(g_doc, "faculty", None) if g_doc else None
+            is_perm_empty = _is_college_group(group_name, fac_val)
+            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
+                is_perm_empty = True
+
+            if is_perm_empty:
+                logger.debug(
+                    f"[SmartWarmupEngine] Skipping network warmup for permanently empty group {group_name}; recorded in DB."
+                )
+                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
+                    student_schedule_cache.pop(k, None)
+                from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
+
+                self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=True))
+                return
+
             raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
             records = (
                 raw_data.get("records", [])
@@ -814,6 +841,13 @@ class SmartWarmupEngine:
                         f"[SmartWarmupEngine] Keeping existing valid cache for group {group_name}; fetch returned 0 lessons."
                     )
                     return
+                # Do NOT cache empty schedule in RAM
+                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
+                    student_schedule_cache.pop(k, None)
+                from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
+
+                self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=is_perm_empty))
+                return
 
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 
@@ -908,6 +942,13 @@ class SmartWarmupEngine:
                         f"[SmartWarmupEngine] Keeping existing valid cache for teacher {api_lookup}; fetch returned 0 lessons."
                     )
                     return
+                # Do NOT cache empty schedule in RAM
+                for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                    if not base:
+                        continue
+                    for lang_sfx in ("_ru", "_kz", "_рус", "_каз", "_қаз"):
+                        teacher_text_cache.pop(f"{base}{lang_sfx}", None)
+                return
 
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
 

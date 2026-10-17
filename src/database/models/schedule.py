@@ -38,6 +38,9 @@ class Schedule(BaseMongoDoc):
     hash: str | None = Field(default=None, description="SHA-256 hash of schedule content")
     changed_at: datetime | None = Field(default=None, alias="changedAt")
     checked_at: datetime | None = Field(default=None, alias="checkedAt")
+    has_schedule: bool | None = Field(default=None, alias="hasSchedule")
+    permanent_empty: bool | None = Field(default=None, alias="permanentEmpty")
+    last_checked_at: datetime | None = Field(default=None, alias="lastCheckedAt")
 
     @field_validator("data", mode="before")
     @classmethod

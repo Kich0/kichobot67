@@ -196,11 +196,12 @@ async def test_get_or_fetch_student_schedule_concurrency_lock_and_dual_cache(moc
 
 @pytest.mark.asyncio
 async def test_empty_fallback_short_ttl_bug6(mock_db):
-    """Verifies empty API fallback is not cached for 30 minutes (Bug #6)."""
+    """Verifies empty API fallback is never cached in RAM under /boost architecture and shows infinity symbol."""
     import time
     from unittest.mock import AsyncMock, patch
     from src.bot.handlers.callbacks_router import (
         clear_schedule_caches,
+        format_elapsed_time,
         get_or_fetch_student_schedule,
         student_schedule_cache,
     )
@@ -217,12 +218,13 @@ async def test_empty_fallback_short_ttl_bug6(mock_db):
     }
 
     with patch("src.bot.handlers.callbacks_router.buketov_api_service.get_group_schedule", AsyncMock(return_value=mock_empty_fallback)):
-        now_ts = time.time()
         cached = await get_or_fetch_student_schedule(group_id, "ru", is_refresh=False)
         assert cached is not None
-        # Effective TTL must be short (~20 seconds, so timestamp is backdated ~1780s)
-        entry = student_schedule_cache[f"{group_id}_ru"]
-        assert now_ts - entry["timestamp"] >= 1700.0  # Expiring soon!
+        assert cached["is_from_db"] is True
+        # Under /boost architecture: empty schedules are NEVER cached in RAM (never turn purple 🟣)
+        assert f"{group_id}_ru" not in student_schedule_cache
+        # And MongoDB-sourced status displays 🔵 ∞ rather than countdown timer
+        assert format_elapsed_time(cached["timestamp"], "ru", is_from_db=cached["is_from_db"]) == "🔵 ∞"
 
 
 @pytest.mark.asyncio

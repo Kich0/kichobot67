@@ -293,19 +293,36 @@ def _has_any_lessons(adapted_days: Any) -> bool:
     if not isinstance(adapted_days, list):
         return False
     for day_info in adapted_days:
-        if not isinstance(day_info, dict):
-            continue
-        subjects = day_info.get("subjects") or []
+        if isinstance(day_info, dict):
+            subjects = day_info.get("subjects") or []
+            groups = day_info.get("groups") or []
+        else:
+            subjects = getattr(day_info, "subjects", None) or []
+            groups = getattr(day_info, "groups", None) or []
+
         if isinstance(subjects, list):
             for s in subjects:
-                sub_title = (s.get("subject") or s.get("name") or s.get("title") or "") if isinstance(s, dict) else str(s or "")
-                if sub_title.strip():
+                if isinstance(s, dict):
+                    sub_title = s.get("subject") or s.get("name") or s.get("title") or ""
+                elif hasattr(s, "subject") or hasattr(s, "name") or hasattr(s, "title"):
+                    sub_title = getattr(s, "subject", None) or getattr(s, "name", None) or getattr(s, "title", None) or ""
+                elif isinstance(s, str):
+                    sub_title = s
+                else:
+                    sub_title = ""
+                if str(sub_title).strip():
                     return True
-        groups = day_info.get("groups") or []
         if isinstance(groups, list):
             for g in groups:
-                grp_title = (g.get("group") or g.get("subject") or "") if isinstance(g, dict) else str(g or "")
-                if grp_title.strip():
+                if isinstance(g, dict):
+                    grp_title = g.get("group") or g.get("subject") or ""
+                elif hasattr(g, "group") or hasattr(g, "subject") or hasattr(g, "name"):
+                    grp_title = getattr(g, "group", None) or getattr(g, "subject", None) or getattr(g, "name", None) or ""
+                elif isinstance(g, str):
+                    grp_title = g
+                else:
+                    grp_title = ""
+                if str(grp_title).strip():
                     return True
     return False
 
@@ -346,13 +363,14 @@ def format_elapsed_time(
     is_from_cache: bool = False,
 ) -> str:
     """Formats elapsed time indicator with emoji badges (🟢 / 🟣 / 🟡 / 🔴 / 🔵)."""
+    if is_from_db:
+        return "🔵 ∞"
+
     now = time.time()
     diff = max(0, int(now - timestamp))
     hours = diff // 3600
 
-    if is_from_db:
-        status_emoji = "🔵"
-    elif is_from_cache:
+    if is_from_cache:
         status_emoji = "🟣"
     else:
         status_emoji = "🟢"
@@ -717,6 +735,72 @@ async def handle_group_menu(call: CallbackQuery) -> None:
         await safe_edit_or_replace_message(call.message, msg_text, reply_markup=markup, parse_mode="HTML")
 
 
+def _is_college_group(group_name: str | None, faculty_id: Any | None = None) -> bool:
+    """Checks whether group belongs to KarU College or structural division without online schedule."""
+    if faculty_id in (13, "13"):
+        return True
+    if not group_name:
+        return False
+    name_clean = group_name.strip().upper()
+    if "КОЛЛЕДЖ" in name_clean or "COLLEGE" in name_clean:
+        return True
+    # Normalize Latin lookalikes (e.g. 'IS-20', 'IC-31' -> 'ИС-20', 'ИС-31')
+    name_norm = name_clean.replace("I", "И").replace("C", "С").replace("S", "С")
+    if name_norm in {"ИС-20", "ИС-21", "ИС-30", "ИС-31"}:
+        return True
+    return False
+
+
+async def _bg_persist_empty_student_schedule(group_id: int, is_permanent: bool = False) -> None:
+    """Persists empty schedule indicator (hasSchedule=false) into MongoDB for groups without schedule."""
+    if not group_id:
+        return
+    try:
+        from src.database.models.group import Group
+        from src.database.models.schedule import Schedule
+
+        num_id = int(group_id) if str(group_id).isdigit() else group_id
+        now_dt = datetime.now(timezone.utc)
+
+        g_doc = (
+            await Group.find_one(Group.group_id == num_id)
+            or await Group.find_one(Group.item_id == num_id)
+            or await Group.find_one({"id": num_id})
+            or await Group.find_one({"groupId": num_id})
+        )
+        is_college = is_permanent or (
+            g_doc is not None and _is_college_group(getattr(g_doc, "name", None), getattr(g_doc, "faculty", None))
+        )
+        if g_doc:
+            g_doc.has_schedule = False
+            g_doc.last_checked_at = now_dt
+            if is_college:
+                g_doc.permanent_empty = True
+            await g_doc.save()
+
+        s_doc = await Schedule.find_one({"groupId": num_id})
+        if s_doc:
+            s_doc.data = []
+            s_doc.has_schedule = False
+            s_doc.checked_at = now_dt
+            s_doc.last_checked_at = now_dt
+            if is_college:
+                s_doc.permanent_empty = True
+            await s_doc.save()
+        else:
+            s_doc = Schedule(
+                groupId=num_id,
+                data=[],
+                hasSchedule=False,
+                permanentEmpty=is_college,
+                checkedAt=now_dt,
+                lastCheckedAt=now_dt,
+            )
+            await s_doc.insert()
+    except Exception as e:
+        logger.debug(f"Background empty student schedule persistence error: {e}")
+
+
 async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -> None:
     """Quietly saves fresh student schedule into MongoDB Schedule collection as emergency fallback."""
     if not group_id or not adapted_data:
@@ -760,18 +844,36 @@ async def _bg_persist_student_schedule(group_id: int, adapted_data: list[Any]) -
             doc.changed_at = now_dt
             doc.checked_at = now_dt
             doc.updated_at = now_dt
+            doc.has_schedule = True
             await doc.save()
         else:
             new_doc = Schedule(
                 groupId=num_id,
                 data=canonical_data,
                 hash=sch_hash,
+                hasSchedule=True,
                 changedAt=now_dt,
                 checkedAt=now_dt,
                 updatedAt=now_dt,
             )
             await new_doc.insert()
         _persisted_student_hashes[(client_id, num_id)] = sch_hash
+
+        try:
+            from src.database.models.group import Group
+
+            g_doc = (
+                await Group.find_one(Group.group_id == num_id)
+                or await Group.find_one(Group.item_id == num_id)
+                or await Group.find_one({"id": num_id})
+                or await Group.find_one({"groupId": num_id})
+            )
+            if g_doc:
+                g_doc.has_schedule = True
+                g_doc.last_checked_at = now_dt
+                await g_doc.save()
+        except Exception:
+            pass
     except Exception as e:
         logger.debug(f"Background student schedule persistence error: {e}")
 
@@ -858,6 +960,12 @@ async def get_or_fetch_student_schedule(
     now = time.time()
     cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
 
+    # Prevent serving empty schedules from RAM cache
+    if cached and not _has_any_lessons(cached.get("data")):
+        for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз", cache_key):
+            student_schedule_cache.pop(k, None)
+        cached = None
+
     max_age_sec = 1800.0  # 30 minutes
     needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= max_age_sec)
 
@@ -871,6 +979,11 @@ async def get_or_fetch_student_schedule(
         async with lock:
             now = time.time()
             cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
+            if cached and not _has_any_lessons(cached.get("data")):
+                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз", cache_key):
+                    student_schedule_cache.pop(k, None)
+                cached = None
+
             # If recently fetched by a concurrent request, reuse without duplicate fetch (Bug #8)
             min_cooldown = 5.0 if is_refresh else max_age_sec
             if cached and (now - cached["timestamp"] < min_cooldown):
@@ -878,26 +991,147 @@ async def get_or_fetch_student_schedule(
                     cached["is_from_cache"] = True
                 return cached
 
-            grp_name = group_name
-            if not grp_name:
-                meta = _group_meta_cache.get((id(get_client()), group_id))
-                if meta and meta.get("name"):
-                    grp_name = meta["name"]
-                else:
-                    try:
-                        from src.database.models.group import Group
+            num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+            g_doc = None
+            try:
+                from src.database.models.group import Group
 
-                        num_g_id = int(group_id) if str(group_id).isdigit() else group_id
-                        g_doc = await Group.find_one({"id": num_g_id}) or await Group.find_one({"groupId": num_g_id})
-                        if g_doc and getattr(g_doc, "name", None):
-                            grp_name = g_doc.name
-                            _group_meta_cache[(id(get_client()), group_id)] = {
-                                "name": grp_name,
-                                "back_callback": "faculty|0",
-                                "age": getattr(g_doc, "age", None),
-                            }
-                    except Exception:
-                        pass
+                g_doc = (
+                    await Group.find_one(Group.group_id == num_g_id)
+                    or await Group.find_one(Group.item_id == num_g_id)
+                    or await Group.find_one({"id": num_g_id})
+                    or await Group.find_one({"groupId": num_g_id})
+                )
+                if not g_doc and group_name:
+                    g_doc = await Group.find_one({"name": group_name})
+            except Exception:
+                g_doc = None
+
+            grp_name = group_name
+            if not grp_name and g_doc and getattr(g_doc, "name", None):
+                grp_name = g_doc.name
+                _group_meta_cache[(id(get_client()), group_id)] = {
+                    "name": grp_name,
+                    "back_callback": "faculty|0",
+                    "age": getattr(g_doc, "age", None),
+                }
+
+            sched_doc = None
+            try:
+                from src.database.models.schedule import Schedule
+
+                sched_doc = await Schedule.find_one(Schedule.group_id == num_g_id) or await Schedule.find_one({"groupId": num_g_id})
+            except Exception:
+                sched_doc = None
+
+            fac_val = getattr(g_doc, "faculty", None) if g_doc else None
+            if fac_val is None and g_doc and getattr(g_doc, "program", None):
+                try:
+                    from src.database.models.program import Program
+
+                    num_p_id = int(g_doc.program) if str(g_doc.program).isdigit() else g_doc.program
+                    p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
+                    if p_doc and getattr(p_doc, "faculty", None):
+                        fac_val = p_doc.faculty
+                except Exception:
+                    pass
+
+            is_perm_empty = _is_college_group(grp_name, fac_val)
+            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
+                is_perm_empty = True
+            if sched_doc and (getattr(sched_doc, "permanent_empty", None) is True or getattr(sched_doc, "permanentEmpty", None) is True):
+                is_perm_empty = True
+
+            is_known_empty = False
+            if is_perm_empty:
+                is_known_empty = True
+            if g_doc and (getattr(g_doc, "has_schedule", None) is False or getattr(g_doc, "hasSchedule", None) is False):
+                is_known_empty = True
+            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
+                is_known_empty = True
+            if sched_doc and (getattr(sched_doc, "has_schedule", None) is False or getattr(sched_doc, "hasSchedule", None) is False):
+                is_known_empty = True
+            if sched_doc and (getattr(sched_doc, "permanent_empty", None) is True or getattr(sched_doc, "permanentEmpty", None) is True):
+                is_known_empty = True
+            if sched_doc and sched_doc.data is not None and not _has_any_lessons(sched_doc.data):
+                is_known_empty = True
+
+            # 1. Normal navigation for known empty group: instant DB return with 🔵 ∞
+            if not is_refresh and is_known_empty:
+                _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
+                empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
+                doc_ts = (
+                    sched_doc.updated_at.timestamp() if (sched_doc and sched_doc.updated_at)
+                    else (g_doc.updated_at.timestamp() if (g_doc and g_doc.updated_at) else now)
+                )
+                return {
+                    "data": empty_kz if norm_lang == "kz" else empty_ru,
+                    "timestamp": doc_ts,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                }
+
+            # 2. Refresh for known empty group: fast probe with 2.5s timeout to prevent freezes
+            if is_refresh and is_known_empty:
+                records = []
+                raw_data = {}
+                if grp_name and not is_perm_empty:
+                    try:
+                        import asyncio
+
+                        raw_data = await asyncio.wait_for(
+                            buketov_api_service.get_group_schedule(grp_name, force_refresh=True),
+                            timeout=2.5,
+                        )
+                        records = (
+                            raw_data.get("records", [])
+                            if isinstance(raw_data, dict)
+                            else (raw_data if isinstance(raw_data, list) else [])
+                        )
+                    except Exception as e:
+                        logger.debug(f"Fast refresh probe for empty group {grp_name} timed out or failed: {e}")
+                        records = []
+                        raw_data = {}
+
+                adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
+                adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
+                has_lessons = bool(records) and _has_any_lessons(adapted_ru)
+
+                if not has_lessons:
+                    _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                    for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
+                        student_schedule_cache.pop(k, None)
+                    return {
+                        "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                        "timestamp": now,
+                        "is_from_db": True,
+                        "is_from_cache": False,
+                    }
+                else:
+                    is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
+                    entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
+                    ts = now if is_refresh else entry_ts
+                    cached_ru = {
+                        "data": adapted_ru,
+                        "timestamp": ts,
+                        "is_from_db": is_from_db,
+                        "is_from_cache": False,
+                    }
+                    cached_kz = {
+                        "data": adapted_kz,
+                        "timestamp": ts,
+                        "is_from_db": is_from_db,
+                        "is_from_cache": False,
+                    }
+                    student_schedule_cache[f"{group_id}_ru"] = cached_ru
+                    student_schedule_cache[f"{group_id}_kz"] = cached_kz
+                    student_schedule_cache[f"{group_id}_рус"] = cached_ru
+                    student_schedule_cache[f"{group_id}_каз"] = cached_kz
+                    student_schedule_cache[f"{group_id}_қаз"] = cached_kz
+                    if not is_from_db:
+                        _safe_create_task(_bg_persist_student_schedule(group_id, adapted_ru))
+                    return cached_kz if norm_lang == "kz" else cached_ru
 
             if grp_name and not (grp_name.startswith("Группа ") and grp_name.replace("Группа ", "").strip().isdigit()):
                 try:
@@ -961,19 +1195,31 @@ async def get_or_fetch_student_schedule(
                         except Exception:
                             pass
 
+                        # 3. Confirmed empty schedule: mark in MongoDB and DO NOT cache in RAM
+                        _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                        for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
+                            student_schedule_cache.pop(k, None)
+
+                        return {
+                            "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                            "timestamp": now,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+
                     entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
-                    ts = now if is_refresh else ((now - (max_age_sec - 20.0)) if not has_lessons else entry_ts)
+                    ts = now if is_refresh else entry_ts
 
                     cached_ru = {
                         "data": adapted_ru,
                         "timestamp": ts,
-                        "is_from_db": is_from_db or not has_lessons,
+                        "is_from_db": is_from_db,
                         "is_from_cache": False,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
-                        "is_from_db": is_from_db or not has_lessons,
+                        "is_from_db": is_from_db,
                         "is_from_cache": False,
                     }
 
@@ -996,7 +1242,7 @@ async def get_or_fetch_student_schedule(
                     from src.database.models.schedule import Schedule
 
                     doc = await Schedule.find_one({"groupId": group_id})
-                    if doc and doc.data:
+                    if doc and doc.data and _has_any_lessons(doc.data):
                         # Bug #7: dynamically localize day names from DB fallback
                         localized_ru = _localize_schedule_days(doc.data, "ru")
                         localized_kz = _localize_schedule_days(doc.data, "kz")
@@ -1019,6 +1265,16 @@ async def get_or_fetch_student_schedule(
                         student_schedule_cache[f"{group_id}_каз"] = cached_kz
                         student_schedule_cache[f"{group_id}_қаз"] = cached_kz
                         cached = cached_kz if norm_lang == "kz" else cached_ru
+                    elif doc:
+                        empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
+                        empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
+                        doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
+                        cached = {
+                            "data": empty_kz if norm_lang == "kz" else empty_ru,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
                 except Exception:
                     pass
     return cached
@@ -1232,10 +1488,11 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
 
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
+        from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
         text, markup = await build_student_day_schedule_view(
-            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=True
+            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache
         )
         if call.message:
             try:
@@ -1489,19 +1746,33 @@ async def get_or_fetch_teacher_text_schedule(
                         except Exception:
                             pass
 
+                        # 3. No lessons found: do not cache in RAM, return as DB fallback (🔵 ∞)
+                        for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                            if not base:
+                                continue
+                            for lang_sfx in ("_ru", "_kz", "_рус", "_каз", "_қаз"):
+                                teacher_text_cache.pop(f"{base}{lang_sfx}", None)
+
+                        return {
+                            "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                            "timestamp": now,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+
                     entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
-                    ts = now if is_refresh else ((now - 1780.0) if not has_lessons else entry_ts)
+                    ts = now if is_refresh else entry_ts
 
                     cached_ru = {
                         "data": adapted_ru,
                         "timestamp": ts,
-                        "is_from_db": is_from_db or not has_lessons,
+                        "is_from_db": is_from_db,
                         "is_from_cache": False,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
-                        "is_from_db": is_from_db or not has_lessons,
+                        "is_from_db": is_from_db,
                         "is_from_cache": False,
                     }
 
@@ -1528,7 +1799,7 @@ async def get_or_fetch_teacher_text_schedule(
 
                     num_t_id = int(canonical_id) if str(canonical_id).isdigit() else canonical_id
                     doc = await TeacherSchedule.find_one({"teacherId": num_t_id})
-                    if doc and doc.data:
+                    if doc and doc.data and _has_any_lessons(doc.data):
                         # Bug #7: dynamically localize day names from DB fallback
                         localized_ru = _localize_schedule_days(doc.data, "ru")
                         localized_kz = _localize_schedule_days(doc.data, "kz")
@@ -1554,18 +1825,29 @@ async def get_or_fetch_teacher_text_schedule(
                             teacher_text_cache[f"{base}_каз"] = cached_kz
                             teacher_text_cache[f"{base}_қаз"] = cached_kz
                         cached = cached_kz if norm_lang == "kz" else cached_ru
+                    elif doc:
+                        empty_ru = schedule_api_adapter.adapt_teacher_schedule([], "ru")
+                        empty_kz = schedule_api_adapter.adapt_teacher_schedule([], "kz")
+                        doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
+                        cached = {
+                            "data": empty_kz if norm_lang == "kz" else empty_ru,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
                 except Exception:
                     pass
 
-            # Bug #6: If fetch failed and DB is empty, DO NOT cache for 30 minutes! Short TTL = 20s
+            # If fetch failed and DB is empty, DO NOT cache in RAM cache (never turn purple 🟣)
             if not cached:
+                empty_ru = schedule_api_adapter.adapt_teacher_schedule([], "ru")
+                empty_kz = schedule_api_adapter.adapt_teacher_schedule([], "kz")
                 cached = {
-                    "data": schedule_api_adapter.adapt_teacher_schedule([], norm_lang),
-                    "timestamp": now - 1780.0,
+                    "data": empty_kz if norm_lang == "kz" else empty_ru,
+                    "timestamp": now,
                     "is_from_db": True,
+                    "is_from_cache": False,
                 }
-                for k in alias_keys:
-                    teacher_text_cache[k] = cached
 
     return cached
 
@@ -1749,11 +2031,12 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         if call.message and call.message.photo:
             if not cached.get("is_from_db"):
                 cached["is_from_cache"] = True
+            from_cache = False if cached.get("is_from_db") else True
             elapsed = format_elapsed_time(
                 cached["timestamp"],
                 ui_lang,
                 is_from_db=cached.get("is_from_db", False),
-                is_from_cache=True,
+                is_from_cache=from_cache,
             )
             clock = format_timestamp_clock(cached["timestamp"])
             caption = (
@@ -1849,7 +2132,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
 
                             num_t_id = int(can_id_num) if str(can_id_num).isdigit() else can_id_num
                             doc = await TeacherSchedule.find_one({"teacherId": num_t_id})
-                            if doc and doc.data:
+                            if doc and doc.data and _has_any_lessons(doc.data):
                                 canonical_days = _localize_schedule_days(doc.data, "ru")
                                 cached = {
                                     "data": canonical_days,
@@ -1862,21 +2145,23 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
                                     teacher_table_cache[str(teacher_id)] = cached
                                 if teacher_name:
                                     teacher_table_cache[teacher_name] = cached
+                            elif doc:
+                                cached = {
+                                    "data": schedule_api_adapter.adapt_teacher_schedule([], "ru"),
+                                    "timestamp": doc.updated_at.timestamp() if doc.updated_at else now,
+                                    "is_from_db": True,
+                                    "is_from_cache": False,
+                                }
                         except Exception:
                             pass
-                    # Bug #6: do not cache empty failure for 20 minutes (short TTL = 20s)
+                    # If fetch failed and DB is empty, DO NOT cache in RAM table cache!
                     if not cached:
                         cached = {
                             "data": schedule_api_adapter.adapt_teacher_schedule([], "ru"),
-                            "timestamp": now - 1180.0,
+                            "timestamp": now,
                             "is_from_db": True,
                             "is_from_cache": False,
                         }
-                        teacher_table_cache[t_id_str] = cached
-                        if str(teacher_id) != t_id_str:
-                            teacher_table_cache[str(teacher_id)] = cached
-                        if teacher_name:
-                            teacher_table_cache[teacher_name] = cached
     else:
         await call.answer()
 
@@ -2012,10 +2297,11 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
             break
 
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
+        from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
         text, markup = await build_teacher_day_text_view(
-            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=True
+            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache
         )
         if call.message:
             try:
@@ -2083,9 +2369,11 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
 
 
 __all__ = [
+    "_bg_persist_empty_student_schedule",
     "_bg_persist_student_schedule",
     "_bg_persist_teacher_schedule",
     "_has_any_lessons",
+    "_is_college_group",
     "_localize_schedule_days",
     "build_student_day_schedule_view",
     "build_teacher_day_text_view",
