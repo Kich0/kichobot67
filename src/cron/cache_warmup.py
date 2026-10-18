@@ -272,6 +272,36 @@ class SmartWarmupEngine:
         task.add_done_callback(self._background_tasks.discard)
         return task
 
+    def _log_warmup_result(
+        self,
+        name: str,
+        target_type: str,
+        badge: str,
+        source: str,
+        duration_ms: int,
+        status: bool = True,
+        error_msg: str | None = None,
+    ) -> None:
+        """Persists warmup cycle audit entry into WarmupLog collection via fire-and-forget task."""
+        async def _persist() -> None:
+            try:
+                from src.database.models.warmup_log import WarmupLog
+
+                log_entry = WarmupLog(
+                    name=name,
+                    target_type=target_type,
+                    badge=badge,
+                    source=source,
+                    duration_ms=duration_ms,
+                    status=status,
+                    error_msg=error_msg,
+                )
+                await log_entry.insert()
+            except Exception as e:
+                logger.debug(f"[SmartWarmupEngine] Failed to save WarmupLog: {e}")
+
+        self._create_background_task(_persist())
+
     @property
     def is_running(self) -> bool:
         """Returns True if the engine is currently running."""
@@ -738,6 +768,7 @@ class SmartWarmupEngine:
 
     async def _warm_group(self, group_id: int, group_name: str) -> None:
         """Fetches and warms schedule for a single group into RAM and DB fallback."""
+        t0 = time.perf_counter()
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_student_schedule,
@@ -771,6 +802,17 @@ class SmartWarmupEngine:
 
             if not group_name or (group_name.startswith("Группа ") and group_name.replace("Группа ", "").strip().isdigit()):
                 logger.debug(f"[SmartWarmupEngine] Skipping warmup for group id={group_id}: name not resolved.")
+                duration_ms = int((time.perf_counter() - t0) * 1000)
+                clean_name = group_name if (group_name and not (group_name.startswith("Группа ") and group_name.replace("Группа ", "").strip().isdigit())) else f"Group {group_id}"
+                self._log_warmup_result(
+                    name=clean_name,
+                    target_type="group",
+                    badge="🔴",
+                    source="error",
+                    duration_ms=duration_ms,
+                    status=False,
+                    error_msg=f"Group name for id={group_id} not resolved",
+                )
                 return
 
             # Skip redundant network fetch if already recently cached (< 3 min) and not from DB fallback
@@ -791,6 +833,15 @@ class SmartWarmupEngine:
             ):
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping redundant warmup for group {group_name}; recently cached."
+                )
+                duration_ms = int((time.perf_counter() - t0) * 1000)
+                self._log_warmup_result(
+                    name=group_name,
+                    target_type="group",
+                    badge="🟣",
+                    source="cache",
+                    duration_ms=duration_ms,
+                    status=True,
                 )
                 return
 
@@ -819,6 +870,15 @@ class SmartWarmupEngine:
                 from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
 
                 self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=True))
+                duration_ms = int((time.perf_counter() - t0) * 1000)
+                self._log_warmup_result(
+                    name=group_name,
+                    target_type="group",
+                    badge="🟣",
+                    source="cache",
+                    duration_ms=duration_ms,
+                    status=True,
+                )
                 return
 
             raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
@@ -828,6 +888,18 @@ class SmartWarmupEngine:
                 else (raw_data if isinstance(raw_data, list) else [])
             )
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
+
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            badge = "🔵" if is_from_db else "🟢"
+            source = "db" if is_from_db else "api"
+            self._log_warmup_result(
+                name=group_name,
+                target_type="group",
+                badge=badge,
+                source=source,
+                duration_ms=duration_ms,
+                status=True,
+            )
 
             adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
             adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
@@ -867,10 +939,23 @@ class SmartWarmupEngine:
                 self._create_background_task(_bg_persist_student_schedule(group_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for group {group_name} (id={group_id})")
         except Exception as e:
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            clean_err_name = group_name if (group_name and not (group_name.startswith("Группа ") and group_name.replace("Группа ", "").strip().isdigit())) else f"Group {group_id}"
+            self._log_warmup_result(
+                name=clean_err_name,
+                target_type="group",
+                badge="🔴",
+                source="error",
+                duration_ms=duration_ms,
+                status=False,
+                error_msg=str(e),
+            )
             logger.warning(f"[SmartWarmupEngine] Error warming group {group_name} (id={group_id}): {e}")
 
     async def _warm_teacher(self, teacher_id: int | str, teacher_name: str) -> None:
         """Fetches and warms schedule for a single teacher into RAM and DB fallback with multi-key aliasing."""
+        t0 = time.perf_counter()
+        api_lookup = teacher_name
         try:
             from src.bot.handlers.callbacks_router import (
                 _bg_persist_teacher_schedule,
@@ -906,6 +991,15 @@ class SmartWarmupEngine:
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping redundant warmup for teacher {api_lookup}; recently cached."
                 )
+                duration_ms = int((time.perf_counter() - t0) * 1000)
+                self._log_warmup_result(
+                    name=api_lookup,
+                    target_type="teacher",
+                    badge="🟣",
+                    source="cache",
+                    duration_ms=duration_ms,
+                    status=True,
+                )
                 return
 
             if not api_lookup or str(api_lookup).isdigit() or str(api_lookup).startswith("ID "):
@@ -919,6 +1013,21 @@ class SmartWarmupEngine:
                 if profile_cand:
                     api_lookup = profile_cand.get("name") or profile_cand.get("fullName") or api_lookup
 
+            if not api_lookup or str(api_lookup).isdigit() or str(api_lookup).startswith("ID "):
+                logger.debug(f"[SmartWarmupEngine] Skipping warmup for teacher id={teacher_id}: name not resolved.")
+                duration_ms = int((time.perf_counter() - t0) * 1000)
+                clean_name = teacher_name if (teacher_name and not str(teacher_name).isdigit() and not str(teacher_name).startswith("ID ")) else f"Teacher {teacher_id}"
+                self._log_warmup_result(
+                    name=clean_name,
+                    target_type="teacher",
+                    badge="🔴",
+                    source="error",
+                    duration_ms=duration_ms,
+                    status=False,
+                    error_msg=f"Teacher name for id={teacher_id} not resolved",
+                )
+                return
+
             raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=True)
             records = (
                 raw_data.get("records", [])
@@ -926,6 +1035,18 @@ class SmartWarmupEngine:
                 else (raw_data if isinstance(raw_data, list) else [])
             )
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
+
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            badge = "🔵" if is_from_db else "🟢"
+            source = "db" if is_from_db else "api"
+            self._log_warmup_result(
+                name=api_lookup,
+                target_type="teacher",
+                badge=badge,
+                source=source,
+                duration_ms=duration_ms,
+                status=True,
+            )
 
             adapted_ru = schedule_api_adapter.adapt_teacher_schedule(records, "ru")
             adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
@@ -1023,6 +1144,17 @@ class SmartWarmupEngine:
                 self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for teacher {api_lookup} (id={canonical_id})")
         except Exception as e:
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            clean_err_name = teacher_name if (teacher_name and not str(teacher_name).isdigit() and not str(teacher_name).startswith("ID ")) else (api_lookup if (api_lookup and not str(api_lookup).isdigit() and not str(api_lookup).startswith("ID ")) else f"Teacher {teacher_id}")
+            self._log_warmup_result(
+                name=clean_err_name,
+                target_type="teacher",
+                badge="🔴",
+                source="error",
+                duration_ms=duration_ms,
+                status=False,
+                error_msg=str(e),
+            )
             logger.warning(f"[SmartWarmupEngine] Error warming teacher {teacher_name} (id={teacher_id}): {e}")
 
     async def _group_worker(self) -> None:

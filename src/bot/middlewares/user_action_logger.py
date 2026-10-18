@@ -158,39 +158,14 @@ def register_department_name(department_id: int | str | None, name: str | None) 
             pass
 
 
-def describe_callback_query(
-    call_data: str,
+def _parse_callback_query(
+    raw: str,
     group_map: dict[int, str] | None = None,
     teacher_map: dict[int, str] | None = None,
     faculty_map: dict[int, str] | None = None,
     program_map: dict[int, str] | None = None,
     department_map: dict[int, str] | None = None,
 ) -> tuple[str, str, int | None, str | None]:
-    """Translates technical callback string into a clear human-readable Russian description.
-
-    Returns:
-        tuple of (action_code, descriptive_text, entity_id, entity_name)
-    """
-    if not call_data:
-        return ("button_click", "Нажатие кнопки", None, None)
-
-    raw = str(call_data).strip()
-
-    # If already a human-readable action description, return as is
-    if (
-        raw.startswith("[")
-        or raw.startswith("🆕")
-        or raw.startswith("Открыл")
-        or raw.startswith("Обновил")
-        or raw.startswith("Выбор")
-        or raw.startswith("Сменил")
-        or raw.startswith("Удалил")
-        or raw.startswith("Вернулся")
-        or raw.startswith("Переключился")
-        or raw.startswith("Поиск")
-    ):
-        return ("button_click", raw, None, None)
-
     raw_lower = raw.lower()
 
     if raw == "start":
@@ -449,6 +424,64 @@ def describe_callback_query(
         return ("search_teacher_page", f'Пагинация поиска преподавателей: "{name}" (стр. {page + 1})', None, name)
 
     return ("button_click", raw, None, None)
+
+
+def describe_callback_query(
+    call_data: str,
+    group_map: dict[int, str] | None = None,
+    teacher_map: dict[int, str] | None = None,
+    faculty_map: dict[int, str] | None = None,
+    program_map: dict[int, str] | None = None,
+    department_map: dict[int, str] | None = None,
+    schedule_badge: str | None = None,
+) -> tuple[str, str, int | None, str | None]:
+    """Translates technical callback string into a clear human-readable Russian description.
+
+    Returns:
+        tuple of (action_code, descriptive_text, entity_id, entity_name)
+    """
+    if not call_data:
+        return ("button_click", "Нажатие кнопки", None, None)
+
+    raw = str(call_data).strip()
+
+    # Extract existing badge if present at the start: e.g. "[🟢] schedule|..." or "[🟢] Открыл..."
+    extracted_badge = schedule_badge
+    match_badge = re.match(r"^\[([🟢🟣🔵🔴])\]\s*", raw)
+    if match_badge:
+        if not extracted_badge:
+            extracted_badge = match_badge.group(1)
+        raw = raw[match_badge.end():].strip()
+
+    # If already a human-readable action description, return with badge preserved
+    if (
+        raw.startswith("[")
+        or raw.startswith("🆕")
+        or raw.startswith("Открыл")
+        or raw.startswith("Обновил")
+        or raw.startswith("Выбор")
+        or raw.startswith("Сменил")
+        or raw.startswith("Удалил")
+        or raw.startswith("Вернулся")
+        or raw.startswith("Переключился")
+        or raw.startswith("Поиск")
+    ):
+        full_text = f"[{extracted_badge}] {raw}" if extracted_badge and not raw.startswith(f"[{extracted_badge}]") else raw
+        return ("button_click", full_text, None, None)
+
+    action, desc, ent_id, ent_name = _parse_callback_query(
+        raw,
+        group_map=group_map,
+        teacher_map=teacher_map,
+        faculty_map=faculty_map,
+        program_map=program_map,
+        department_map=department_map,
+    )
+
+    if extracted_badge and not desc.startswith(f"[{extracted_badge}]"):
+        desc = f"[{extracted_badge}] {desc}"
+
+    return (action, desc, ent_id, ent_name)
 
 
 class _BoundedUserSet(TTLCache[int, bool]):
@@ -784,15 +817,25 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             call_data = event.data or "callback"
             if call_data == "nothing":
                 return await handler(event, data)
-            action, desc, entity_id, entity_name = describe_callback_query(call_data)
-            await self.log_action(
-                user_id,
-                username,
-                action,
-                desc,
-                entity_id=entity_id,
-                entity_name=entity_name,
-            )
+
+            data["data"] = data
+            try:
+                result = await handler(event, data)
+            finally:
+                try:
+                    badge = data.get("schedule_badge")
+                    action, desc, entity_id, entity_name = describe_callback_query(call_data, schedule_badge=badge)
+                    await self.log_action(
+                        user_id,
+                        username,
+                        action,
+                        desc,
+                        entity_id=entity_id,
+                        entity_name=entity_name,
+                    )
+                except Exception as log_err:
+                    logger.debug(f"User action logging error in callback: {log_err}")
+            return result
 
         return await handler(event, data)
 

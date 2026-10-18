@@ -1450,7 +1450,7 @@ async def render_student_day_schedule_message(
     | F.data.startswith("chooseScheduleLanguage|")
     | F.data.startswith("refreshchooseScheduleLanguage|")
 )
-async def handle_student_schedule_view(call: CallbackQuery) -> None:
+async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any] | None = None, **kwargs: Any) -> None:
     """Renders student schedule by day with ◀️, 🔄, ▶️ pagination and refresh cooldown."""
     data_str = call.data or ""
     is_refresh = data_str.startswith("refresh")
@@ -1486,11 +1486,15 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
     now = time.time()
     cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
 
+    target_data = data if data is not None else kwargs
+
     # 1. Refresh button clicked within cooldown (10 minutes)
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
         text, markup = await build_student_day_schedule_view(
             cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache
         )
@@ -1516,6 +1520,9 @@ async def handle_student_schedule_view(call: CallbackQuery) -> None:
                 reply_markup=get_faculties_keyboard([], lang=ui_lang),
             )
         return
+
+    badge = "🔵" if cached.get("is_from_db") else ("🟣" if cached.get("is_from_cache") else "🟢")
+    target_data["schedule_badge"] = badge
 
     text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
     if call.message:
@@ -1993,7 +2000,7 @@ async def render_teacher_day_schedule_message(
 # === Teacher Schedule Table Image (with 20m Cooldown & Telegram file_id Reuse) ===
 
 @callbacks_router.callback_query(F.data.startswith("teacherImg|") | F.data.startswith("refreshteacherImg|"))
-async def handle_teacher_table_image(call: CallbackQuery) -> None:
+async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] | None = None, **kwargs: Any) -> None:
     """Renders visual PNG schedule table for a teacher or reuses cached file_id."""
     raw_data = call.data or ""
     is_refresh = raw_data.startswith("refreshteacherImg|")
@@ -2026,11 +2033,15 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
         or teacher_table_cache.get(teacher_name)
     )
 
+    target_data = data if data is not None else kwargs
+
     # 1. 20-minute cooldown check on refresh
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
         if call.message and call.message.photo:
-            if not cached.get("is_from_db"):
-                cached["is_from_cache"] = True
             from_cache = False if cached.get("is_from_db") else True
             elapsed = format_elapsed_time(
                 cached["timestamp"],
@@ -2067,6 +2078,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
             if cached and (now - cached["timestamp"] < min_cooldown):
                 # Bug #8: Another concurrent request already fetched or refreshed this teacher
                 if is_refresh:
+                    target_data["schedule_badge"] = "🔵" if cached.get("is_from_db") else "🟣"
                     await call.answer()
                     return
             else:
@@ -2174,6 +2186,9 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     if not needs_fetch and not cached.get("is_from_db"):
         from_cache = True
         cached["is_from_cache"] = True
+
+    badge = "🔵" if cached.get("is_from_db") else ("🟣" if (from_cache or not needs_fetch) else "🟢")
+    target_data["schedule_badge"] = badge
     elapsed = format_elapsed_time(
         cached["timestamp"],
         ui_lang,
@@ -2247,7 +2262,7 @@ async def handle_teacher_table_image(call: CallbackQuery) -> None:
     | F.data.startswith("TeacherSchedule|")
     | F.data.startswith("refreshTeacherSchedule|")
 )
-async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
+async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any] | None = None, **kwargs: Any) -> None:
     """Renders teacher schedule in text format by day."""
     raw_data = call.data or ""
     is_refresh = raw_data.startswith("refreshTeacherSchedule|")
@@ -2296,10 +2311,14 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
         if cached:
             break
 
+    target_data = data if data is not None else kwargs
+
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
         text, markup = await build_teacher_day_text_view(
             cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache
         )
@@ -2339,6 +2358,9 @@ async def handle_teacher_text_schedule(call: CallbackQuery) -> None:
                 except Exception:
                     pass
         return
+
+    badge = "🔵" if cached.get("is_from_db") else ("🟣" if cached.get("is_from_cache") else "🟢")
+    target_data["schedule_badge"] = badge
 
     text, markup = await build_teacher_day_text_view(cached, canonical_id, day_num, ui_lang, teacher_name=tch_name)
     if call.message:
