@@ -15,10 +15,10 @@ from src.database.models import Group, Schedule, ScheduleDay, SubjectItem, Teach
 def test_buketov_api_initial_capacities():
     """Verifies partitioned cache capacities and default parameters."""
     service = BuketovApiService()
-    assert service.STUDENT_CAPACITY == 1000
-    assert service.TEACHER_CAPACITY == 300
+    assert service.STUDENT_CAPACITY == 3000
+    assert service.TEACHER_CAPACITY == 1500
     assert service.circuit_state == "CLOSED"
-    assert service.MAX_REQUESTS_PER_MINUTE == 110
+    assert service.MAX_REQUESTS_PER_MINUTE == 90
     assert service.REQUEST_TIMEOUT_SECONDS == 4.5
 
 
@@ -113,16 +113,16 @@ async def test_circuit_breaker_raises_503_or_returns_cache():
 
 
 def test_rate_limiter_window():
-    """Verifies sliding window rate limiter prevents exceeding 110 req/min."""
+    """Verifies sliding window rate limiter prevents exceeding 90 req/min."""
     service = BuketovApiService()
     now = time.time()
-    service.outbound_request_timestamps = [now - 10.0] * 110
+    service.outbound_request_timestamps = [now - 10.0] * service.MAX_REQUESTS_PER_MINUTE
 
     assert service.check_rate_limit() is False
     assert service.can_make_api_call() is False
 
     # Old timestamps outside 60s window are pruned
-    service.outbound_request_timestamps = [now - 70.0] * 110
+    service.outbound_request_timestamps = [now - 70.0] * service.MAX_REQUESTS_PER_MINUTE
     assert service.check_rate_limit() is True
     assert service.can_make_api_call() is True
 
@@ -536,9 +536,9 @@ async def test_pagination_stops_when_rate_limit_headroom_exhausted():
     """Verifies that pagination stops if rate limit headroom (2 req) is exhausted."""
     service = BuketovApiService()
     now = time.time()
-    # Fill timestamps so only 1 request is available before reaching 110 (109 filled)
-    # Headroom = 2 requires < 108 requests, so can_make_api_call(headroom=2) is False
-    service.outbound_request_timestamps = [now] * 109
+    # Fill timestamps so only 1 request is available before reaching rate limit
+    # Headroom = 2 requires < (MAX_REQUESTS_PER_MINUTE - 2) requests, so can_make_api_call(headroom=2) is False
+    service.outbound_request_timestamps = [now] * (service.MAX_REQUESTS_PER_MINUTE - 1)
 
     calls = 0
 
@@ -557,7 +557,7 @@ async def test_pagination_stops_when_rate_limit_headroom_exhausted():
     service._client = mock_client
 
     try:
-        # Page 1 passes via check_rate_limit (109 < 110), but page 2 is blocked by can_make_api_call(headroom=2)
+        # Page 1 passes via check_rate_limit, but page 2 is blocked by can_make_api_call(headroom=2)
         res = await service.get_group_schedule("TEST-HEADROOM")
         assert calls == 1
         assert len(res["records"]) == 1

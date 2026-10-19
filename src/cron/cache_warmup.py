@@ -21,6 +21,7 @@ import zoneinfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from cachetools import TTLCache
 
 from src.core.constants import TIMEZONE_NAME
 from src.core.logging import get_logger
@@ -82,7 +83,7 @@ class SmartWarmupEngine:
     TOP_GROUPS_LIMIT: int = 150
     TOP_TEACHERS_LIMIT: int = 60
     TOP_LISTS_CACHE_TTL: float = 3600.0  # 1 hour (was 900.0)
-    HEADROOM: int = 5  # Leave at least 5 req/min margin under 110 limit
+    HEADROOM: int = 25  # Leave at least 25 req/min margin under API limit (was 5)
 
     SLEEP_CHECK_INTERVAL_SEC: float = 60.0
     PAUSE_CHECK_INTERVAL_SEC: float = 5.0
@@ -94,16 +95,16 @@ class SmartWarmupEngine:
         self._teacher_task: asyncio.Task[Any] | None = None
         self._pause_until: float = 0.0
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._tick_lock: asyncio.Lock = asyncio.Lock()
 
         self._groups_cache: list[tuple[int, str]] = []
         self._groups_cache_updated_at: float = 0.0
         self._teachers_cache: list[tuple[int | str, str]] = []
         self._teachers_cache_updated_at: float = 0.0
-        self._priority_teachers: dict[int | str, tuple[str, float]] = {}  # id -> (name, expires_at)
-        self._priority_groups: dict[int, tuple[str, float]] = {}  # id -> (name, expires_at)
+        self._priority_teachers: TTLCache[int | str, tuple[str, float]] = TTLCache(maxsize=3000, ttl=7200.0, timer=time.time)
+        self._priority_groups: TTLCache[int, tuple[str, float]] = TTLCache(maxsize=3000, ttl=7200.0, timer=time.time)
         self._priority_groups_queue: collections.deque[tuple[int, str]] = collections.deque(maxlen=25)
         self._priority_teachers_queue: collections.deque[tuple[int | str, str]] = collections.deque(maxlen=25)
-        self._tick_lock: asyncio.Lock = asyncio.Lock()
         self._recent_logs: collections.deque[dict[str, Any]] = collections.deque(maxlen=100)
         self._group_cursor: int = 0
         self._teacher_cursor: int = 0
@@ -435,9 +436,10 @@ class SmartWarmupEngine:
         """Retrieves top popular student groups from cache or database."""
         now = time.time()
         # Clean expired priority groups
-        self._priority_groups = {
-            gid: (name, exp) for gid, (name, exp) in self._priority_groups.items() if exp > now
-        }
+        for gid in list(self._priority_groups.keys()):
+            entry = self._priority_groups.get(gid)
+            if entry and isinstance(entry, (tuple, list)) and len(entry) > 1 and entry[1] <= now:
+                self._priority_groups.pop(gid, None)
 
         if self._groups_cache and (now - self._groups_cache_updated_at < self.TOP_LISTS_CACHE_TTL):
             return self._groups_cache
@@ -541,9 +543,10 @@ class SmartWarmupEngine:
         """Retrieves top popular teachers from cache, database, or directory based on 45-day activity."""
         now = time.time()
         # Clean expired priority teachers
-        self._priority_teachers = {
-            tid: (name, exp) for tid, (name, exp) in self._priority_teachers.items() if exp > now
-        }
+        for tid in list(self._priority_teachers.keys()):
+            entry = self._priority_teachers.get(tid)
+            if entry and isinstance(entry, (tuple, list)) and len(entry) > 1 and entry[1] <= now:
+                self._priority_teachers.pop(tid, None)
 
         if self._teachers_cache and (now - self._teachers_cache_updated_at < self.TOP_LISTS_CACHE_TTL):
             return self._teachers_cache
@@ -889,8 +892,6 @@ class SmartWarmupEngine:
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping network warmup for permanently empty group {group_name}; recorded in DB."
                 )
-                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
-                    student_schedule_cache.pop(k, None)
                 from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
 
                 self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=True))
@@ -905,7 +906,7 @@ class SmartWarmupEngine:
                 )
                 return
 
-            raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
+            raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=False)
             records = (
                 raw_data.get("records", [])
                 if isinstance(raw_data, dict)
@@ -937,9 +938,7 @@ class SmartWarmupEngine:
                         f"[SmartWarmupEngine] Keeping existing valid cache for group {group_name}; fetch returned 0 lessons."
                     )
                     return
-                # Do NOT cache empty schedule in RAM
-                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
-                    student_schedule_cache.pop(k, None)
+                # Do NOT pop existing RAM cache
                 from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
 
                 self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=is_perm_empty))
@@ -1052,7 +1051,7 @@ class SmartWarmupEngine:
                 )
                 return
 
-            raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=True)
+            raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=False)
             records = (
                 raw_data.get("records", [])
                 if isinstance(raw_data, dict)
@@ -1087,12 +1086,7 @@ class SmartWarmupEngine:
                         f"[SmartWarmupEngine] Keeping existing valid cache for teacher {api_lookup}; fetch returned 0 lessons."
                     )
                     return
-                # Do NOT cache empty schedule in RAM
-                for base in (canonical_id, teacher_id, tch_name, lookup_name):
-                    if not base:
-                        continue
-                    for lang_sfx in ("_ru", "_kz", "_рус", "_каз", "_қаз"):
-                        teacher_text_cache.pop(f"{base}{lang_sfx}", None)
+                # Do NOT pop existing RAM cache
                 return
 
             entry_ts = float(raw_data.get("_cacheTimestamp") or time.time()) if isinstance(raw_data, dict) else time.time()
@@ -1227,13 +1221,13 @@ class SmartWarmupEngine:
                 if not from_priority and groups:
                     self._group_cursor = (self._group_cursor + 1) % len(groups)
 
-                start_mono = time.monotonic()
                 async with self._tick_lock:
+                    start_mono = time.monotonic()
                     await self._warm_group(group_id, group_name)
+                    elapsed = time.monotonic() - start_mono
 
-                elapsed_including_lock = time.monotonic() - start_mono
-                min_floor = min(0.5, self.GROUP_INTERVAL_SEC)
-                sleep_time = max(min_floor, self.GROUP_INTERVAL_SEC - elapsed_including_lock)
+                min_floor = min(2.5, self.GROUP_INTERVAL_SEC)
+                sleep_time = max(min_floor, self.GROUP_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1245,6 +1239,7 @@ class SmartWarmupEngine:
     async def _teacher_worker(self) -> None:
         """Cyclic worker fetching TOP teachers with drift-free pacing and no-skip retry."""
         logger.info(f"[SmartWarmupEngine] Started teacher warmup worker (interval={self.TEACHER_INTERVAL_SEC}s).")
+        await asyncio.sleep(2.0)
         while self._is_running:
             try:
                 if not is_warmup_active_kz():
@@ -1288,13 +1283,13 @@ class SmartWarmupEngine:
                 if not from_priority and teachers:
                     self._teacher_cursor = (self._teacher_cursor + 1) % len(teachers)
 
-                start_mono = time.monotonic()
                 async with self._tick_lock:
+                    start_mono = time.monotonic()
                     await self._warm_teacher(teacher_id, teacher_name)
+                    elapsed = time.monotonic() - start_mono
 
-                elapsed_including_lock = time.monotonic() - start_mono
-                min_floor = min(0.5, self.TEACHER_INTERVAL_SEC)
-                sleep_time = max(min_floor, self.TEACHER_INTERVAL_SEC - elapsed_including_lock)
+                min_floor = min(2.5, self.TEACHER_INTERVAL_SEC)
+                sleep_time = max(min_floor, self.TEACHER_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1370,7 +1365,7 @@ async def warmup_top_schedules(limit: int = 30) -> int:
 
             try:
                 # Check headroom to protect API limit when running alongside SmartWarmupEngine
-                if not buketov_api_service.can_make_api_call(headroom=5):
+                if not buketov_api_service.can_make_api_call(headroom=smart_warmup_engine.HEADROOM):
                     logger.debug(f"[Warmup] Skipping group {group_obj.name}: API headroom reached or API down.")
                     continue
 

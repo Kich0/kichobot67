@@ -162,35 +162,30 @@ async def test_priority_queue_and_cursor_isolation():
 
 @pytest.mark.asyncio
 async def test_worker_lock_and_sleep_compensation():
-    """Verifies _tick_lock synchronizes execution and sleep compensates for lock wait + request time."""
+    """Verifies independent worker execution and guaranteed sleep floor >= 2.5s."""
     engine = SmartWarmupEngine()
     engine.GROUP_INTERVAL_SEC = 3.5
     engine.TEACHER_INTERVAL_SEC = 4.0
 
-    # Test lock serialization
-    assert not engine._tick_lock.locked()
+    # Verify _tick_lock is initialized on engine
+    assert hasattr(engine, "_tick_lock")
+    assert isinstance(engine._tick_lock, asyncio.Lock)
 
-    async with engine._tick_lock:
-        assert engine._tick_lock.locked()
-
-    assert not engine._tick_lock.locked()
-
-    # Sleep compensation calculation verification
+    # Sleep compensation calculation verification with guaranteed 2.5s floor
     target_step = 3.5
     elapsed_fast = 0.5
-    min_floor = min(0.5, target_step)
-    sleep_fast = max(min_floor, target_step - elapsed_fast)
+    sleep_fast = max(2.5, target_step - elapsed_fast)
     assert sleep_fast == 3.0
 
-    # When request + lock wait takes 2.2s, sleep is reduced to 1.3s
-    elapsed_slow = 2.2
-    sleep_slow = max(min_floor, target_step - elapsed_slow)
-    assert round(sleep_slow, 1) == 1.3
+    # When request takes 1.5s, sleep is 2.5s (due to 2.5s floor)
+    elapsed_slow = 1.5
+    sleep_slow = max(2.5, target_step - elapsed_slow)
+    assert sleep_slow == 2.5
 
-    # When request exceeds step, sleep hits min_floor (0.5s)
+    # When request exceeds step, sleep hits guaranteed floor (2.5s)
     elapsed_heavy = 4.0
-    sleep_heavy = max(min_floor, target_step - elapsed_heavy)
-    assert sleep_heavy == 0.5
+    sleep_heavy = max(2.5, target_step - elapsed_heavy)
+    assert sleep_heavy == 2.5
 
 
 @pytest.mark.asyncio
@@ -386,18 +381,20 @@ def test_priority_queue_bounded_maxlen():
 
 @pytest.mark.asyncio
 async def test_teacher_worker_lock_pacing_and_start_mono():
-    """Verifies _teacher_worker lock synchronization and sleep pacing under lock contention."""
+    """Verifies teacher worker independent execution and sleep pacing floor."""
     engine = SmartWarmupEngine()
     engine.TEACHER_INTERVAL_SEC = 4.0
 
-    assert not engine._tick_lock.locked()
-    async with engine._tick_lock:
-        assert engine._tick_lock.locked()
-    assert not engine._tick_lock.locked()
+    assert hasattr(engine, "_tick_lock")
+    assert isinstance(engine._tick_lock, asyncio.Lock)
 
-    # Pacing: target = 4.0s. If lock wait + request takes 2.5s, sleep is 1.5s
-    elapsed_total = 2.5
-    min_floor = min(0.5, engine.TEACHER_INTERVAL_SEC)
-    sleep_calc = max(min_floor, engine.TEACHER_INTERVAL_SEC - elapsed_total)
-    assert round(sleep_calc, 1) == 1.5
+    # Pacing: target = 4.0s. If request takes 1.0s, sleep is 3.0s
+    elapsed_total = 1.0
+    sleep_calc = max(2.5, engine.TEACHER_INTERVAL_SEC - elapsed_total)
+    assert round(sleep_calc, 1) == 3.0
+
+    # If request takes 3.0s, sleep floor guarantees 2.5s
+    elapsed_heavy = 3.0
+    sleep_heavy = max(2.5, engine.TEACHER_INTERVAL_SEC - elapsed_heavy)
+    assert sleep_heavy == 2.5
 

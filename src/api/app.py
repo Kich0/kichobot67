@@ -204,14 +204,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 1. Root healthcheck for Render
-    @app.get("/", response_class=PlainTextResponse)
+    # 1. Root healthcheck for Render & UptimeRobot (supports GET and HEAD)
+    @app.api_route("/", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     async def root_health() -> PlainTextResponse:
         return PlainTextResponse("Kichobot is alive! 🤖")
 
     # 2. Detailed health endpoints (/health and /bot/health)
-    @app.get("/health")
-    @app.get("/bot/health")
+    @app.api_route("/health", methods=["GET", "HEAD"])
+    @app.api_route("/bot/health", methods=["GET", "HEAD"])
     async def get_health_status() -> ORJSONResponse:
         try:
             status_data = await health_monitor.is_healthy()

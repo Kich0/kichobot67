@@ -220,9 +220,9 @@ async def test_empty_fallback_short_ttl_bug6(mock_db):
     with patch("src.bot.handlers.callbacks_router.buketov_api_service.get_group_schedule", AsyncMock(return_value=mock_empty_fallback)):
         cached = await get_or_fetch_student_schedule(group_id, "ru", is_refresh=False)
         assert cached is not None
-        assert cached["is_from_db"] is True
-        # Under /boost architecture: empty schedules are NEVER cached in RAM (never turn purple 🟣)
-        assert f"{group_id}_ru" not in student_schedule_cache
+        # Empty schedules are preserved in RAM with is_empty=True for 0.001ms day paging
+        assert f"{group_id}_ru" in student_schedule_cache
+        assert student_schedule_cache[f"{group_id}_ru"].get("is_empty") is True
         # And MongoDB-sourced status displays 🔵 ∞ rather than countdown timer
         assert format_elapsed_time(cached["timestamp"], "ru", is_from_db=cached["is_from_db"]) == "🔵 ∞"
 

@@ -209,8 +209,8 @@ def test_warmup_engine_timing_and_5_minute_cycle():
     assert engine.TOP_TEACHERS_LIMIT * engine.TEACHER_INTERVAL_SEC == 240.0  # Exactly 4.0 minutes (240 seconds <= 300s)
 
 
-def test_user_action_ttl_index_45_days():
-    """Verifies that UserAction model specifies 45-day TTL index (3,888,000s)."""
+def test_user_action_ttl_index_30_days():
+    """Verifies that UserAction model specifies 30-day TTL index (2,592,000s)."""
     from src.database.models.user_action import UserAction
 
     ttl_index = next(
@@ -218,8 +218,8 @@ def test_user_action_ttl_index_45_days():
         None,
     )
     assert ttl_index is not None
-    assert ttl_index.document["expireAfterSeconds"] == 45 * 24 * 60 * 60
-    assert ttl_index.document["expireAfterSeconds"] == 3888000
+    assert ttl_index.document["expireAfterSeconds"] == 30 * 24 * 60 * 60
+    assert ttl_index.document["expireAfterSeconds"] == 2592000
 
 
 @pytest.mark.asyncio
@@ -458,7 +458,7 @@ async def test_warm_teacher_numeric_id_resolution_before_api_call():
         await engine._warm_teacher(770, "ID 770")
 
         # buketov_api_service must be called with the resolved teacher name, NOT 'ID 770' or '770'
-        mock_api.assert_called_once_with("Мусина С. Т.", force_refresh=True)
+        mock_api.assert_called_once_with("Мусина С. Т.", force_refresh=False)
 
 
 @pytest.mark.asyncio

@@ -103,10 +103,10 @@ async def test_known_empty_group_instant_db_return_and_no_ram_cache(mock_db):
     assert result.get("is_from_db") is True
     assert result.get("is_from_cache") is False
 
-    # Check that RAM cache remains COMPLETELY clean
-    assert "1205_ru" not in student_schedule_cache
-    assert "1205_kz" not in student_schedule_cache
-    assert len(student_schedule_cache) == 0
+    # Check that empty schedule is preserved in RAM cache with is_empty=True
+    assert "1205_ru" in student_schedule_cache
+    assert "1205_kz" in student_schedule_cache
+    assert student_schedule_cache["1205_ru"].get("is_empty") is True
 
     # Step 2: Render view and check badge
     text, _ = await build_student_day_schedule_view(result, 1205, "ru", 0, "ru", group_name="ИС-31")
@@ -136,7 +136,8 @@ async def test_refresh_button_on_empty_group_fast_probe_and_remains_blue(mock_db
     assert result is not None
     assert result.get("is_from_db") is True
     assert result.get("is_from_cache") is False
-    assert "1205_ru" not in student_schedule_cache
+    assert "1205_ru" in student_schedule_cache
+    assert student_schedule_cache["1205_ru"].get("is_empty") is True
 
     text, _ = await build_student_day_schedule_view(result, 1205, "ru", 0, "ru", group_name="ИС-31")
     assert "🔵 ∞" in text
@@ -173,7 +174,8 @@ async def test_refresh_on_empty_group_with_api_timeout_does_not_freeze(mock_db):
     assert result is not None
     assert result.get("is_from_db") is True
     assert result.get("is_from_cache") is False
-    assert "1999_ru" not in student_schedule_cache
+    assert "1999_ru" in student_schedule_cache
+    assert student_schedule_cache["1999_ru"].get("is_empty") is True
 
     text, _ = await build_student_day_schedule_view(result, 1999, "ru", 0, "ru", group_name="ТЕСТ-ПУСТАЯ")
     assert "🔵 ∞" in text
@@ -182,7 +184,7 @@ async def test_refresh_on_empty_group_with_api_timeout_does_not_freeze(mock_db):
 
 @pytest.mark.asyncio
 async def test_fresh_api_empty_schedule_persists_to_db_and_avoids_ram(mock_db):
-    """Verify that when an uncached group returns 0 lessons from API, it writes hasSchedule: false to DB and skips RAM."""
+    """Verify that when an uncached group returns 0 lessons from API, it writes hasSchedule: false to DB and preserves empty in RAM."""
     clear_schedule_caches()
 
     await Group(id=1200, name="ИС-20", language="ru", faculty=13).insert()
@@ -197,8 +199,9 @@ async def test_fresh_api_empty_schedule_persists_to_db_and_avoids_ram(mock_db):
     assert result.get("is_from_db") is True
     assert result.get("is_from_cache") is False
 
-    # RAM cache must NOT contain this empty group
-    assert "1200_ru" not in student_schedule_cache
+    # RAM cache preserves empty schedule with is_empty=True for 0ms day paging
+    assert "1200_ru" in student_schedule_cache
+    assert student_schedule_cache["1200_ru"].get("is_empty") is True
 
     # Allow background persistence task to complete
     await asyncio.sleep(0.05)
@@ -302,7 +305,8 @@ async def test_unseeded_college_group_navigation_skips_api_and_saves_to_db(mock_
     assert result is not None
     assert result.get("is_from_db") is True
     assert result.get("is_from_cache") is False
-    assert "1207_ru" not in student_schedule_cache
+    assert "1207_ru" in student_schedule_cache
+    assert student_schedule_cache["1207_ru"].get("is_empty") is True
 
     text, _ = await build_student_day_schedule_view(result, 1207, "ru", 0, "ru", group_name="ИС-21")
     assert "🔵 ∞" in text
@@ -317,7 +321,7 @@ async def test_unseeded_college_group_navigation_skips_api_and_saves_to_db(mock_
 
 @pytest.mark.asyncio
 async def test_empty_teacher_text_schedule_never_enters_ram_and_no_backdating(mock_db):
-    """Verify that empty teacher text schedule is never stored in teacher_text_cache and does not use now - 1780.0 hack."""
+    """Verify that empty teacher text schedule is preserved in teacher_text_cache with is_empty=True and does not use now - 1780.0 hack."""
     clear_schedule_caches()
     from src.bot.handlers.callbacks_router import (
         get_or_fetch_teacher_text_schedule,
@@ -340,9 +344,9 @@ async def test_empty_teacher_text_schedule_never_enters_ram_and_no_backdating(mo
     # Timestamp must NOT be backdated ~1780 seconds
     assert abs(result["timestamp"] - now_ts) < 5.0
 
-    # teacher_text_cache must NOT contain this empty teacher
-    assert "999_ru" not in teacher_text_cache
-    assert len(teacher_text_cache) == 0
+    # teacher_text_cache preserves empty teacher with is_empty=True
+    assert "999_ru" in teacher_text_cache
+    assert teacher_text_cache["999_ru"].get("is_empty") is True
 
     elapsed = format_elapsed_time(result["timestamp"], "ru", is_from_db=result["is_from_db"])
     assert elapsed == "🔵 ∞"

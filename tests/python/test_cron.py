@@ -252,7 +252,7 @@ def test_smart_warmup_engine_pacing_and_intervals():
     assert engine.TEACHER_INTERVAL_SEC == 4.0
     assert engine.TOP_GROUPS_LIMIT == 150
     assert engine.TOP_TEACHERS_LIMIT == 60
-    assert engine.HEADROOM == 5
+    assert engine.HEADROOM == 25
 
     group_req_per_min = 60.0 / engine.GROUP_INTERVAL_SEC  # ~17.14 req/min
     teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 15.0 req/min
@@ -370,14 +370,14 @@ async def test_smart_warmup_engine_warm_group_and_teacher(mock_db):
 
     with patch("src.cron.cache_warmup.buketov_api_service.get_group_schedule", AsyncMock(return_value=sample_group_data)) as mock_g:
         await engine._warm_group(group_id=555, group_name="CS-55")
-        mock_g.assert_called_once_with("CS-55", force_refresh=True)
+        mock_g.assert_called_once_with("CS-55", force_refresh=False)
         assert "555_ru" in student_schedule_cache
         assert "555_kz" in student_schedule_cache
         assert student_schedule_cache["555_ru"]["data"] is not None
 
     with patch("src.cron.cache_warmup.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=sample_teacher_data)) as mock_t:
         await engine._warm_teacher(teacher_id=777, teacher_name="Петров П. П.")
-        mock_t.assert_called_once_with("Петров П. П.", force_refresh=True)
+        mock_t.assert_called_once_with("Петров П. П.", force_refresh=False)
         assert "777_ru" in teacher_text_cache
         assert "777_kz" in teacher_text_cache
         assert teacher_text_cache["777_ru"]["data"] is not None

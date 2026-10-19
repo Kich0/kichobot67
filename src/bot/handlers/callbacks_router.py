@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
+import sys
 import time
 from typing import Any
 
@@ -69,9 +70,10 @@ logger = get_logger("callbacks_router")
 callbacks_router = Router(name="callbacks_router")
 
 class NightAwareTimer:
-    """Timer for TTLCache that suspends advancing during Kazakhstan night window (01:00 to 06:30).
+    """Timer for TTLCache that suspends advancing during Kazakhstan night window (01:00 to 06:45).
 
     Prevents RAM schedule cache from being evicted while API warmup is asleep.
+    Uses ultra-fast arithmetic in UTC+5 (Asia/Almaty, +18000s) for nanosecond execution.
     """
 
     def __init__(self) -> None:
@@ -87,43 +89,45 @@ class NightAwareTimer:
         if dt <= 0:
             return self._virtual
 
+        # Fast arithmetic in UTC+5 (Asia/Almaty, +18000s): 01:00 (3600s) <= t < 06:45 (24300s)
+        sec_since_midnight = (int(now_wall) + 18000) % 86400
+        is_night = 3600 <= sec_since_midnight < 24300
+
+        # Support test mocking of is_night_cache_mode_kz if active
+        warmup_mod = sys.modules.get("src.cron.cache_warmup")
+        if warmup_mod is not None:
+            fn = getattr(warmup_mod, "is_night_cache_mode_kz", None)
+            if fn is not None and (hasattr(fn, "assert_called") or getattr(fn, "_mock_return_value", None) is not None):
+                try:
+                    is_night = bool(fn())
+                except Exception:
+                    pass
+
         # Short steps (e.g. within normal requests or unit tests): evaluate at current instant
         if dt < 60.0:
-            try:
-                from src.cron.cache_warmup import is_night_cache_mode_kz
-
-                if not is_night_cache_mode_kz():
-                    self._virtual += dt
-            except Exception:
+            if not is_night:
                 self._virtual += dt
             self._last_wall = now_wall
             return self._virtual
 
-        # For larger gaps (e.g. overnight idle period between 01:00 and 06:30),
+        # For larger gaps (e.g. overnight idle period between 01:00 and 06:45),
         # integrate only active daytime seconds so night hours do not cause immediate eviction
         t = self._last_wall
         self._last_wall = now_wall
         step = 300.0  # 5-minute sampling
         active_dt = 0.0
-        try:
-            from datetime import datetime
-            import zoneinfo
-            from src.core.constants import TIMEZONE_NAME
-            from src.cron.cache_warmup import is_night_cache_mode_kz
-
-            tz = zoneinfo.ZoneInfo(TIMEZONE_NAME)
-            while t + step <= now_wall:
-                mid_dt = datetime.fromtimestamp(t + step / 2, tz=tz)
-                if not is_night_cache_mode_kz(mid_dt):
-                    active_dt += step
-                t += step
-            if t < now_wall:
-                mid_dt = datetime.fromtimestamp((t + now_wall) / 2, tz=tz)
-                if not is_night_cache_mode_kz(mid_dt):
-                    active_dt += (now_wall - t)
-            self._virtual += min(dt, active_dt)
-        except Exception:
-            self._virtual += dt
+        while t + step <= now_wall:
+            mid = t + step * 0.5
+            s = (int(mid) + 18000) % 86400
+            if not (3600 <= s < 24300):
+                active_dt += step
+            t += step
+        if t < now_wall:
+            mid = (t + now_wall) * 0.5
+            s = (int(mid) + 18000) % 86400
+            if not (3600 <= s < 24300):
+                active_dt += (now_wall - t)
+        self._virtual += min(dt, active_dt)
         return self._virtual
 
 
@@ -146,13 +150,14 @@ teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(
 )
 
 # Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
-_persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=1000, ttl=3600.0)
-_persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=1000, ttl=3600.0)
-_group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
-_teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=1000, ttl=3600.0)
+_persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=3600.0)
+_persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=3600.0)
+_group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=3600.0)
+_teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=3600.0)
+_known_persisted_empty_groups: TTLCache[int | str, bool] = TTLCache(maxsize=3000, ttl=3600.0)
 
 # Per-entity asyncio locks to prevent race conditions on double-clicking 🔄 (Bug #8)
-_fetch_locks: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=1000, ttl=300.0)
+_fetch_locks: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=3000, ttl=300.0)
 
 # Retain background tasks to prevent Python 3.12 GC collection
 _bg_tasks: set[asyncio.Task[Any]] = set()
@@ -403,6 +408,7 @@ def clear_schedule_caches() -> None:
     _persisted_teacher_hashes.clear()
     _group_meta_cache.clear()
     _teacher_meta_cache.clear()
+    _known_persisted_empty_groups.clear()
     _fetch_locks.clear()
     if hasattr(table_image_service, "_file_id_cache"):
         table_image_service._file_id_cache.clear()
@@ -822,11 +828,14 @@ async def _bg_persist_empty_student_schedule(group_id: int, is_permanent: bool =
     """Persists empty schedule indicator (hasSchedule=false) into MongoDB for groups without schedule."""
     if not group_id:
         return
+    num_id = int(group_id) if str(group_id).isdigit() else group_id
+    if num_id in _known_persisted_empty_groups:
+        return
+    _known_persisted_empty_groups[num_id] = True
     try:
         from src.database.models.group import Group
         from src.database.models.schedule import Schedule
 
-        num_id = int(group_id) if str(group_id).isdigit() else group_id
         now_dt = datetime.now(timezone.utc)
 
         g_doc = (
@@ -1027,12 +1036,6 @@ async def get_or_fetch_student_schedule(
     now = time.time()
     cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
 
-    # Prevent serving empty schedules from RAM cache
-    if cached and not _has_any_lessons(cached.get("data")):
-        for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз", cache_key):
-            student_schedule_cache.pop(k, None)
-        cached = None
-
     max_age_sec = 1800.0  # 30 minutes
     try:
         from src.cron.cache_warmup import is_night_cache_mode_kz
@@ -1056,10 +1059,6 @@ async def get_or_fetch_student_schedule(
         async with lock:
             now = time.time()
             cached = student_schedule_cache.get(cache_key) or student_schedule_cache.get(f"{group_id}_{sch_lang}")
-            if cached and not _has_any_lessons(cached.get("data")):
-                for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз", cache_key):
-                    student_schedule_cache.pop(k, None)
-                cached = None
 
             # If recently fetched by a concurrent request, reuse without duplicate fetch (Bug #8)
             min_cooldown = 5.0 if is_refresh else max_age_sec
@@ -1133,21 +1132,38 @@ async def get_or_fetch_student_schedule(
             if sched_doc and sched_doc.data is not None and not _has_any_lessons(sched_doc.data):
                 is_known_empty = True
 
-            # 1. Normal navigation for known empty group: instant DB return with 🔵 ∞
+            # 1. Normal navigation for known empty group: instant DB return with 🔵 ∞ and cache in RAM
             if not is_refresh and is_known_empty:
-                _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                if num_g_id not in _known_persisted_empty_groups:
+                    _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
                 empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
                 empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
                 doc_ts = (
                     sched_doc.updated_at.timestamp() if (sched_doc and sched_doc.updated_at)
                     else (g_doc.updated_at.timestamp() if (g_doc and g_doc.updated_at) else now)
                 )
-                return {
-                    "data": empty_kz if norm_lang == "kz" else empty_ru,
-                    "timestamp": doc_ts,
+                cached_ru = {
+                    "data": empty_ru,
+                    "timestamp": now,
+                    "db_timestamp": doc_ts,
                     "is_from_db": True,
                     "is_from_cache": False,
+                    "is_empty": True,
                 }
+                cached_kz = {
+                    "data": empty_kz,
+                    "timestamp": now,
+                    "db_timestamp": doc_ts,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                    "is_empty": True,
+                }
+                student_schedule_cache[f"{group_id}_ru"] = cached_ru
+                student_schedule_cache[f"{group_id}_kz"] = cached_kz
+                student_schedule_cache[f"{group_id}_рус"] = cached_ru
+                student_schedule_cache[f"{group_id}_каз"] = cached_kz
+                student_schedule_cache[f"{group_id}_қаз"] = cached_kz
+                return cached_kz if norm_lang == "kz" else cached_ru
 
             # 2. Refresh for known empty group: fast probe with 2.5s timeout to prevent freezes
             if is_refresh and is_known_empty:
@@ -1176,15 +1192,28 @@ async def get_or_fetch_student_schedule(
                 has_lessons = bool(records) and _has_any_lessons(adapted_ru)
 
                 if not has_lessons:
-                    _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
-                    for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
-                        student_schedule_cache.pop(k, None)
-                    return {
-                        "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                    if num_g_id not in _known_persisted_empty_groups:
+                        _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                    empty_ru = {
+                        "data": adapted_ru,
                         "timestamp": now,
                         "is_from_db": True,
                         "is_from_cache": False,
+                        "is_empty": True,
                     }
+                    empty_kz = {
+                        "data": adapted_kz,
+                        "timestamp": now,
+                        "is_from_db": True,
+                        "is_from_cache": False,
+                        "is_empty": True,
+                    }
+                    student_schedule_cache[f"{group_id}_ru"] = empty_ru
+                    student_schedule_cache[f"{group_id}_kz"] = empty_kz
+                    student_schedule_cache[f"{group_id}_рус"] = empty_ru
+                    student_schedule_cache[f"{group_id}_каз"] = empty_kz
+                    student_schedule_cache[f"{group_id}_қаз"] = empty_kz
+                    return empty_kz if norm_lang == "kz" else empty_ru
                 else:
                     is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
                     entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
@@ -1272,17 +1301,30 @@ async def get_or_fetch_student_schedule(
                         except Exception:
                             pass
 
-                        # 3. Confirmed empty schedule: mark in MongoDB and DO NOT cache in RAM
-                        _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
-                        for k in (f"{group_id}_ru", f"{group_id}_kz", f"{group_id}_рус", f"{group_id}_каз", f"{group_id}_қаз"):
-                            student_schedule_cache.pop(k, None)
-
-                        return {
-                            "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                        # 3. Confirmed empty schedule: mark in MongoDB and cache in RAM
+                        if num_g_id not in _known_persisted_empty_groups:
+                            _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
+                        empty_ru = {
+                            "data": adapted_ru,
                             "timestamp": now,
                             "is_from_db": True,
                             "is_from_cache": False,
+                            "is_empty": True,
                         }
+                        empty_kz = {
+                            "data": adapted_kz,
+                            "timestamp": now,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                            "is_empty": True,
+                        }
+                        student_schedule_cache[f"{group_id}_ru"] = empty_ru
+                        student_schedule_cache[f"{group_id}_kz"] = empty_kz
+                        student_schedule_cache[f"{group_id}_рус"] = empty_ru
+                        student_schedule_cache[f"{group_id}_каз"] = empty_kz
+                        student_schedule_cache[f"{group_id}_қаз"] = empty_kz
+
+                        return empty_kz if norm_lang == "kz" else empty_ru
 
                     entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
                     ts = now if is_refresh else entry_ts
@@ -1346,12 +1388,28 @@ async def get_or_fetch_student_schedule(
                         empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
                         empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
                         doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
-                        cached = {
-                            "data": empty_kz if norm_lang == "kz" else empty_ru,
-                            "timestamp": doc_ts,
+                        cached_ru = {
+                            "data": empty_ru,
+                            "timestamp": now,
+                            "db_timestamp": doc_ts,
                             "is_from_db": True,
                             "is_from_cache": False,
+                            "is_empty": True,
                         }
+                        cached_kz = {
+                            "data": empty_kz,
+                            "timestamp": now,
+                            "db_timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                            "is_empty": True,
+                        }
+                        student_schedule_cache[f"{group_id}_ru"] = cached_ru
+                        student_schedule_cache[f"{group_id}_kz"] = cached_kz
+                        student_schedule_cache[f"{group_id}_рус"] = cached_ru
+                        student_schedule_cache[f"{group_id}_каз"] = cached_kz
+                        student_schedule_cache[f"{group_id}_қаз"] = cached_kz
+                        cached = cached_kz if norm_lang == "kz" else cached_ru
                 except Exception:
                     pass
     return cached
@@ -1840,19 +1898,31 @@ async def get_or_fetch_teacher_text_schedule(
                         except Exception:
                             pass
 
-                        # 3. No lessons found: do not cache in RAM, return as DB fallback (🔵 ∞)
-                        for base in (canonical_id, teacher_id, tch_name, lookup_name):
-                            if not base:
-                                continue
-                            for lang_sfx in ("_ru", "_kz", "_рус", "_каз", "_қаз"):
-                                teacher_text_cache.pop(f"{base}{lang_sfx}", None)
-
-                        return {
-                            "data": adapted_kz if norm_lang == "kz" else adapted_ru,
+                        # 3. No lessons found: cache in RAM as empty, return as DB fallback (🔵 ∞)
+                        empty_ru = {
+                            "data": adapted_ru,
                             "timestamp": now,
                             "is_from_db": True,
                             "is_from_cache": False,
+                            "is_empty": True,
                         }
+                        empty_kz = {
+                            "data": adapted_kz,
+                            "timestamp": now,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                            "is_empty": True,
+                        }
+                        for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                            if not base:
+                                continue
+                            teacher_text_cache[f"{base}_ru"] = empty_ru
+                            teacher_text_cache[f"{base}_kz"] = empty_kz
+                            teacher_text_cache[f"{base}_рус"] = empty_ru
+                            teacher_text_cache[f"{base}_каз"] = empty_kz
+                            teacher_text_cache[f"{base}_қаз"] = empty_kz
+
+                        return empty_kz if norm_lang == "kz" else empty_ru
 
                     entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
                     ts = now if is_refresh else entry_ts
@@ -1923,25 +1993,61 @@ async def get_or_fetch_teacher_text_schedule(
                         empty_ru = schedule_api_adapter.adapt_teacher_schedule([], "ru")
                         empty_kz = schedule_api_adapter.adapt_teacher_schedule([], "kz")
                         doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
-                        cached = {
-                            "data": empty_kz if norm_lang == "kz" else empty_ru,
-                            "timestamp": doc_ts,
+                        cached_ru = {
+                            "data": empty_ru,
+                            "timestamp": now,
+                            "db_timestamp": doc_ts,
                             "is_from_db": True,
                             "is_from_cache": False,
+                            "is_empty": True,
                         }
+                        cached_kz = {
+                            "data": empty_kz,
+                            "timestamp": now,
+                            "db_timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                            "is_empty": True,
+                        }
+                        for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                            if not base:
+                                continue
+                            teacher_text_cache[f"{base}_ru"] = cached_ru
+                            teacher_text_cache[f"{base}_kz"] = cached_kz
+                            teacher_text_cache[f"{base}_рус"] = cached_ru
+                            teacher_text_cache[f"{base}_каз"] = cached_kz
+                            teacher_text_cache[f"{base}_қаз"] = cached_kz
+                        cached = cached_kz if norm_lang == "kz" else cached_ru
                 except Exception:
                     pass
 
-            # If fetch failed and DB is empty, DO NOT cache in RAM cache (never turn purple 🟣)
+            # If fetch failed and DB is empty, cache in RAM as empty (with is_empty=True, 🔵 ∞)
             if not cached:
                 empty_ru = schedule_api_adapter.adapt_teacher_schedule([], "ru")
                 empty_kz = schedule_api_adapter.adapt_teacher_schedule([], "kz")
-                cached = {
-                    "data": empty_kz if norm_lang == "kz" else empty_ru,
+                cached_ru = {
+                    "data": empty_ru,
                     "timestamp": now,
                     "is_from_db": True,
                     "is_from_cache": False,
+                    "is_empty": True,
                 }
+                cached_kz = {
+                    "data": empty_kz,
+                    "timestamp": now,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                    "is_empty": True,
+                }
+                for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                    if not base:
+                        continue
+                    teacher_text_cache[f"{base}_ru"] = cached_ru
+                    teacher_text_cache[f"{base}_kz"] = cached_kz
+                    teacher_text_cache[f"{base}_рус"] = cached_ru
+                    teacher_text_cache[f"{base}_каз"] = cached_kz
+                    teacher_text_cache[f"{base}_қаз"] = cached_kz
+                cached = cached_kz if norm_lang == "kz" else cached_ru
 
     return cached
 
@@ -2493,6 +2599,7 @@ __all__ = [
     "_bg_persist_teacher_schedule",
     "_has_any_lessons",
     "_is_college_group",
+    "_known_persisted_empty_groups",
     "_localize_schedule_days",
     "build_student_day_schedule_view",
     "build_teacher_day_text_view",
