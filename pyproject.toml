@@ -23,6 +23,7 @@ dependencies = [
     "apscheduler>=3.10.4,<4.0.0",
     "loguru>=0.7.2,<1.0.0",
     "python-dotenv>=1.0.1",
+    "granian>=1.7.0,<2.0.0",
 ]
 
 [project.optional-dependencies]

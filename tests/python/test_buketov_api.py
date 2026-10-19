@@ -1,6 +1,7 @@
 """Unit tests for BuketovApiService, caching, Circuit Breaker, rate limiter, and MongoDB fallback."""
 
 import time
+from unittest.mock import patch
 import httpx
 import pytest
 from src.services.buketov_api import (
@@ -153,10 +154,11 @@ async def test_http_etag_304_handling():
     service._client = mock_client
 
     try:
-        data = await service.fetch_schedule({"group": "ETAG-1"}, cache_type="student")
-        assert data == cached_data
-        updated_entry = service.student_cache[cache_key]
-        assert updated_entry.timestamp > old_timestamp
+        with patch("src.cron.cache_warmup.is_night_cache_mode_kz", return_value=False):
+            data = await service.fetch_schedule({"group": "ETAG-1"}, cache_type="student")
+            assert data == cached_data
+            updated_entry = service.student_cache[cache_key]
+            assert updated_entry.timestamp > old_timestamp
     finally:
         await mock_client.aclose()
 
@@ -317,12 +319,13 @@ def test_buketov_api_purge_expired():
     service.student_cache["expired_student"] = CacheEntry(data={"s": 2}, timestamp=now - 700)
     service.teacher_cache["expired_teacher"] = CacheEntry(data={"t": 2}, timestamp=now - 800)
 
-    purged = service.purge_expired()
-    assert purged == 2
-    assert "fresh_student" in service.student_cache
-    assert "fresh_teacher" in service.teacher_cache
-    assert "expired_student" not in service.student_cache
-    assert "expired_teacher" not in service.teacher_cache
+    with patch("src.cron.cache_warmup.is_night_cache_mode_kz", return_value=False):
+        purged = service.purge_expired()
+        assert purged == 2
+        assert "fresh_student" in service.student_cache
+        assert "fresh_teacher" in service.teacher_cache
+        assert "expired_student" not in service.student_cache
+        assert "expired_teacher" not in service.teacher_cache
 
 
 def test_match_teacher_record_symmetric():

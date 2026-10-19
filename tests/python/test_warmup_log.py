@@ -397,7 +397,7 @@ async def test_middleware_captures_schedule_badge(mock_db):
         return "OK"
 
     await middleware(mock_handler, call, {})
-    await asyncio.sleep(0.05)
+    await middleware.flush()
 
     actions = await UserAction.find(UserAction.user_id == user_id).to_list()
     assert len(actions) == 1

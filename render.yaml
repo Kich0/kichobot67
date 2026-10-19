@@ -4,8 +4,8 @@ services:
     runtime: python
     plan: free
     region: frankfurt
-    buildCommand: pip install uv && uv sync --frozen --no-dev
-    startCommand: uv run uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: uv run granian --interface asgi server:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
     envVars:
       - key: TZ
         value: Asia/Almaty

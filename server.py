@@ -72,13 +72,28 @@ def main() -> None:
         asyncio.run(run_polling())
     else:
         logger.info(f"Starting Kichobot Webhook server on {settings.HOST}:{settings.PORT}...")
-        uvicorn.run(
-            "server:app",
-            host=settings.HOST,
-            port=settings.PORT,
-            reload=settings.DEBUG,
-            access_log=False,
-        )
+        try:
+            from granian import Granian
+            from granian.constants import Interfaces
+
+            server = Granian(
+                "server:app",
+                address=settings.HOST,
+                port=settings.PORT,
+                interface=Interfaces.ASGI,
+                workers=1,
+                reload=settings.DEBUG,
+                log_access=False,
+            )
+            server.serve()
+        except ImportError:
+            uvicorn.run(
+                "server:app",
+                host=settings.HOST,
+                port=settings.PORT,
+                reload=settings.DEBUG,
+                access_log=False,
+            )
 
 
 if __name__ == "__main__":

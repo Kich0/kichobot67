@@ -2,6 +2,7 @@
 aiogram>=3.17.0,<4.0.0
 fastapi>=0.115.0,<1.0.0
 uvicorn[standard]>=0.34.0,<1.0.0
+granian>=1.7.0,<2.0.0
 
 # Settings & Serialization
 pydantic>=2.10.0,<3.0.0
