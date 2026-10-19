@@ -548,3 +548,331 @@ async def test_scanner_authentication_fails_on_login_form_returned():
             res = await scanner.authenticate(client)
             assert res is False
 
+
+def test_scanner_base_url_defaults_to_official_karnu_portal():
+    """Verifies scanner strictly uses official portal URL https://schedule.karnu-buketov.edu.kz."""
+    scanner = CatalogScannerService()
+    assert scanner.base_url == "https://schedule.karnu-buketov.edu.kz"
+
+    legacy_scanner = CatalogScannerService(base_url="https://schedule.buketov.edu.kz")
+    assert legacy_scanner.base_url == "https://schedule.karnu-buketov.edu.kz"
+
+
+@pytest.mark.asyncio
+async def test_scanner_deduplicates_groups_by_normalized_name(mock_db):
+    """Verifies that existing group КО-24-2к is not duplicated even if incoming group has different ID or formatting."""
+    # Seed MongoDB with existing group КО-24-2к (ID: 6337)
+    await Group(id=6337, name="КО-24-2к", language="каз", studentCount=18).insert()
+
+    initial_count = await Group.count()
+    assert initial_count == 1
+
+    # Incoming HTML from portal contains same group with latin/spaces variation and different ID (e.g. 9999)
+    html_latin_group = """
+    <html><body><table>
+      <tr><td><a href="view1.php?id=9999&Otdel=каз&Kurs=2&Stud=18">KO-24-2k</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": HTML_FACULTIES,
+        "/stud.php": HTML_PROGRAMS_FIT,
+        "/grupps1.php?id=101": html_latin_group,
+        "/kafedra.php": "<html><body></body></html>",
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    # Must be recognized as already existing, so new_groups is 0
+    assert summary["new_groups"] == 0
+    total_groups = await Group.count()
+    assert total_groups == 1
+
+
+@pytest.mark.asyncio
+async def test_scanner_deduplicates_groups_by_id(mock_db):
+    """Verifies that existing group ID 6337 is not duplicated even if name text differs slightly."""
+    await Group(id=6337, name="КО-24-2к").insert()
+
+    html_diff_name = """
+    <html><body><table>
+      <tr><td><a href="view1.php?id=6337&Kurs=2">КО-24-2к (новое)</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": HTML_FACULTIES,
+        "/stud.php": HTML_PROGRAMS_FIT,
+        "/grupps1.php?id=101": html_diff_name,
+        "/kafedra.php": "<html><body></body></html>",
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_groups"] == 0
+    assert await Group.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_scanner_deduplicates_teachers_by_normalized_name_and_titles(mock_db):
+    """Verifies that existing teacher Додонова А. Ш. is not duplicated if incoming has academic title prefix."""
+    await Teacher(id=8, name="Додонова А. Ш.", fullName="Додонова А. Ш.", department=11).insert()
+
+    html_dodonova = """
+    <html><body><table>
+      <tr><td><a href="report_prep1.php?IdPrep=8888">к.п.н., доц. Додонова А. Ш.</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": "<html><body></body></html>",
+        "/kafedra.php": HTML_KAFEDRA,
+        "/report_prep.php?d=1&IdKaf=11": html_dodonova,
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_teachers"] == 0
+    assert await Teacher.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_scanner_teacher_enrichment_without_name_error(mock_db):
+    """Verifies that new teacher insertion enriches profile cleanly without NameError."""
+    html_new_teacher = """
+    <html><body><table>
+      <tr><td><a href="report_prep1.php?IdPrep=7777">проф. Исабеков К. М.</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": "<html><body></body></html>",
+        "/kafedra.php": HTML_KAFEDRA,
+        "/report_prep.php?d=1&IdKaf=11": html_new_teacher,
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_teachers"] == 1
+    t = await Teacher.find_one(Teacher.teacher_id == 7777)
+    assert t is not None
+    assert t.name == "Исабеков К. М."
+
+
+@pytest.mark.asyncio
+async def test_bot_viewing_schedule_never_creates_catalog_groups_or_teachers(mock_db):
+    """Verifies that viewing a schedule in the bot strictly caches Schedule/TeacherSchedule and NEVER creates Group/Teacher."""
+    from src.bot.handlers.callbacks_router import _bg_persist_student_schedule, _bg_persist_teacher_schedule
+    from src.database.models.schedule import Schedule
+    from src.database.models.teacher_schedule import TeacherSchedule
+
+    # Seed 1 catalog group
+    await Group(id=6337, name="КО-24-2к").insert()
+    assert await Group.count() == 1
+    assert await Teacher.count() == 0
+
+    sample_student_sched = [
+        {"day": "Понедельник", "subjects": [{"time": "8.30-9.20", "subject": "Высшая математика"}]}
+    ]
+    sample_teacher_sched = [
+        {"day": "Понедельник", "groups": [{"time": "8.30-9.20", "group": "КО-24-2к", "subject": "Высшая математика", "lessonType": "Лекция"}]}
+    ]
+
+    # User in Telegram views group schedule and teacher schedule
+    await _bg_persist_student_schedule(6337, sample_student_sched)
+    await _bg_persist_teacher_schedule(8, sample_teacher_sched)
+
+    # 1. Schedule collections have the cached data
+    s_doc = await Schedule.find_one(Schedule.group_id == 6337)
+    assert s_doc is not None
+    assert s_doc.has_schedule is True
+
+    ts_doc = await TeacherSchedule.find_one(TeacherSchedule.teacher_id == 8)
+    assert ts_doc is not None
+
+    # 2. But the catalog collections (Group and Teacher) NEVER had new groups or teachers created
+    assert await Group.count() == 1
+    assert await Teacher.count() == 0
+
+
+def test_safe_int_helper():
+    """Verifies that _safe_int correctly parses various representations and rejects non-numerics."""
+    from src.services.catalog_scanner import _safe_int
+
+    assert _safe_int(123) == 123
+    assert _safe_int("123") == 123
+    assert _safe_int(" 123 ") == 123
+    assert _safe_int(123.0) == 123
+    assert _safe_int("123.0") == 123
+    assert _safe_int(None) is None
+    assert _safe_int("") is None
+    assert _safe_int("abc") is None
+
+
+def test_teacher_name_variants_generation():
+    """Verifies generation of initials, compact variants, and title stripping."""
+    from src.services.catalog_scanner import _get_teacher_name_variants
+
+    variants = _get_teacher_name_variants("д.э.н., проф. Додонова Асия Шамильевна")
+    assert "додонова асия шамильевна" in variants
+    assert "додоноваасияшамильевна" in variants
+    assert "додонова а ш" in variants
+    assert "додоновааш" in variants
+
+    # Empty or None
+    assert _get_teacher_name_variants(None) == set()
+    assert _get_teacher_name_variants("") == set()
+
+
+@pytest.mark.asyncio
+async def test_teacher_deduplication_fullname_in_db_initials_on_site(mock_db):
+    """Verifies that if DB has full name, incoming initials on site are matched even with different ID."""
+    await Teacher(id=8, name="Додонова Асия Шамильевна", fullName="Додонова Асия Шамильевна").insert()
+
+    html_site = """
+    <html><body><table>
+      <tr><td><a href="report_prep1.php?IdPrep=99999">к.э.н., доц. Додонова А. Ш.</a></td></tr>
+    </table></body></html>
+    """
+    mock_client = create_mock_client({
+        "/": "<html><body></body></html>",
+        "/kafedra.php": HTML_KAFEDRA,
+        "/report_prep.php?d=1&IdKaf=11": html_site,
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_teachers"] == 0
+    assert await Teacher.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_all_five_user_groups_deduplication(mock_db):
+    """Verifies that all 5 groups from user complaint (6337, 6346, 6553, 7096, 7500) are never re-added."""
+    user_groups = [
+        (6337, "КО-24-2к"),
+        (6346, "КИ-24-1к"),
+        (6553, "ТЭ-24-1к"),
+        (7096, "М2-НН-25-1к"),
+        (7500, "М2-ХЕ-26-1к"),
+    ]
+    for g_id, g_name in user_groups:
+        await Group(id=g_id, name=g_name).insert()
+
+    assert await Group.count() == 5
+
+    # Portal HTML contains all 5 groups with spacing and Latin homoglyphs variations
+    html_five_groups = """
+    <html><body><table>
+      <tr><td><a href="view1.php?id=6337&Kurs=2">KO-24-2k</a></td></tr>
+      <tr><td><a href="view1.php?id=6346&Kurs=2">КИ - 24 - 1к</a></td></tr>
+      <tr><td><a href="view1.php?id=6553&Kurs=2">ТЭ-24-1к</a></td></tr>
+      <tr><td><a href="view1.php?id=7096&Kurs=1">M2-HH-25-1k</a></td></tr>
+      <tr><td><a href="view1.php?id=7500&Kurs=1">М2-ХЕ-26-1к</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": HTML_FACULTIES,
+        "/stud.php": HTML_PROGRAMS_FIT,
+        "/grupps1.php?id=101": html_five_groups,
+        "/kafedra.php": "<html><body></body></html>",
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_groups"] == 0
+    assert await Group.count() == 5
+
+
+@pytest.mark.asyncio
+async def test_all_five_user_teachers_deduplication(mock_db):
+    """Verifies that all 5 teachers from user complaint (8, 4414, 4381, 3191, 3375) are never re-added."""
+    user_teachers = [
+        (8, "Додонова А. Ш."),
+        (4414, "Народхан Дашжан"),
+        (4381, "Сулейменов Н.М."),
+        (3191, "Раисова А.А."),
+        (3375, "Сагадатова А.Т."),
+    ]
+    for t_id, t_name in user_teachers:
+        await Teacher(id=t_id, name=t_name, fullName=t_name).insert()
+
+    assert await Teacher.count() == 5
+
+    html_five_teachers = """
+    <html><body><table>
+      <tr><td><a href="report_prep1.php?IdPrep=8">к.э.н. Додонова А.Ш.</a></td></tr>
+      <tr><td><a href="report_prep1.php?IdPrep=4414">аға оқытушы Народхан Дашжан</a></td></tr>
+      <tr><td><a href="report_prep1.php?IdPrep=4381">доц. Сулейменов Н. М.</a></td></tr>
+      <tr><td><a href="report_prep1.php?IdPrep=3191">пр. Раисова А. А.</a></td></tr>
+      <tr><td><a href="report_prep1.php?IdPrep=3375">PhD Сагадатова А. Т.</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": "<html><body></body></html>",
+        "/kafedra.php": HTML_KAFEDRA,
+        "/report_prep.php?d=1&IdKaf=11": html_five_teachers,
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_teachers"] == 0
+    assert await Teacher.count() == 5
+
+
+@pytest.mark.asyncio
+async def test_genuinely_new_entities_inserted_and_warmed_up(mock_db):
+    """Verifies that 100% genuine new group and teacher are inserted to DB and warm up search."""
+    # Existing DB has 1 group and 1 teacher
+    await Group(id=100, name="ИС-20-1").insert()
+    await Teacher(id=200, name="Асанов Б. К.").insert()
+
+    # Portal returns existing + 1 truly new group and 1 truly new teacher
+    html_groups = """
+    <html><body><table>
+      <tr><td><a href="view1.php?id=100&Kurs=4">ИС-20-1</a></td></tr>
+      <tr><td><a href="view1.php?id=9999&Kurs=1&Otdel=рус&Stud=20">НОВ-26-1</a></td></tr>
+    </table></body></html>
+    """
+    html_teachers = """
+    <html><body><table>
+      <tr><td><a href="report_prep1.php?IdPrep=200">Асанов Б. К.</a></td></tr>
+      <tr><td><a href="report_prep1.php?IdPrep=8888">магистр Ахметов С. Т.</a></td></tr>
+    </table></body></html>
+    """
+
+    mock_client = create_mock_client({
+        "/": HTML_FACULTIES,
+        "/stud.php": HTML_PROGRAMS_FIT,
+        "/grupps1.php?id=101": html_groups,
+        "/kafedra.php": HTML_KAFEDRA,
+        "/report_prep.php?d=1&IdKaf=11": html_teachers,
+    })
+
+    scanner = CatalogScannerService(pacing_delay=0.0)
+    summary = await scanner.scan_and_sync(client=mock_client)
+
+    assert summary["new_groups"] == 1
+    assert summary["new_teachers"] == 1
+
+    assert await Group.count() == 2
+    assert await Teacher.count() == 2
+
+    new_g = await Group.find_one(Group.group_id == 9999)
+    assert new_g is not None
+    assert new_g.name == "НОВ-26-1"
+
+    new_t = await Teacher.find_one(Teacher.teacher_id == 8888)
+    assert new_t is not None
+    assert new_t.name == "Ахметов С. Т."
+
+

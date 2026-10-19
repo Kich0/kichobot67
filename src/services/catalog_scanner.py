@@ -23,9 +23,49 @@ from src.database.models.group import Group
 from src.database.models.program import Program
 from src.database.models.teacher import Teacher
 from src.services.smart_search import smart_search_service
-from src.services.teacher_directory import clean_titles, normalize_cyrillic
+from src.services.teacher_directory import clean_titles, normalize_cyrillic, teacher_directory_service
 
 logger = get_logger("catalog_scanner")
+
+OFFICIAL_BUKETOV_PORTAL = "https://schedule.karnu-buketov.edu.kz"
+
+
+def _safe_int(val: Any) -> int | None:
+    """Safely converts arbitrary input to int, handling float strings, None, and non-numeric types."""
+    if val is None:
+        return None
+    try:
+        return int(float(str(val).strip()))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _get_teacher_name_variants(raw_name: str | None) -> set[str]:
+    """Generates all normalized name and initials variants for robust deduplication."""
+    if not raw_name:
+        return set()
+    cleaned = clean_titles(str(raw_name).strip())
+    if not cleaned:
+        return set()
+    norm = normalize_cyrillic(cleaned)
+    if not norm:
+        return set()
+    variants = {norm, norm.replace(" ", "")}
+
+    # Generate initials variants for multi-word names: e.g. "Додонова Асия Шамильевна" -> "додонова а ш", "додоновааш", "додонова а"
+    words = norm.split()
+    if len(words) >= 2:
+        surname = words[0]
+        inits = [w[0] for w in words[1:] if w]
+        if inits:
+            inits_spaced = f"{surname} {' '.join(inits)}"
+            inits_compact = f"{surname}{''.join(inits)}"
+            variants.add(inits_spaced)
+            variants.add(inits_compact)
+            if len(inits) >= 2:
+                variants.add(f"{surname} {inits[0]}")
+                variants.add(f"{surname}{inits[0]}")
+    return variants
 
 
 class CatalogScannerService:
@@ -37,12 +77,15 @@ class CatalogScannerService:
         pacing_delay: float = 0.08,
         client_timeout: float = 8.0,
     ) -> None:
-        self.base_url = (base_url or settings.KSU_DOMAIN).rstrip("/")
+        raw_url = (base_url or settings.KSU_DOMAIN or OFFICIAL_BUKETOV_PORTAL).rstrip("/")
+        if "schedule.buketov.edu.kz" in raw_url and "karnu-buketov.edu.kz" not in raw_url:
+            raw_url = raw_url.replace("schedule.buketov.edu.kz", "schedule.karnu-buketov.edu.kz")
+        self.base_url = raw_url
         self.pacing_delay = pacing_delay
         self.client_timeout = client_timeout
 
     async def authenticate(self, client: httpx.AsyncClient) -> bool:
-        """Authenticates session on schedule.buketov.edu.kz if credentials configured."""
+        """Authenticates session on schedule.karnu-buketov.edu.kz if credentials configured."""
         login = settings.KSU_LOGIN
         password = settings.KSU_PASSWORD
         if not login or not password:
@@ -441,22 +484,38 @@ class CatalogScannerService:
 
         # 1. Быстро собираем известные ID и нормализованные имена в ОЗУ
         raw_group_ids = await Group.distinct("id")
+        try:
+            raw_group_alt_ids = await Group.distinct("groupId")
+        except Exception:
+            raw_group_alt_ids = []
         known_group_ids: set[int] = {
-            int(x) for x in raw_group_ids if x is not None and str(x).isdigit()
+            v for x in (raw_group_ids + raw_group_alt_ids) if (v := _safe_int(x)) is not None
+        }
+
+        raw_group_names = await Group.distinct("name")
+        known_group_names: set[str] = {
+            normalize_cyrillic(n).replace(" ", "") for n in raw_group_names if n
         }
 
         raw_teacher_ids = await Teacher.distinct("id")
+        try:
+            raw_teacher_alt_ids = await Teacher.distinct("teacherId")
+        except Exception:
+            raw_teacher_alt_ids = []
         known_teacher_ids: set[int] = {
-            int(x) for x in raw_teacher_ids if x is not None and str(x).isdigit()
+            v for x in (raw_teacher_ids + raw_teacher_alt_ids) if (v := _safe_int(x)) is not None
         }
 
         raw_teacher_names = await Teacher.distinct("name")
         raw_teacher_full_names = await Teacher.distinct("fullName")
-        known_teacher_names: set[str] = {
-            normalize_cyrillic(clean_titles(n))
-            for n in (raw_teacher_names + raw_teacher_full_names)
-            if n
-        }
+        try:
+            raw_teacher_snake_names = await Teacher.distinct("full_name")
+        except Exception:
+            raw_teacher_snake_names = []
+        known_teacher_names: set[str] = set()
+        for n in (raw_teacher_names + raw_teacher_full_names + raw_teacher_snake_names):
+            if n:
+                known_teacher_names.update(_get_teacher_name_variants(n))
 
         new_groups: list[dict[str, Any]] = []
         new_teachers: list[dict[str, Any]] = []
@@ -469,6 +528,7 @@ class CatalogScannerService:
                 known_teacher_names,
                 new_groups,
                 new_teachers,
+                known_group_names=known_group_names,
             )
         else:
             async with httpx.AsyncClient(
@@ -484,6 +544,7 @@ class CatalogScannerService:
                     known_teacher_names,
                     new_groups,
                     new_teachers,
+                    known_group_names=known_group_names,
                 )
 
         # 4. Пакетное сохранение только реальных новинок в MongoDB
@@ -493,10 +554,12 @@ class CatalogScannerService:
         if new_groups:
             docs = [Group(**g) for g in new_groups]
             try:
-                await Group.insert_many(docs, ordered=False)
+                res = await Group.insert_many(docs, ordered=False)
+                inserted_groups_count = len(res.inserted_ids) if hasattr(res, "inserted_ids") else len(docs)
             except Exception as e:
                 logger.warning(f"[CatalogScanner] Замечание при Group.insert_many: {e}")
-            inserted_groups_count = len(docs)
+                details = getattr(e, "details", {}) or {}
+                inserted_groups_count = details.get("nInserted", 0)
             logger.info(f"[CatalogScanner] Добавлено новых групп: {inserted_groups_count}")
 
         if new_teachers:
@@ -509,10 +572,12 @@ class CatalogScannerService:
                     enriched_teachers.append(t)
             docs = [Teacher(**t) for t in enriched_teachers]
             try:
-                await Teacher.insert_many(docs, ordered=False)
+                res = await Teacher.insert_many(docs, ordered=False)
+                inserted_teachers_count = len(res.inserted_ids) if hasattr(res, "inserted_ids") else len(docs)
             except Exception as e:
                 logger.warning(f"[CatalogScanner] Замечание при Teacher.insert_many: {e}")
-            inserted_teachers_count = len(docs)
+                details = getattr(e, "details", {}) or {}
+                inserted_teachers_count = details.get("nInserted", 0)
             logger.info(f"[CatalogScanner] Добавлено новых преподавателей: {inserted_teachers_count}")
 
         # 5. Если найдены новинки — мгновенно обновляем умный поиск
@@ -545,16 +610,29 @@ class CatalogScannerService:
         known_teacher_names: set[str],
         new_groups: list[dict[str, Any]],
         new_teachers: list[dict[str, Any]],
+        known_group_names: set[str] | None = None,
     ) -> None:
-        """Executes crawl over groups and teachers, filtering out existing entities."""
+        """Executes crawl over groups and teachers, strictly filtering out existing entities."""
+        if known_group_names is None:
+            known_group_names = set()
+
         # Сканируем студенческие группы
         try:
             scanned_groups = await self._scan_all_groups(client)
             for g in scanned_groups:
-                g_id = g.get("id")
-                if g_id and g_id not in known_group_ids:
-                    new_groups.append(g)
-                    known_group_ids.add(g_id)
+                g_id = _safe_int(g.get("id") or g.get("groupId"))
+                g_name = str(g.get("name") or "").replace("\xa0", " ").strip()
+                norm_name = normalize_cyrillic(g_name).replace(" ", "")
+                if not g_id or not norm_name:
+                    continue
+                # Железная проверка: если ID уже есть в БД или нормализованное имя уже есть — пропускаем
+                if g_id in known_group_ids or norm_name in known_group_names:
+                    continue
+
+                g["id"] = g_id
+                new_groups.append(g)
+                known_group_ids.add(g_id)
+                known_group_names.add(norm_name)
         except Exception as e:
             logger.error(f"[CatalogScanner] Ошибка сканирования групп: {e}")
 
@@ -562,13 +640,19 @@ class CatalogScannerService:
         try:
             scanned_teachers = await self._scan_all_teachers(client)
             for t in scanned_teachers:
-                t_id = t.get("id")
-                raw_name = t.get("name") or ""
-                norm_t = normalize_cyrillic(clean_titles(raw_name))
-                if t_id and t_id not in known_teacher_ids and norm_t and norm_t not in known_teacher_names:
-                    new_teachers.append(t)
-                    known_teacher_ids.add(t_id)
-                    known_teacher_names.add(norm_t)
+                t_id = _safe_int(t.get("id") or t.get("teacherId"))
+                raw_name = str(t.get("name") or t.get("fullName") or "").replace("\xa0", " ").strip()
+                t_variants = _get_teacher_name_variants(raw_name)
+                if not t_id or not t_variants:
+                    continue
+                # Железная проверка: если ID преподавателя уже есть или ФИО/инициалы уже есть — пропускаем
+                if t_id in known_teacher_ids or any(v in known_teacher_names for v in t_variants):
+                    continue
+
+                t["id"] = t_id
+                new_teachers.append(t)
+                known_teacher_ids.add(t_id)
+                known_teacher_names.update(t_variants)
         except Exception as e:
             logger.error(f"[CatalogScanner] Ошибка сканирования преподавателей: {e}")
 

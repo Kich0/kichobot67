@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     JWT_REFRESH_SECRET: str | None = Field(default=None)
 
     # === University Portal (KSU) ===
-    KSU_DOMAIN: str = Field(default="https://schedule.buketov.edu.kz")
+    KSU_DOMAIN: str = Field(default="https://schedule.karnu-buketov.edu.kz")
     KSU_LOGIN: str | None = Field(default=None)
     KSU_PASSWORD: str | None = Field(default=None)
 
