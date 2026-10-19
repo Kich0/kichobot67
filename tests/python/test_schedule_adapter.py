@@ -338,3 +338,24 @@ def test_adapt_teacher_schedule_preformatted_group_room_deduplication():
     assert group_str == "ИС-21-1 (305/1)"
 
 
+def test_get_kz_from_ru_teacher_schedule():
+    """Verifies get_kz_from_ru_teacher_schedule transforms RU teacher schedule to KZ without recomputing."""
+    ru_schedule = [
+        {"day": "Понедельник", "groups": [{"group": "ИС-21-1"}]},
+        {"day": "Вторник", "groups": []},
+        {"day": "Среда", "groups": []},
+        {"day": "Четверг", "groups": []},
+        {"day": "Пятница", "groups": []},
+        {"day": "Суббота", "groups": []},
+    ]
+    kz_schedule = schedule_api_adapter.get_kz_from_ru_teacher_schedule(ru_schedule)
+    assert kz_schedule[0]["day"] == "Дүйсенбі"
+    assert kz_schedule[1]["day"] == "Сейсенбі"
+    assert kz_schedule[2]["day"] == "Сәрсенбі"
+    assert kz_schedule[3]["day"] == "Бейсенбі"
+    assert kz_schedule[4]["day"] == "Жұма"
+    assert kz_schedule[5]["day"] == "Сенбі"
+    assert kz_schedule[0]["groups"] == [{"group": "ИС-21-1"}]
+
+
+

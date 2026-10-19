@@ -31,7 +31,7 @@ CACHE_CAPACITY_TEACHER_IMAGES = 160
 
 # Buketov University Schedule API
 SCHEDULE_API_TIMEOUT = 4.5  # seconds
-SCHEDULE_API_RATE_LIMIT = 90  # max requests per minute (safe ceiling below university 120/min/IP limit)
+SCHEDULE_API_RATE_LIMIT = 110  # max requests per minute (safe ceiling below university 120/min/IP limit)
 CIRCUIT_BREAKER_FAIL_THRESHOLD = 2
 CIRCUIT_BREAKER_RESET_TIMEOUT = 120.0  # seconds (2 minutes)
 

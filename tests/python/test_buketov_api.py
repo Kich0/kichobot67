@@ -9,6 +9,7 @@ from src.services.buketov_api import (
     CacheEntry,
     CircuitBreakerError,
 )
+from src.core.constants import SCHEDULE_API_RATE_LIMIT
 from src.database.models import Group, Schedule, ScheduleDay, SubjectItem, Teacher, TeacherSchedule, TeacherScheduleDay, TeacherLessonItem
 
 
@@ -18,7 +19,7 @@ def test_buketov_api_initial_capacities():
     assert service.STUDENT_CAPACITY == 3000
     assert service.TEACHER_CAPACITY == 1500
     assert service.circuit_state == "CLOSED"
-    assert service.MAX_REQUESTS_PER_MINUTE == 90
+    assert service.MAX_REQUESTS_PER_MINUTE == SCHEDULE_API_RATE_LIMIT
     assert service.REQUEST_TIMEOUT_SECONDS == 4.5
 
 

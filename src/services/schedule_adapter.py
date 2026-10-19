@@ -13,12 +13,21 @@ from typing import Any
 from src.services.teacher_directory import teacher_directory_service
 
 
+_ROOM_PREFIX_RE = re.compile(r"^(?:Ауд(?:итория)?\.?)\s*", flags=re.IGNORECASE)
+_BLD_PREFIX_RE = re.compile(r"^(?:Корп(?:ус)?\.?|Ғимарат(?:ы)?\.?)\s*", flags=re.IGNORECASE)
+_WS_RE = re.compile(r"\s+")
+_DASH_RE = re.compile(r"[-–—]")
+_LEADING_ZERO_RE = re.compile(r"(^|-)0(\d)")
+_PAREN_RE = re.compile(r"\s*\([^)]*\)")
+
+
 class ScheduleApiAdapter:
     """Transforms raw university API records into bot schedule formats."""
 
     def __init__(self) -> None:
         self.days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
         self.days_kz = ["Дүйсенбі", "Сейсенбі", "Сәрсенбі", "Бейсенбі", "Жұма", "Сенбі"]
+        self.day_ru_to_kz = dict(zip(self.days_ru, self.days_kz))
 
     def get_day_index(self, record: dict[str, Any]) -> int:
         """Determines 1-based day index (1=Mon ... 7=Sun) from record."""
@@ -73,10 +82,10 @@ class ScheduleApiAdapter:
         """Normalizes time string (e.g., '08:30-09:20' -> '8.30-9.20')."""
         if not t:
             return ""
-        s = re.sub(r"\s+", "", str(t))
+        s = _WS_RE.sub("", str(t))
         s = s.replace(":", ".")
-        s = re.sub(r"[-–—]", "-", s)
-        s = re.sub(r"(^|-)0(\d)", r"\1\2", s)
+        s = _DASH_RE.sub("-", s)
+        s = _LEADING_ZERO_RE.sub(r"\1\2", s)
         return s
 
     def format_lesson_type(self, lesson_type: str | None) -> str:
@@ -115,13 +124,25 @@ class ScheduleApiAdapter:
         """Formats classroom and university building string."""
         if not room and not building:
             return ""
-        clean_room = re.sub(r"^(?:Ауд(?:итория)?\.?)\s*", "", str(room or ""), flags=re.IGNORECASE).strip()
-        clean_building = re.sub(r"^(?:Корп(?:ус)?\.?|Ғимарат(?:ы)?\.?)\s*", "", str(building or ""), flags=re.IGNORECASE).strip()
+        clean_room = _ROOM_PREFIX_RE.sub("", str(room or "")).strip()
+        clean_building = _BLD_PREFIX_RE.sub("", str(building or "")).strip()
         if clean_room and clean_building:
             if clean_room.endswith(f"/{clean_building}"):
                 return f"Ауд.{clean_room}"
             return f"Ауд.{clean_room}/{clean_building}"
         return f"Ауд.{clean_room or clean_building}"
+
+    def get_kz_from_ru_teacher_schedule(
+        self, ru_schedule: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Maps an already adapted Russian teacher schedule to Kazakh in O(N)."""
+        return [
+            {
+                **d,
+                "day": self.day_ru_to_kz.get(d.get("day", ""), d.get("day", "")),
+            }
+            for d in ru_schedule
+        ]
 
     def localize_schedule_days(
         self,
@@ -160,9 +181,15 @@ class ScheduleApiAdapter:
         days_list = self.days_kz if is_kz else self.days_ru
         schedule: list[dict[str, Any]] = []
 
+        by_day: dict[int, list[dict[str, Any]]] = {i: [] for i in range(1, 7)}
+        for r in records:
+            d_idx = self.get_day_index(r)
+            if 1 <= d_idx <= 6:
+                by_day[d_idx].append(r)
+
         for day_num in range(1, 7):
             day_name = days_list[day_num - 1]
-            day_records = [r for r in records if self.get_day_index(r) == day_num]
+            day_records = by_day[day_num]
             day_records.sort(key=lambda r: r.get("slot") or 0)
 
             time_slot_map: dict[str, str] = {}
@@ -231,9 +258,15 @@ class ScheduleApiAdapter:
         days_list = self.days_kz if is_kz else self.days_ru
         schedule: list[dict[str, Any]] = []
 
+        by_day: dict[int, list[dict[str, Any]]] = {i: [] for i in range(1, 7)}
+        for r in records:
+            d_idx = self.get_day_index(r)
+            if 1 <= d_idx <= 6:
+                by_day[d_idx].append(r)
+
         for day_num in range(1, 7):
             day_name = days_list[day_num - 1]
-            day_records = [r for r in records if self.get_day_index(r) == day_num]
+            day_records = by_day[day_num]
             day_records.sort(key=lambda r: r.get("slot") or 0)
 
             time_slot_map: dict[str, dict[str, Any]] = {}
@@ -255,7 +288,7 @@ class ScheduleApiAdapter:
                 else:
                     room_str = ""
 
-                clean_group = re.sub(r"\s*\([^)]*\)", "", raw_group).strip()
+                clean_group = _PAREN_RE.sub("", raw_group).strip()
                 group_name = clean_group if (room_str and clean_group) else raw_group
 
                 if time_val in time_slot_map:
@@ -275,7 +308,7 @@ class ScheduleApiAdapter:
                         eff_room_str = ""
 
                     if "groupsList" not in slot_data:
-                        existing_clean = re.sub(r"\s*\([^)]*\)", "", slot_data.get("group", "")).strip()
+                        existing_clean = _PAREN_RE.sub("", slot_data.get("group", "")).strip()
                         slot_data["groupsList"] = [existing_clean]
 
                     if group_name not in slot_data["groupsList"]:

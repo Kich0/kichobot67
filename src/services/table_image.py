@@ -256,22 +256,33 @@ def layout_cell_content(slot: dict[str, Any] | None, col_width: int = 200) -> di
     }
 
 
+_RESOLVED_FONT_DIRS: list[str] | None = None
+
+
+def _get_font_dirs(fonts_dir: str | Path | None = None) -> list[str] | None:
+    global _RESOLVED_FONT_DIRS
+    if fonts_dir and Path(fonts_dir).is_dir():
+        return [str(fonts_dir)]
+    if _RESOLVED_FONT_DIRS is not None:
+        return _RESOLVED_FONT_DIRS if _RESOLVED_FONT_DIRS else None
+    project_root = Path(__file__).resolve().parent.parent.parent
+    default_font_dir = project_root / "data" / "fonts"
+    if default_font_dir.is_dir():
+        _RESOLVED_FONT_DIRS = [str(default_font_dir)]
+    else:
+        _RESOLVED_FONT_DIRS = []
+    return _RESOLVED_FONT_DIRS if _RESOLVED_FONT_DIRS else None
+
+
 def _render_sync(svg_markup: str, fonts_dir: str | Path | None = None) -> bytes:
     """Synchronous CPU-bound SVG -> PNG render function using resvg-py."""
     import resvg_py
 
-    font_dirs: list[str] = []
-    if fonts_dir and Path(fonts_dir).is_dir():
-        font_dirs.append(str(fonts_dir))
-    else:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        default_font_dir = project_root / "data" / "fonts"
-        if default_font_dir.is_dir():
-            font_dirs.append(str(default_font_dir))
+    font_dirs = _get_font_dirs(fonts_dir)
 
     return resvg_py.svg_to_bytes(
         svg_string=svg_markup,
-        font_dirs=font_dirs if font_dirs else None,
+        font_dirs=font_dirs,
         width=1440,
         background="#ffffff",
         shape_rendering="geometric_precision",
@@ -284,10 +295,10 @@ class TeacherTableImageService:
 
     def __init__(self, fonts_dir: str | Path | None = None) -> None:
         self.fonts_dir = fonts_dir
-        # Cache telegram file_id mapping: key -> file_id (TTL 20 min)
+        # Cache telegram file_id mapping: key -> file_id (TTL 24 hours = 86400s)
         self._file_id_cache: TTLCache[str, str] = TTLCache(
-            maxsize=CACHE_CAPACITY_TEACHER_IMAGES,
-            ttl=CACHE_TEACHER_IMAGE_TTL.total_seconds(),
+            maxsize=1000,
+            ttl=86400.0,
         )
         self._locks: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=500, ttl=3600.0)
         self._locks_guard = asyncio.Lock()

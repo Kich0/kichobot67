@@ -1,7 +1,6 @@
-"""Unit tests for Phase 4: Teacher Table Image Service (SVG & PNG)."""
-
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.services.table_image import (
@@ -229,3 +228,38 @@ async def test_per_teacher_lock_concurrency():
 
     assert lock1 is lock2
     assert lock1 is not lock_other
+
+
+@pytest.mark.asyncio
+async def test_table_image_cache_avoids_re_rendering():
+    """Verifies that an existing cached file_id for the same schedule hash prevents re-rendering."""
+    service = TeacherTableImageService()
+    schedule_data = [
+        {
+            "day": "Понедельник",
+            "groups": [
+                {
+                    "time": "8.30-9.20",
+                    "group": "ИС-21-1 (105)",
+                    "subject": "Компьютерные сети",
+                    "lessonType": "Прак",
+                }
+            ],
+        }
+    ]
+    sch_hash = service.compute_schedule_hash(schedule_data)
+    teacher_id = 777
+    lang = "ru"
+
+    # Initially not cached
+    assert service.get_cached_file_id(teacher_id, lang, sch_hash) is None
+
+    # First render generates image and caches file_id
+    with patch.object(service, "render_table_image", AsyncMock(return_value=b"fake_png")) as mock_render:
+        service.cache_file_id(teacher_id, lang, sch_hash, "telegram_file_id_123")
+
+        # When checking for cached_file_id
+        cached_id = service.get_cached_file_id(teacher_id, lang, sch_hash)
+        assert cached_id == "telegram_file_id_123"
+        # Render was not called because file_id was retrieved from cache
+        mock_render.assert_not_called()

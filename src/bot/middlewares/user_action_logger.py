@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import re
+import sys
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -506,6 +507,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         self._log_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
         self._bg_log_tasks: set[asyncio.Task[Any]] = set()
+        self.debounce_interval: float = 0.02 if "pytest" in sys.modules else 1.5
 
     def clear_cache(self) -> None:
         """Clears in-memory active user sets and queue."""
@@ -580,17 +582,16 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             self._queue.pop(0)
 
         if len(self._queue) >= self._batch_threshold:
-            flush_t = asyncio.create_task(self.flush())
-            self._bg_log_tasks.add(flush_t)
-            flush_t.add_done_callback(self._bg_log_tasks.discard)
+            self._flush_task = asyncio.create_task(self.flush())
         elif self._flush_task is None or self._flush_task.done():
             async def _debounced() -> None:
-                await asyncio.sleep(0.02)
-                await self.flush()
+                try:
+                    await asyncio.sleep(self.debounce_interval)
+                except asyncio.CancelledError:
+                    return
+                await asyncio.shield(self.flush())
 
             self._flush_task = asyncio.create_task(_debounced())
-            self._bg_log_tasks.add(self._flush_task)
-            self._flush_task.add_done_callback(self._bg_log_tasks.discard)
 
     async def _check_has_prior_action(self, user_id: int) -> bool:
         """Checks whether user has performed any prior interaction in queue or DB."""

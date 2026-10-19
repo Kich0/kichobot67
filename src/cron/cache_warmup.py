@@ -95,7 +95,9 @@ class SmartWarmupEngine:
         self._teacher_task: asyncio.Task[Any] | None = None
         self._pause_until: float = 0.0
         self._background_tasks: set[asyncio.Task[Any]] = set()
-        self._tick_lock: asyncio.Lock = asyncio.Lock()
+        self._group_tick_lock: asyncio.Lock = asyncio.Lock()
+        self._teacher_tick_lock: asyncio.Lock = asyncio.Lock()
+        self._tick_lock: asyncio.Lock = self._group_tick_lock
 
         self._groups_cache: list[tuple[int, str]] = []
         self._groups_cache_updated_at: float = 0.0
@@ -198,9 +200,12 @@ class SmartWarmupEngine:
             try:
                 from src.services.smart_search import smart_search_service
 
-                matches = smart_search_service.search_groups(group_name, limit=1)
-                if matches and matches[0].get("id"):
-                    gid = int(matches[0]["id"])
+                groups_data = getattr(smart_search_service, "_groups_cache", None) or []
+                matches = smart_search_service.find_groups(group_name, groups_data)
+                if matches:
+                    gid_val = matches[0].get("id") or matches[0].get("groupId")
+                    if gid_val:
+                        gid = int(gid_val)
             except Exception:
                 pass
 
@@ -497,19 +502,40 @@ class SmartWarmupEngine:
                         {
                             "$match": {
                                 "createdAt": {"$gte": cutoff_groups},
-                                "action": {"$regex": r"^(?:schedule|chooseScheduleLanguage)\|"},
+                                "$or": [
+                                    {"action": {"$in": ["view_group", "refresh_group", "choose_schedule_language"]}},
+                                    {"action": {"$regex": r"^(?:schedule|chooseScheduleLanguage|refreshGroup)\|", "$options": "i"}},
+                                ],
                             }
                         },
-                        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+                        {
+                            "$project": {
+                                "target": {
+                                    "$ifNull": [
+                                        "$entityId",
+                                        {"$ifNull": ["$entity_id", "$action"]}
+                                    ]
+                                }
+                            }
+                        },
+                        {"$group": {"_id": "$target", "count": {"$sum": 1}}},
                         {"$sort": {"count": -1}},
                         {"$limit": self.TOP_GROUPS_LIMIT},
                     ]
                     act_res = await UserAction.aggregate(act_pipeline).to_list()
                     for item in act_res:
-                        act_str = str(item.get("_id") or "")
-                        parts = act_str.split("|")
-                        if len(parts) > 2:
-                            _add_gid(parts[2])
+                        raw_target = item.get("_id")
+                        if isinstance(raw_target, int):
+                            _add_gid(raw_target)
+                        elif isinstance(raw_target, str):
+                            if raw_target.isdigit():
+                                _add_gid(int(raw_target))
+                            elif "|" in raw_target:
+                                parts = [p for p in raw_target.split("|") if p]
+                                for p in parts[1:]:
+                                    if p.isdigit():
+                                        _add_gid(int(p))
+                                        break
                 except Exception as e:
                     logger.debug(f"[SmartWarmupEngine] UserAction aggregate for top groups failed: {e}")
 
@@ -878,20 +904,30 @@ class SmartWarmupEngine:
                 )
                 return
 
-            from src.bot.handlers.callbacks_router import _is_college_group
+            from src.bot.handlers.callbacks_router import _group_meta_cache, _is_college_group
+            from src.database.connection import get_client
 
-            num_g_id = int(group_id) if str(group_id).isdigit() else group_id
-            g_doc = None
-            try:
-                from src.database.models.group import Group
+            meta = _group_meta_cache.get((id(get_client()), group_id))
+            if not meta:
+                num_g_id = int(group_id) if str(group_id).isdigit() else group_id
+                try:
+                    from src.database.models.group import Group
 
-                g_doc = await Group.find_one({"id": num_g_id}) or await Group.find_one({"groupId": num_g_id})
-            except Exception:
-                g_doc = None
+                    g_doc = await Group.find_one({"id": num_g_id}) or await Group.find_one({"groupId": num_g_id})
+                    if g_doc:
+                        meta = {
+                            "name": g_doc.name,
+                            "faculty": getattr(g_doc, "faculty", None),
+                            "permanent_empty": getattr(g_doc, "permanent_empty", None) or getattr(g_doc, "permanentEmpty", None),
+                            "age": getattr(g_doc, "age", None),
+                        }
+                        _group_meta_cache[(id(get_client()), group_id)] = meta
+                except Exception:
+                    meta = None
 
-            fac_val = getattr(g_doc, "faculty", None) if g_doc else None
+            fac_val = meta.get("faculty") if meta else None
             is_perm_empty = _is_college_group(group_name, fac_val)
-            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
+            if meta and meta.get("permanent_empty") is True:
                 is_perm_empty = True
 
             if is_perm_empty:
@@ -918,11 +954,20 @@ class SmartWarmupEngine:
                 if isinstance(raw_data, dict)
                 else (raw_data if isinstance(raw_data, list) else [])
             )
+            from_api_cache = bool(getattr(raw_data, "from_cache", False))
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
 
             duration_ms = int((time.perf_counter() - t0) * 1000)
-            badge = "🔵" if is_from_db else "🟢"
-            source = "db" if is_from_db else "api"
+            if from_api_cache:
+                badge = "🟣"
+                source = "cache"
+            elif is_from_db:
+                badge = "🔵"
+                source = "db"
+            else:
+                badge = "🟢"
+                source = "api"
+
             self._log_warmup_result(
                 name=group_name,
                 target_type="group",
@@ -1015,7 +1060,7 @@ class SmartWarmupEngine:
                 and existing_teacher.get("data")
                 and not existing_teacher.get("is_from_db")
                 and t_cached_ts > 0.0
-                and (time.time() - t_cached_ts < 120.0)
+                and (time.time() - t_cached_ts < 220.0)
             ):
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping redundant warmup for teacher {api_lookup}; recently cached."
@@ -1063,11 +1108,20 @@ class SmartWarmupEngine:
                 if isinstance(raw_data, dict)
                 else (raw_data if isinstance(raw_data, list) else [])
             )
+            from_api_cache = bool(getattr(raw_data, "from_cache", False))
             is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
 
             duration_ms = int((time.perf_counter() - t0) * 1000)
-            badge = "🔵" if is_from_db else "🟢"
-            source = "db" if is_from_db else "api"
+            if from_api_cache:
+                badge = "🟣"
+                source = "cache"
+            elif is_from_db:
+                badge = "🔵"
+                source = "db"
+            else:
+                badge = "🟢"
+                source = "api"
+
             self._log_warmup_result(
                 name=api_lookup,
                 target_type="teacher",
@@ -1078,7 +1132,7 @@ class SmartWarmupEngine:
             )
 
             adapted_ru = schedule_api_adapter.adapt_teacher_schedule(records, "ru")
-            adapted_kz = schedule_api_adapter.adapt_teacher_schedule(records, "kz")
+            adapted_kz = schedule_api_adapter.get_kz_from_ru_teacher_schedule(adapted_ru)
             has_lessons = bool(records) and _has_any_lessons(adapted_ru)
 
             # If fallback from DB is completely empty or fetch returned 0 lessons, preserve existing valid cache
@@ -1232,8 +1286,7 @@ class SmartWarmupEngine:
                     await self._warm_group(group_id, group_name)
                     elapsed = time.monotonic() - start_mono
 
-                min_floor = min(2.5, self.GROUP_INTERVAL_SEC)
-                sleep_time = max(min_floor, self.GROUP_INTERVAL_SEC - elapsed)
+                sleep_time = max(0.1, self.GROUP_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1294,8 +1347,7 @@ class SmartWarmupEngine:
                     await self._warm_teacher(teacher_id, teacher_name)
                     elapsed = time.monotonic() - start_mono
 
-                min_floor = min(2.5, self.TEACHER_INTERVAL_SEC)
-                sleep_time = max(min_floor, self.TEACHER_INTERVAL_SEC - elapsed)
+                sleep_time = max(0.1, self.TEACHER_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:

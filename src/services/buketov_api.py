@@ -20,6 +20,8 @@ import urllib.parse
 
 import httpx
 
+import asyncio
+import orjson
 from src.core.config import settings
 from src.core.constants import (
     CACHE_CAPACITY_STUDENT_GROUPS,
@@ -61,6 +63,15 @@ class BuketovApiError(Exception):
         self.status = status_code
 
 
+class ScheduleApiResponse(dict):
+    """Dictionary subclass holding schedule payload with per-request cache metadata."""
+
+    def __init__(self, *args, from_cache: bool = False, not_modified: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.from_cache = from_cache
+        self.not_modified = not_modified
+
+
 @dataclass
 class CacheEntry:
     """Entry stored in partitioned in-memory schedule caches."""
@@ -68,6 +79,7 @@ class CacheEntry:
     data: Any
     etag: str = ""
     timestamp: float = 0.0
+    revision: str = ""
 
 
 class BuketovApiService:
@@ -105,6 +117,10 @@ class BuketovApiService:
         # Outbound Sliding Window Rate Limiter
         self.MAX_REQUESTS_PER_MINUTE: int = SCHEDULE_API_RATE_LIMIT  # 110
         self.outbound_request_timestamps: list[float] = []
+
+        # Optimization & Deduplication state
+        self.last_seen_revision: str = ""
+        self._in_flight: dict[str, asyncio.Future[Any]] = {}
 
     async def get_client(self) -> httpx.AsyncClient:
         """Returns or lazily creates httpx.AsyncClient."""
@@ -198,6 +214,13 @@ class BuketovApiService:
 
     def can_make_api_call(self, headroom: int = 0) -> bool:
         """Checks if an outbound network call to Buketov API is currently permitted."""
+        now = time.time()
+        if (
+            self.circuit_state == "API_DOWN"
+            and (now - self.circuit_tripped_at >= self.CIRCUIT_COOLDOWN_SECONDS)
+        ):
+            self.circuit_state = "HALF_OPEN"
+            logger.info("Circuit Breaker cooldown passed, transitioning to HALF_OPEN in can_make_api_call.")
         return self.check_rate_limit(headroom) and self.circuit_state != "API_DOWN"
 
     def clean_teacher_name(self, raw_name: str | None) -> str:
@@ -480,6 +503,10 @@ class BuketovApiService:
         cache_type: str | None = None,
     ) -> dict[str, Any]:
         """Fallback retrieval from MongoDB when API is rate-limited or unreachable."""
+        from src.database.connection import get_client
+        if get_client() is None:
+            return {"records": [], "total": 0, "_fromDb": True, "_from_db": True}
+
         params = params or {}
         is_teacher = (
             cache_type == "teacher"
@@ -650,69 +677,94 @@ class BuketovApiService:
         else:
             cache_key = self.api_url
 
+        # In-Flight Coalescing: prevent duplicate simultaneous HTTP requests
+        if cache_key in self._in_flight:
+            return await asyncio.shield(self._in_flight[cache_key])
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[Any] = loop.create_future()
+        self._in_flight[cache_key] = fut
+
         cached = self._get_cache(target_cache, cache_key)
         now = time.time()
 
-        # 1. Fresh cache or night mode: return immediately with 0 network calls (unless force_refresh is requested)
-        is_night = False
         try:
-            from src.cron.cache_warmup import is_night_cache_mode_kz
+            # 1. Fresh cache or night mode: return immediately with 0 network calls (unless force_refresh is requested)
+            is_night = False
+            try:
+                from src.cron.cache_warmup import is_night_cache_mode_kz
 
-            is_night = is_night_cache_mode_kz()
-        except Exception:
-            pass
+                is_night = is_night_cache_mode_kz()
+            except Exception:
+                pass
 
-        if not force_refresh and cached and (is_night or (now - cached.timestamp < self.cache_ttl)):
-            return cached.data
+            if not force_refresh and cached and (is_night or (now - cached.timestamp < self.cache_ttl)):
+                res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=False)
+                if not fut.done():
+                    fut.set_result(res)
+                return res
 
-        # 2. Circuit Breaker check
-        if self.circuit_state == "API_DOWN":
-            if now - self.circuit_tripped_at < self.CIRCUIT_COOLDOWN_SECONDS:
-                if cached and cached.data:
-                    logger.warning(
-                        f"Circuit Breaker OPEN (API_DOWN). Returning cached data for {cache_key}."
-                    )
-                    return cached.data
-                try:
-                    db_res = await self.fetch_schedule_from_db(params, cache_type)
-                    if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
+            # 2. Circuit Breaker check
+            if self.circuit_state == "API_DOWN":
+                if now - self.circuit_tripped_at < self.CIRCUIT_COOLDOWN_SECONDS:
+                    if cached and cached.data:
                         logger.warning(
-                            f"Circuit Breaker OPEN (API_DOWN). Falling back to MongoDB records for {cache_key}."
+                            f"Circuit Breaker OPEN (API_DOWN). Returning cached data for {cache_key}."
                         )
-                        return db_res
-                except Exception as db_err:
-                    logger.debug(f"DB fallback during Circuit Breaker OPEN failed: {db_err}")
-                raise CircuitBreakerError()
-            else:
-                self.circuit_state = "HALF_OPEN"
-                logger.info(
-                    "Circuit Breaker cooldown passed, transitioning to HALF_OPEN for test probe."
+                        res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=False)
+                        if not fut.done():
+                            fut.set_result(res)
+                        return res
+                    try:
+                        db_res = await self.fetch_schedule_from_db(params, cache_type)
+                        if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
+                            logger.warning(
+                                f"Circuit Breaker OPEN (API_DOWN). Falling back to MongoDB records for {cache_key}."
+                            )
+                            if not fut.done():
+                                fut.set_result(db_res)
+                            return db_res
+                    except Exception as db_err:
+                        logger.debug(f"DB fallback during Circuit Breaker OPEN failed: {db_err}")
+                    cb_err = CircuitBreakerError()
+                    if not fut.done():
+                        fut.set_exception(cb_err)
+                    raise cb_err
+                else:
+                    self.circuit_state = "HALF_OPEN"
+                    logger.info(
+                        "Circuit Breaker cooldown passed, transitioning to HALF_OPEN for test probe."
+                    )
+
+            # 3. Outbound Rate Limiter check (110 req/min)
+            if not self.check_rate_limit():
+                logger.warning(
+                    "Reached outbound rate limit 110 req/min. Falling back to MongoDB."
                 )
+                if cached and cached.data:
+                    res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=False)
+                    if not fut.done():
+                        fut.set_result(res)
+                    return res
+                db_res = await self.fetch_schedule_from_db(params, cache_type)
+                if not fut.done():
+                    fut.set_result(db_res)
+                return db_res
 
-        # 3. Outbound Rate Limiter check (110 req/min)
-        if not self.check_rate_limit():
-            logger.warning(
-                "Reached outbound rate limit 110 req/min. Falling back to MongoDB."
-            )
-            if cached and cached.data:
-                return cached.data
-            return await self.fetch_schedule_from_db(params, cache_type)
+            # Record permitted outbound request timestamp
+            self.outbound_request_timestamps.append(time.time())
 
-        # Record permitted outbound request timestamp
-        self.outbound_request_timestamps.append(time.time())
+            headers = {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            if cached and cached.etag:
+                headers["If-None-Match"] = cached.etag
 
-        headers = {
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip",
-        }
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        if cached and cached.etag:
-            headers["If-None-Match"] = cached.etag
+            client = await self.get_client()
 
-        client = await self.get_client()
-
-        try:
             response = await client.get(
                 self.api_url,
                 params=clean_params,
@@ -724,8 +776,13 @@ class BuketovApiService:
             if response.status_code == 304 and cached is not None:
                 self._record_success()
                 cached.timestamp = time.time()
+                if self.last_seen_revision:
+                    cached.revision = self.last_seen_revision
                 self._set_cache(target_cache, target_capacity, cache_key, cached)
-                return cached.data
+                res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=True)
+                if not fut.done():
+                    fut.set_result(res)
+                return res
 
             if response.status_code >= 400:
                 err_text = response.text
@@ -735,18 +792,38 @@ class BuketovApiService:
                 )
                 raise err
 
-            data = response.json()
+            # Safe orjson decoding checking isinstance for mock compatibility
+            raw_content = getattr(response, "content", None)
+            if isinstance(raw_content, (bytes, bytearray, str)) and raw_content:
+                try:
+                    data = orjson.loads(raw_content)
+                except Exception:
+                    data = response.json()
+            else:
+                data = response.json()
+
             etag = response.headers.get("etag", "")
+            revision = str(data.get("revision") or "") if isinstance(data, dict) else ""
+            if revision:
+                self.last_seen_revision = revision
 
             self._record_success()
 
-            new_entry = CacheEntry(data=data, etag=etag, timestamp=time.time())
+            new_entry = CacheEntry(data=data, etag=etag, timestamp=time.time(), revision=revision)
             self._set_cache(target_cache, target_capacity, cache_key, new_entry)
-            return data
+            res = ScheduleApiResponse(data, from_cache=False, not_modified=False)
+            if not fut.done():
+                fut.set_result(res)
+            return res
 
-        except Exception as e:
+        except BaseException as e:
+            if isinstance(e, CircuitBreakerError):
+                if not fut.done():
+                    fut.set_exception(e)
+                raise
+
             status = getattr(e, "status_code", None) or getattr(e, "status", None)
-            if status is None or status >= 500:
+            if status is None or (isinstance(status, int) and status >= 500):
                 self._record_failure(e)
 
             logger.error(
@@ -755,17 +832,26 @@ class BuketovApiService:
 
             if cached and cached.data:
                 logger.warning(f"Returning stale cached data for {cache_key} due to network error.")
-                return cached.data
+                res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=False)
+                if not fut.done():
+                    fut.set_result(res)
+                return res
 
             try:
                 db_res = await self.fetch_schedule_from_db(params, cache_type)
                 if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
                     logger.warning(f"Returning MongoDB fallback data for {cache_key} due to network error.")
+                    if not fut.done():
+                        fut.set_result(db_res)
                     return db_res
             except Exception as db_err:
                 logger.debug(f"DB fallback during network error failed: {db_err}")
 
+            if not fut.done():
+                fut.set_exception(e)
             raise
+        finally:
+            self._in_flight.pop(cache_key, None)
 
     async def get_group_schedule(self, group_name: str, force_refresh: bool = False) -> dict[str, Any]:
         """Fetches complete schedule of a student group with auto-pagination."""
@@ -774,7 +860,7 @@ class BuketovApiService:
 
         all_records: list[dict[str, Any]] = []
         offset = 0
-        limit = 200
+        limit = 500
         result: dict[str, Any] = {}
         page = 0
         max_pages = 10
@@ -812,7 +898,11 @@ class BuketovApiService:
             cache_type="student",
         )
         res_dict["_cacheTimestamp"] = entry_ts or time.time()
-        return res_dict
+        return ScheduleApiResponse(
+            res_dict,
+            from_cache=getattr(result, "from_cache", False),
+            not_modified=getattr(result, "not_modified", False),
+        )
 
     def get_entry_timestamp(
         self,
@@ -857,7 +947,7 @@ class BuketovApiService:
         surname = self._extract_surname(clean_name)
         all_records: list[dict[str, Any]] = []
         offset = 0
-        limit = 200
+        limit = 500
         result: dict[str, Any] = {}
         page_count = 0
         max_pages = 5
@@ -934,7 +1024,11 @@ class BuketovApiService:
             cache_type="teacher",
         )
         res_dict["_cacheTimestamp"] = entry_ts or time.time()
-        return res_dict
+        return ScheduleApiResponse(
+            res_dict,
+            from_cache=getattr(result, "from_cache", False),
+            not_modified=getattr(result, "not_modified", False),
+        )
 
     async def fetch_teacher_schedule(
         self,

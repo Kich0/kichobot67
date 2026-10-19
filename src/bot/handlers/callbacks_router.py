@@ -150,11 +150,11 @@ teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(
 )
 
 # Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
-_persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=3600.0)
-_persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=3600.0)
-_group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=3600.0)
-_teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=3600.0)
-_known_persisted_empty_groups: TTLCache[int | str, bool] = TTLCache(maxsize=3000, ttl=3600.0)
+_persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=86400.0)
+_persisted_teacher_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=3000, ttl=86400.0)
+_group_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=86400.0)
+_teacher_meta_cache: TTLCache[tuple[int, int | str], dict[str, Any]] = TTLCache(maxsize=3000, ttl=86400.0)
+_known_persisted_empty_groups: TTLCache[int | str, bool] = TTLCache(maxsize=3000, ttl=86400.0)
 
 # Per-entity asyncio locks to prevent race conditions on double-clicking 🔄 (Bug #8)
 _fetch_locks: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=3000, ttl=300.0)
@@ -397,6 +397,23 @@ def _has_any_lessons(adapted_days: Any) -> bool:
                 if str(grp_title).strip():
                     return True
     return False
+
+
+async def _update_group_healing_status(group_id: int | str, found_lessons: bool) -> None:
+    """Self-healing: updates group lastCheckedAt and hasSchedule in MongoDB."""
+    try:
+        from src.database.models.group import Group
+        from datetime import timezone
+        now_dt = datetime.now(timezone.utc)
+        update_dict: dict[str, Any] = {"lastCheckedAt": now_dt}
+        if found_lessons:
+            update_dict["hasSchedule"] = True
+        num_id = int(group_id) if str(group_id).isdigit() else group_id
+        g = await Group.find_one({"id": num_id}) or await Group.find_one({"groupId": num_id})
+        if g:
+            await g.update({"$set": update_dict})
+    except Exception as e:
+        logger.debug(f"Self-healing group update failed: {e}")
 
 
 def clear_schedule_caches() -> None:
@@ -1067,70 +1084,72 @@ async def get_or_fetch_student_schedule(
                     cached["is_from_cache"] = True
                 return cached
 
+            client_id = id(get_client())
+            meta = _group_meta_cache.get((client_id, group_id)) or _group_meta_cache.get((0, group_id))
             num_g_id = int(group_id) if str(group_id).isdigit() else group_id
-            g_doc = None
-            try:
-                from src.database.models.group import Group
 
-                g_doc = (
-                    await Group.find_one(Group.group_id == num_g_id)
-                    or await Group.find_one(Group.item_id == num_g_id)
-                    or await Group.find_one({"id": num_g_id})
-                    or await Group.find_one({"groupId": num_g_id})
-                )
-                if not g_doc and group_name:
-                    g_doc = await Group.find_one({"name": group_name})
-            except Exception:
-                g_doc = None
-
-            grp_name = group_name
-            if not grp_name and g_doc and getattr(g_doc, "name", None):
-                grp_name = g_doc.name
-                _group_meta_cache[(id(get_client()), group_id)] = {
-                    "name": grp_name,
-                    "back_callback": "faculty|0",
-                    "age": getattr(g_doc, "age", None),
-                }
-
-            sched_doc = None
-            try:
-                from src.database.models.schedule import Schedule
-
-                sched_doc = await Schedule.find_one(Schedule.group_id == num_g_id) or await Schedule.find_one({"groupId": num_g_id})
-            except Exception:
-                sched_doc = None
-
-            fac_val = getattr(g_doc, "faculty", None) if g_doc else None
-            if fac_val is None and g_doc and getattr(g_doc, "program", None):
+            if not meta or not meta.get("name"):
                 try:
-                    from src.database.models.program import Program
+                    from src.database.models.group import Group
 
-                    num_p_id = int(g_doc.program) if str(g_doc.program).isdigit() else g_doc.program
-                    p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
-                    if p_doc and getattr(p_doc, "faculty", None):
-                        fac_val = p_doc.faculty
+                    g_doc = (
+                        await Group.find_one(Group.group_id == num_g_id)
+                        or await Group.find_one(Group.item_id == num_g_id)
+                        or await Group.find_one({"id": num_g_id})
+                        or await Group.find_one({"groupId": num_g_id})
+                    )
+                    if not g_doc and group_name:
+                        g_doc = await Group.find_one({"name": group_name})
+                    if g_doc:
+                        fac_val = getattr(g_doc, "faculty", None)
+                        if fac_val is None and getattr(g_doc, "program", None):
+                            try:
+                                from src.database.models.program import Program
+                                num_p_id = int(g_doc.program) if str(g_doc.program).isdigit() else g_doc.program
+                                p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
+                                if p_doc and getattr(p_doc, "faculty", None):
+                                    fac_val = p_doc.faculty
+                            except Exception:
+                                pass
+
+                        meta = {
+                            "name": g_doc.name,
+                            "back_callback": "faculty|0",
+                            "faculty": fac_val,
+                            "has_schedule": getattr(g_doc, "has_schedule", None) if getattr(g_doc, "has_schedule", None) is not None else getattr(g_doc, "hasSchedule", None),
+                            "permanent_empty": getattr(g_doc, "permanent_empty", None) if getattr(g_doc, "permanent_empty", None) is not None else getattr(g_doc, "permanentEmpty", None),
+                            "last_checked_at": getattr(g_doc, "last_checked_at", None) or getattr(g_doc, "lastCheckedAt", None),
+                            "age": getattr(g_doc, "age", None),
+                            "updated_at": getattr(g_doc, "updated_at", None),
+                        }
+                        _group_meta_cache[(client_id, group_id)] = meta
                 except Exception:
-                    pass
+                    meta = None
 
+            grp_name = group_name or (meta.get("name") if meta else None)
+            fac_val = meta.get("faculty") if meta else None
             is_perm_empty = _is_college_group(grp_name, fac_val)
-            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
+            if meta and meta.get("permanent_empty") is True:
                 is_perm_empty = True
-            if sched_doc and (getattr(sched_doc, "permanent_empty", None) is True or getattr(sched_doc, "permanentEmpty", None) is True):
-                is_perm_empty = True
+
+            # Self-healing logic for empty groups:
+            # If group is marked as not having schedule, check when it was last checked.
+            # If last_checked_at is None or older than 30 minutes, force probe Buketov API!
+            last_checked = meta.get("last_checked_at") if meta else None
+            last_checked_ts = 0.0
+            if isinstance(last_checked, datetime):
+                last_checked_ts = last_checked.timestamp()
+            elif isinstance(last_checked, (int, float)):
+                last_checked_ts = float(last_checked)
+
+            is_stale_empty = (not is_perm_empty) and (last_checked_ts == 0.0 or (now - last_checked_ts >= 1800.0))
 
             is_known_empty = False
             if is_perm_empty:
                 is_known_empty = True
-            if g_doc and (getattr(g_doc, "has_schedule", None) is False or getattr(g_doc, "hasSchedule", None) is False):
-                is_known_empty = True
-            if g_doc and (getattr(g_doc, "permanent_empty", None) is True or getattr(g_doc, "permanentEmpty", None) is True):
-                is_known_empty = True
-            if sched_doc and (getattr(sched_doc, "has_schedule", None) is False or getattr(sched_doc, "hasSchedule", None) is False):
-                is_known_empty = True
-            if sched_doc and (getattr(sched_doc, "permanent_empty", None) is True or getattr(sched_doc, "permanentEmpty", None) is True):
-                is_known_empty = True
-            if sched_doc and sched_doc.data is not None and not _has_any_lessons(sched_doc.data):
-                is_known_empty = True
+            elif meta and meta.get("has_schedule") is False:
+                if is_refresh or not is_stale_empty:
+                    is_known_empty = True
 
             # 1. Normal navigation for known empty group: instant DB return with 🔵 ∞ and cache in RAM
             if not is_refresh and is_known_empty:
@@ -1138,10 +1157,10 @@ async def get_or_fetch_student_schedule(
                     _safe_create_task(_bg_persist_empty_student_schedule(group_id, is_perm_empty))
                 empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
                 empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
-                doc_ts = (
-                    sched_doc.updated_at.timestamp() if (sched_doc and sched_doc.updated_at)
-                    else (g_doc.updated_at.timestamp() if (g_doc and g_doc.updated_at) else now)
-                )
+                doc_ts = now
+                if meta and meta.get("updated_at"):
+                    u = meta["updated_at"]
+                    doc_ts = u.timestamp() if isinstance(u, datetime) else now
                 cached_ru = {
                     "data": empty_ru,
                     "timestamp": now,
@@ -1160,9 +1179,6 @@ async def get_or_fetch_student_schedule(
                 }
                 student_schedule_cache[f"{group_id}_ru"] = cached_ru
                 student_schedule_cache[f"{group_id}_kz"] = cached_kz
-                student_schedule_cache[f"{group_id}_рус"] = cached_ru
-                student_schedule_cache[f"{group_id}_каз"] = cached_kz
-                student_schedule_cache[f"{group_id}_қаз"] = cached_kz
                 return cached_kz if norm_lang == "kz" else cached_ru
 
             # 2. Refresh for known empty group: fast probe with 2.5s timeout to prevent freezes
@@ -1210,9 +1226,6 @@ async def get_or_fetch_student_schedule(
                     }
                     student_schedule_cache[f"{group_id}_ru"] = empty_ru
                     student_schedule_cache[f"{group_id}_kz"] = empty_kz
-                    student_schedule_cache[f"{group_id}_рус"] = empty_ru
-                    student_schedule_cache[f"{group_id}_каз"] = empty_kz
-                    student_schedule_cache[f"{group_id}_қаз"] = empty_kz
                     return empty_kz if norm_lang == "kz" else empty_ru
                 else:
                     is_from_db = bool(raw_data.get("_fromDb", False)) if isinstance(raw_data, dict) else False
@@ -1232,9 +1245,6 @@ async def get_or_fetch_student_schedule(
                     }
                     student_schedule_cache[f"{group_id}_ru"] = cached_ru
                     student_schedule_cache[f"{group_id}_kz"] = cached_kz
-                    student_schedule_cache[f"{group_id}_рус"] = cached_ru
-                    student_schedule_cache[f"{group_id}_каз"] = cached_kz
-                    student_schedule_cache[f"{group_id}_қаз"] = cached_kz
                     if not is_from_db:
                         _safe_create_task(_bg_persist_student_schedule(group_id, adapted_ru))
                     return cached_kz if norm_lang == "kz" else cached_ru
@@ -1263,6 +1273,14 @@ async def get_or_fetch_student_schedule(
                     adapted_ru = schedule_api_adapter.adapt_group_schedule(records, "ru")
                     adapted_kz = schedule_api_adapter.adapt_group_schedule(records, "kz")
                     has_lessons = bool(records) and _has_any_lessons(adapted_ru)
+
+                    # Trigger self-healing update in MongoDB and in-memory meta
+                    _safe_create_task(_update_group_healing_status(group_id, has_lessons))
+                    if meta:
+                        from datetime import timezone
+                        meta["last_checked_at"] = datetime.now(timezone.utc)
+                        if has_lessons:
+                            meta["has_schedule"] = True
 
                     if not has_lessons:
                         # 1. If previous RAM cache already had lessons, preserve it
@@ -1294,9 +1312,6 @@ async def get_or_fetch_student_schedule(
                                 }
                                 student_schedule_cache[f"{group_id}_ru"] = cached_ru
                                 student_schedule_cache[f"{group_id}_kz"] = cached_kz
-                                student_schedule_cache[f"{group_id}_рус"] = cached_ru
-                                student_schedule_cache[f"{group_id}_каз"] = cached_kz
-                                student_schedule_cache[f"{group_id}_қаз"] = cached_kz
                                 return cached_kz if norm_lang == "kz" else cached_ru
                         except Exception:
                             pass
@@ -1320,9 +1335,6 @@ async def get_or_fetch_student_schedule(
                         }
                         student_schedule_cache[f"{group_id}_ru"] = empty_ru
                         student_schedule_cache[f"{group_id}_kz"] = empty_kz
-                        student_schedule_cache[f"{group_id}_рус"] = empty_ru
-                        student_schedule_cache[f"{group_id}_каз"] = empty_kz
-                        student_schedule_cache[f"{group_id}_қаз"] = empty_kz
 
                         return empty_kz if norm_lang == "kz" else empty_ru
 
@@ -1345,9 +1357,6 @@ async def get_or_fetch_student_schedule(
                     # Populate caches for both RU and KZ with identical timestamp to prevent cooldown bypass (Bug #8)
                     student_schedule_cache[f"{group_id}_ru"] = cached_ru
                     student_schedule_cache[f"{group_id}_kz"] = cached_kz
-                    student_schedule_cache[f"{group_id}_рус"] = cached_ru
-                    student_schedule_cache[f"{group_id}_каз"] = cached_kz
-                    student_schedule_cache[f"{group_id}_қаз"] = cached_kz
 
                     cached = cached_kz if norm_lang == "kz" else cached_ru
 
@@ -2424,7 +2433,7 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
     old_message = call.message
 
     # Try sending via cached Telegram file_id (0 network overhead)
-    if cached_file_id and not is_refresh:
+    if cached_file_id:
         try:
             sent_msg = await bot.send_photo(
                 chat_id=chat_id,
