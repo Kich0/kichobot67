@@ -202,11 +202,11 @@ async def test_get_top_teachers_resolves_string_actions():
 
 
 def test_warmup_engine_timing_and_5_minute_cycle():
-    """Verifies that engine warms TOP-60 teachers every 5 minutes (5.0s pacing)."""
+    """Verifies that engine warms TOP-60 teachers in strictly under 5 minutes (4.0s pacing = 4.0 min)."""
     engine = SmartWarmupEngine()
     assert engine.TOP_TEACHERS_LIMIT == 60
-    assert engine.TEACHER_INTERVAL_SEC == 5.0
-    assert engine.TOP_TEACHERS_LIMIT * engine.TEACHER_INTERVAL_SEC == 300.0  # Exactly 5.0 minutes (300 seconds)
+    assert engine.TEACHER_INTERVAL_SEC == 4.0
+    assert engine.TOP_TEACHERS_LIMIT * engine.TEACHER_INTERVAL_SEC == 240.0  # Exactly 4.0 minutes (240 seconds <= 300s)
 
 
 def test_user_action_ttl_index_45_days():
@@ -337,7 +337,7 @@ async def test_touch_teacher_priority_and_2h_expiry():
     name, exp = engine._priority_teachers[999]
     assert name == "Иванов И. И."
     assert 7190.0 <= exp - now <= 7205.0  # Exactly 2 hours (7200s)
-    assert engine._teachers_cache[0] == (999, "Иванов И. И.")
+    assert (999, "Иванов И. И.") in engine._priority_teachers_queue
 
     # Expired entries should be purged on next _get_top_teachers
     engine._priority_teachers[888] = ("Старый С. С.", now - 5.0)  # Expired
@@ -472,13 +472,10 @@ async def test_touch_teacher_cache_stability_no_thrashing():
     engine.touch_teacher(333, "Преподаватель 3")
     # Cache timestamp must be preserved, not reset to 0.0
     assert engine._teachers_cache_updated_at == initial_ts
-    assert engine._teachers_cache[0] == (333, "Преподаватель 3")
-
-    # _get_top_teachers should return priority teacher at front without triggering UserAction aggregation
-    with patch("src.database.models.user_action.UserAction.aggregate") as mock_agg:
-        top = await engine._get_top_teachers()
-        assert top[0] == (333, "Преподаватель 3")
-        mock_agg.assert_not_called()
+    assert (333, "Преподаватель 3") in engine._priority_teachers_queue
+    # Main rotation cache remains unmutated
+    assert engine._teachers_cache[0] == (111, "Преподаватель 1")
+    assert engine._teachers_cache[1] == (222, "Преподаватель 2")
 
 
 @pytest.mark.asyncio

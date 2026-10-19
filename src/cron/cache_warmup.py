@@ -13,6 +13,7 @@ Manages continuous, pacing-controlled schedule pre-fetching:
 from __future__ import annotations
 
 import asyncio
+import collections
 from datetime import datetime, time as dt_time, timezone, timedelta
 import time
 from typing import Any
@@ -50,12 +51,34 @@ def is_warmup_active_kz(now_dt: datetime | None = None) -> bool:
     return current_time >= start_time or current_time < end_time
 
 
+def is_night_cache_mode_kz(now_dt: datetime | None = None) -> bool:
+    """Checks whether the current time in Asia/Almaty falls within the night cache freeze window (01:00 to 06:45).
+
+    During 01:00 to 06:45, cache TTL checks and purges are frozen so night entries remain valid.
+    The warmup engine wakes up at 06:30 and refreshes all 150 groups by ~06:39.
+    At 06:45, night cache mode ends seamlessly without expiring old entries before morning warmup completes.
+    """
+    tz = zoneinfo.ZoneInfo(TIMEZONE_NAME)
+    if now_dt is None:
+        now_dt = datetime.now(tz)
+    elif now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=tz)
+    else:
+        now_dt = now_dt.astimezone(tz)
+
+    current_time = now_dt.time()
+    night_start = dt_time(1, 0)
+    night_end = dt_time(6, 45)
+
+    return night_start <= current_time < night_end
+
+
 class SmartWarmupEngine:
     """Continuous paced schedule warmup engine respecting API limits and RAM constraints."""
 
     # Pacing and sizing constants
-    GROUP_INTERVAL_SEC: float = 4.0  # 150 groups over 600s (10 min) = 15 req/min
-    TEACHER_INTERVAL_SEC: float = 5.0  # 60 teachers over 300s (5 min) = 12 req/min
+    GROUP_INTERVAL_SEC: float = 3.5  # 150 groups over 525s (8.75 min < 10 min) = 17.1 req/min
+    TEACHER_INTERVAL_SEC: float = 4.0  # 60 teachers over 240s (4.0 min < 5 min) = 15.0 req/min
     TOP_GROUPS_LIMIT: int = 150
     TOP_TEACHERS_LIMIT: int = 60
     TOP_LISTS_CACHE_TTL: float = 3600.0  # 1 hour (was 900.0)
@@ -78,6 +101,10 @@ class SmartWarmupEngine:
         self._teachers_cache_updated_at: float = 0.0
         self._priority_teachers: dict[int | str, tuple[str, float]] = {}  # id -> (name, expires_at)
         self._priority_groups: dict[int, tuple[str, float]] = {}  # id -> (name, expires_at)
+        self._priority_groups_queue: collections.deque[tuple[int, str]] = collections.deque(maxlen=25)
+        self._priority_teachers_queue: collections.deque[tuple[int | str, str]] = collections.deque(maxlen=25)
+        self._tick_lock: asyncio.Lock = asyncio.Lock()
+        self._recent_logs: collections.deque[dict[str, Any]] = collections.deque(maxlen=100)
         self._group_cursor: int = 0
         self._teacher_cursor: int = 0
 
@@ -132,8 +159,14 @@ class SmartWarmupEngine:
         expires_at = now + 7200.0  # 2 hours
         self._priority_groups[gid] = (g_name, expires_at)
 
-        # Update in-memory cache: if not in cache, prepend it to priority queue,
-        # but NEVER reset background rotation cursor to 0 (prevents starvation of downstream groups).
+        pair = (gid, g_name)
+        # Deduplicate: remove any existing entry for this group id in priority queue
+        self._priority_groups_queue = collections.deque(
+            (item for item in self._priority_groups_queue if item[0] != gid),
+            maxlen=25,
+        )
+        self._priority_groups_queue.append(pair)
+
         existing_idx = next(
             (
                 idx
@@ -142,13 +175,8 @@ class SmartWarmupEngine:
             ),
             None,
         )
-        if existing_idx is not None:
-            if g_name and self._groups_cache[existing_idx][1] != g_name:
-                self._groups_cache[existing_idx] = (gid, g_name)
-        else:
-            self._groups_cache = [(gid, g_name)] + self._groups_cache[: self.TOP_GROUPS_LIMIT - 1]
-            if self._group_cursor > 0:
-                self._group_cursor += 1
+        if existing_idx is not None and g_name and self._groups_cache[existing_idx][1] != g_name:
+            self._groups_cache[existing_idx] = (gid, g_name)
         logger.debug(f"[SmartWarmupEngine] Touched group {g_name} (id={gid}) for priority warmup (2h).")
 
     def add_urgent_group(self, group_name: str, group_id: int | None = None) -> None:
@@ -245,8 +273,14 @@ class SmartWarmupEngine:
         expires_at = now + 7200.0  # 2 hours
         self._priority_teachers[norm_id] = (t_name, expires_at)
 
-        # Update in-memory cache: if not in cache, prepend it to priority queue,
-        # but NEVER reset background rotation cursor to 0 (prevents starvation of downstream teachers).
+        t_pair = (norm_id, t_name)
+        # Deduplicate: remove any existing entry for this teacher id in priority queue
+        self._priority_teachers_queue = collections.deque(
+            (item for item in self._priority_teachers_queue if item[0] != norm_id),
+            maxlen=25,
+        )
+        self._priority_teachers_queue.append(t_pair)
+
         existing_idx = next(
             (
                 idx
@@ -256,13 +290,8 @@ class SmartWarmupEngine:
             ),
             None,
         )
-        if existing_idx is not None:
-            if t_name and self._teachers_cache[existing_idx][1] != t_name:
-                self._teachers_cache[existing_idx] = (norm_id, t_name)
-        else:
-            self._teachers_cache = [(norm_id, t_name)] + self._teachers_cache[: self.TOP_TEACHERS_LIMIT - 1]
-            if self._teacher_cursor > 0:
-                self._teacher_cursor += 1
+        if existing_idx is not None and t_name and self._teachers_cache[existing_idx][1] != t_name:
+            self._teachers_cache[existing_idx] = (norm_id, t_name)
         logger.debug(f"[SmartWarmupEngine] Touched teacher {t_name} (id={norm_id}) for priority warmup (2h).")
 
     def _create_background_task(self, coro: Any) -> asyncio.Task[Any]:
@@ -271,6 +300,10 @@ class SmartWarmupEngine:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
+
+    def get_recent_logs(self) -> list[dict[str, Any]]:
+        """Returns recent warmup log entries from the in-memory ring buffer (up to 100)."""
+        return list(self._recent_logs)
 
     def _log_warmup_result(
         self,
@@ -282,7 +315,25 @@ class SmartWarmupEngine:
         status: bool = True,
         error_msg: str | None = None,
     ) -> None:
-        """Persists warmup cycle audit entry into WarmupLog collection via fire-and-forget task."""
+        """Persists warmup cycle audit entry into ring buffer and WarmupLog collection via fire-and-forget task."""
+        entry = {
+            "name": name,
+            "target_type": target_type,
+            "badge": badge,
+            "source": source,
+            "duration_ms": duration_ms,
+            "status": status,
+            "error_msg": error_msg,
+            "created_at": datetime.now(timezone.utc),
+        }
+        self._recent_logs.append(entry)
+
+        # Skip saving idle cache hits (source == "cache" / 🟣) to MongoDB Atlas
+        # to eliminate ~38,000 idle TLS roundtrips per day.
+        # Only persist real network fetches (api), DB fallbacks (db), or errors (status is False).
+        if source == "cache" and status is True:
+            return
+
         async def _persist() -> None:
             try:
                 from src.database.models.warmup_log import WarmupLog
@@ -389,19 +440,6 @@ class SmartWarmupEngine:
         }
 
         if self._groups_cache and (now - self._groups_cache_updated_at < self.TOP_LISTS_CACHE_TTL):
-            active_p = [
-                (gid, name)
-                for gid, (name, exp) in sorted(self._priority_groups.items(), key=lambda x: x[1][1], reverse=True)
-                if exp > now
-            ]
-            if active_p:
-                p_ids = {p[0] for p in active_p}
-                p_names = {p[1].strip().lower() for p in active_p if p[1]}
-                merged = active_p + [
-                    g for g in self._groups_cache
-                    if g[0] not in p_ids and (g[1].strip().lower() not in p_names if g[1] else True)
-                ]
-                return merged[: self.TOP_GROUPS_LIMIT]
             return self._groups_cache
 
         try:
@@ -508,20 +546,6 @@ class SmartWarmupEngine:
         }
 
         if self._teachers_cache and (now - self._teachers_cache_updated_at < self.TOP_LISTS_CACHE_TTL):
-            active_p = [
-                (tid, name)
-                for tid, (name, exp) in sorted(self._priority_teachers.items(), key=lambda x: x[1][1], reverse=True)
-                if exp > now
-            ]
-            if active_p:
-                p_ids = {int(p[0]) if (isinstance(p[0], str) and p[0].isdigit()) else p[0] for p in active_p}
-                p_names = {p[1].strip().lower() for p in active_p if p[1]}
-                merged = active_p + [
-                    t for t in self._teachers_cache
-                    if (int(t[0]) if (isinstance(t[0], str) and str(t[0]).isdigit()) else t[0]) not in p_ids
-                    and (t[1].strip().lower() not in p_names if t[1] else True)
-                ]
-                return merged[: self.TOP_TEACHERS_LIMIT]
             return self._teachers_cache
 
         try:
@@ -1178,32 +1202,38 @@ class SmartWarmupEngine:
                     continue
 
                 groups = await self._get_top_groups()
-                if not groups:
+                if not groups and not self._priority_groups_queue:
                     await asyncio.sleep(self.RETRY_EMPTY_LIST_INTERVAL_SEC)
                     continue
 
-                self._group_cursor = self._group_cursor % len(groups)
-                group_id, group_name = groups[self._group_cursor]
+                from_priority = False
+                if self._priority_groups_queue:
+                    group_id, group_name = self._priority_groups_queue.popleft()
+                    from_priority = True
+                else:
+                    self._group_cursor = self._group_cursor % len(groups)
+                    group_id, group_name = groups[self._group_cursor]
 
                 # Check API headroom: DO NOT skip or advance cursor if headroom is reached!
                 if not buketov_api_service.can_make_api_call(headroom=self.HEADROOM):
                     logger.debug(
                         f"[SmartWarmupEngine] Postponed group {group_name}: API headroom reached or API_DOWN."
                     )
+                    if from_priority:
+                        self._priority_groups_queue.appendleft((group_id, group_name))
                     await asyncio.sleep(min(self.GROUP_INTERVAL_SEC, 2.0))
                     continue
 
-                start_mono = time.monotonic()
-                await self._warm_group(group_id, group_name)
-                self._group_cursor = (self._group_cursor + 1) % len(groups)
+                if not from_priority and groups:
+                    self._group_cursor = (self._group_cursor + 1) % len(groups)
 
-                elapsed = time.monotonic() - start_mono
-                target_step = (
-                    self.GROUP_INTERVAL_SEC
-                    if self.GROUP_INTERVAL_SEC != 4.0
-                    else max(2.0, 600.0 / max(1, len(groups)))
-                )
-                sleep_time = max(0.05, target_step - elapsed)
+                start_mono = time.monotonic()
+                async with self._tick_lock:
+                    await self._warm_group(group_id, group_name)
+
+                elapsed_including_lock = time.monotonic() - start_mono
+                min_floor = min(0.5, self.GROUP_INTERVAL_SEC)
+                sleep_time = max(min_floor, self.GROUP_INTERVAL_SEC - elapsed_including_lock)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1233,32 +1263,38 @@ class SmartWarmupEngine:
                     continue
 
                 teachers = await self._get_top_teachers()
-                if not teachers:
+                if not teachers and not self._priority_teachers_queue:
                     await asyncio.sleep(self.RETRY_EMPTY_LIST_INTERVAL_SEC)
                     continue
 
-                self._teacher_cursor = self._teacher_cursor % len(teachers)
-                teacher_id, teacher_name = teachers[self._teacher_cursor]
+                from_priority = False
+                if self._priority_teachers_queue:
+                    teacher_id, teacher_name = self._priority_teachers_queue.popleft()
+                    from_priority = True
+                else:
+                    self._teacher_cursor = self._teacher_cursor % len(teachers)
+                    teacher_id, teacher_name = teachers[self._teacher_cursor]
 
                 # Check API headroom: DO NOT skip or advance cursor if headroom is reached!
                 if not buketov_api_service.can_make_api_call(headroom=self.HEADROOM):
                     logger.debug(
                         f"[SmartWarmupEngine] Postponed teacher {teacher_name}: API headroom reached or API_DOWN."
                     )
+                    if from_priority:
+                        self._priority_teachers_queue.appendleft((teacher_id, teacher_name))
                     await asyncio.sleep(min(self.TEACHER_INTERVAL_SEC, 2.0))
                     continue
 
-                start_mono = time.monotonic()
-                await self._warm_teacher(teacher_id, teacher_name)
-                self._teacher_cursor = (self._teacher_cursor + 1) % len(teachers)
+                if not from_priority and teachers:
+                    self._teacher_cursor = (self._teacher_cursor + 1) % len(teachers)
 
-                elapsed = time.monotonic() - start_mono
-                target_step = (
-                    self.TEACHER_INTERVAL_SEC
-                    if self.TEACHER_INTERVAL_SEC != 5.0
-                    else max(2.0, 300.0 / max(1, len(teachers)))
-                )
-                sleep_time = max(0.05, target_step - elapsed)
+                start_mono = time.monotonic()
+                async with self._tick_lock:
+                    await self._warm_teacher(teacher_id, teacher_name)
+
+                elapsed_including_lock = time.monotonic() - start_mono
+                min_floor = min(0.5, self.TEACHER_INTERVAL_SEC)
+                sleep_time = max(min_floor, self.TEACHER_INTERVAL_SEC - elapsed_including_lock)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1385,6 +1421,7 @@ def setup_cache_warmup(scheduler: AsyncIOScheduler) -> None:
 
 __all__ = [
     "SmartWarmupEngine",
+    "is_night_cache_mode_kz",
     "is_warmup_active_kz",
     "setup_cache_warmup",
     "smart_warmup_engine",

@@ -222,10 +222,17 @@ async def test_warm_group_logging_api_and_cache(mock_db):
         assert mock_get.call_count == 0
 
     await asyncio.sleep(0.05)
-    logs = await WarmupLog.find(WarmupLog.name == group_name).sort(-WarmupLog.created_at).to_list()
-    assert len(logs) == 2
-    assert logs[0].badge == "🟣"
-    assert logs[0].source == "cache"
+    # MongoDB Atlas saves only fresh API, DB fallback, or error logs (saving 38k idle TLS writes/day)
+    db_logs = await WarmupLog.find(WarmupLog.name == group_name).to_list()
+    assert len(db_logs) == 1
+    assert db_logs[0].badge == "🟢"
+    assert db_logs[0].source == "api"
+
+    # In-memory ring buffer captures all ticks including cache hits (🟣)
+    recent = engine.get_recent_logs()
+    assert len(recent) >= 2
+    assert recent[-1]["badge"] == "🟣"
+    assert recent[-1]["source"] == "cache"
 
 
 @pytest.mark.asyncio
@@ -301,10 +308,17 @@ async def test_warm_teacher_logging_api_cache_and_error(mock_db):
         assert mock_t_get.call_count == 0
 
     await asyncio.sleep(0.05)
+    # MongoDB Atlas saves only fresh API, DB fallback, or error logs (saving 38k idle TLS writes/day)
     all_t_logs = await WarmupLog.find(WarmupLog.name == teacher_name).sort(-WarmupLog.created_at).to_list()
-    assert len(all_t_logs) == 2
-    assert all_t_logs[0].badge == "🟣"
-    assert all_t_logs[0].source == "cache"
+    assert len(all_t_logs) == 1
+    assert all_t_logs[0].badge == "🟢"
+    assert all_t_logs[0].source == "api"
+
+    # In-memory ring buffer captures all ticks including cache hits (🟣)
+    recent_t = engine.get_recent_logs()
+    assert len(recent_t) >= 2
+    assert recent_t[-1]["badge"] == "🟣"
+    assert recent_t[-1]["source"] == "cache"
 
     # Teacher error path
     err_t_name = "Калиев К.К."

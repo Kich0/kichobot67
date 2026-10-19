@@ -818,12 +818,14 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             if call_data == "nothing":
                 return await handler(event, data)
 
-            data["data"] = data
+            data_holder: dict[str, Any] = {}
+            data["data"] = data_holder
             try:
                 result = await handler(event, data)
             finally:
+                data.pop("data", None)
                 try:
-                    badge = data.get("schedule_badge")
+                    badge = data.get("schedule_badge") or data_holder.get("schedule_badge")
                     action, desc, entity_id, entity_name = describe_callback_query(call_data, schedule_badge=badge)
                     await self.log_action(
                         user_id,

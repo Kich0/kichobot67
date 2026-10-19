@@ -263,7 +263,18 @@ class BuketovApiService:
         return words[0].rstrip(".")
 
     def purge_expired(self) -> int:
-        """Removes expired entries from both student and teacher caches. Returns count removed."""
+        """Removes expired entries from both student and teacher caches. Returns count removed.
+
+        During night mode (01:00 - 06:45 Asia/Almaty), cache eviction is suspended.
+        """
+        try:
+            from src.cron.cache_warmup import is_night_cache_mode_kz
+
+            if is_night_cache_mode_kz():
+                return 0
+        except Exception:
+            pass
+
         now = time.time()
         removed = 0
         for cache in (self.student_cache, self.teacher_cache):
@@ -642,8 +653,16 @@ class BuketovApiService:
         cached = self._get_cache(target_cache, cache_key)
         now = time.time()
 
-        # 1. Fresh cache: return immediately with 0 network calls (unless force_refresh is requested)
-        if not force_refresh and cached and (now - cached.timestamp < self.cache_ttl):
+        # 1. Fresh cache or night mode: return immediately with 0 network calls (unless force_refresh is requested)
+        is_night = False
+        try:
+            from src.cron.cache_warmup import is_night_cache_mode_kz
+
+            is_night = is_night_cache_mode_kz()
+        except Exception:
+            pass
+
+        if not force_refresh and cached and (is_night or (now - cached.timestamp < self.cache_ttl)):
             return cached.data
 
         # 2. Circuit Breaker check

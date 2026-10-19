@@ -248,19 +248,19 @@ def test_is_warmup_active_kz_boundaries():
 def test_smart_warmup_engine_pacing_and_intervals():
     """Validates SmartWarmupEngine pacing math and API rate limit headroom."""
     engine = SmartWarmupEngine()
-    assert engine.GROUP_INTERVAL_SEC == 4.0
-    assert engine.TEACHER_INTERVAL_SEC == 5.0
+    assert engine.GROUP_INTERVAL_SEC == 3.5
+    assert engine.TEACHER_INTERVAL_SEC == 4.0
     assert engine.TOP_GROUPS_LIMIT == 150
     assert engine.TOP_TEACHERS_LIMIT == 60
     assert engine.HEADROOM == 5
 
-    group_req_per_min = 60.0 / engine.GROUP_INTERVAL_SEC  # 15 req/min
-    teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 12 req/min
-    total_req_per_min = group_req_per_min + teacher_req_per_min  # 27 req/min
+    group_req_per_min = 60.0 / engine.GROUP_INTERVAL_SEC  # ~17.14 req/min
+    teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 15.0 req/min
+    total_req_per_min = group_req_per_min + teacher_req_per_min  # ~32.14 req/min
 
-    assert total_req_per_min == 27.0
-    # Must consume around 24.5% of university 110 req/min limit, leaving 75.5% free
-    assert total_req_per_min <= 110.0 * 0.25
+    assert round(total_req_per_min, 1) == 32.1
+    # Must consume under 30% of university 110 req/min limit, leaving > 70% free
+    assert total_req_per_min <= 110.0 * 0.30
 
 
 @pytest.mark.asyncio
@@ -320,22 +320,19 @@ async def test_smart_warmup_engine_touch_group_and_carousel():
     engine.set_top_groups([(1, "G-1"), (2, "G-2"), (3, "G-3")])
     assert len(engine._groups_cache) == 3
 
-    # Touch a new group
+    # Touch a new group: enqueued into priority queue without mutating rotation cache
     engine.touch_group(105, "CS-25")
     assert 105 in engine._priority_groups
     assert engine._priority_groups[105][0] == "CS-25"
-    assert any(gid == 105 for gid, _ in engine._groups_cache)
+    assert (105, "CS-25") in engine._priority_groups_queue
+    assert len(engine._groups_cache) == 3
 
-    # Calling _get_top_groups returns active priority groups
-    top_groups = await engine._get_top_groups()
-    assert top_groups[0][0] == 105
-    assert top_groups[0][1] == "CS-25"
-
-    # Touch teacher
+    # Touch teacher: enqueued into priority queue without mutating rotation cache
     engine.set_top_teachers([(10, "T-1"), (20, "T-2")])
     engine.touch_teacher(99, "Сидоров С. С.")
     assert 99 in engine._priority_teachers
-    assert any(tid == 99 for tid, _ in engine._teachers_cache)
+    assert (99, "Сидоров С. С.") in engine._priority_teachers_queue
+    assert len(engine._teachers_cache) == 2
 
 
 @pytest.mark.asyncio
@@ -568,15 +565,15 @@ async def test_teacher_warmup_and_text_fetch_cache_isolation():
 
 
 def test_trim_process_memory_rss_threshold():
-    """Verifies that trim_process_memory only trims OS heap when memory >= 280 MB or force_os_trim=True."""
+    """Verifies that trim_process_memory only trims OS heap when memory >= 180 MB or force_os_trim=True."""
     from src.cron.memory_trim import HEALTHY_RSS_CEILING_MB, trim_process_memory
 
-    assert HEALTHY_RSS_CEILING_MB == 280.0
+    assert HEALTHY_RSS_CEILING_MB == 180.0
 
     mock_libc = MagicMock()
     with patch("sys.platform", "linux"), \
          patch("ctypes.CDLL", return_value=mock_libc), \
-         patch("src.api.health.get_process_memory_mb", return_value=220.0), \
+         patch("src.api.health.get_process_memory_mb", return_value=150.0), \
          patch("src.services.buketov_api.buketov_api_service.purge_expired", return_value=0):
 
         # 1. Under threshold and force_os_trim=False: malloc_trim should NOT be called
@@ -587,11 +584,11 @@ def test_trim_process_memory_rss_threshold():
         trim_process_memory(force_os_trim=True)
         mock_libc.malloc_trim.assert_called_once_with(0)
 
-    # 3. Over threshold (e.g. 310 MB): malloc_trim SHOULD be called even with force_os_trim=False
+    # 3. Over threshold (e.g. 210 MB): malloc_trim SHOULD be called even with force_os_trim=False
     mock_libc_high = MagicMock()
     with patch("sys.platform", "linux"), \
          patch("ctypes.CDLL", return_value=mock_libc_high), \
-         patch("src.api.health.get_process_memory_mb", return_value=310.0), \
+         patch("src.api.health.get_process_memory_mb", return_value=210.0), \
          patch("src.services.buketov_api.buketov_api_service.purge_expired", return_value=0):
 
         trim_process_memory(force_os_trim=False)
@@ -599,7 +596,7 @@ def test_trim_process_memory_rss_threshold():
 
 
 def test_touch_group_preserves_cursor_and_cache():
-    """Verifies that touch_group does not reset cursor to 0 and does not reorder existing items."""
+    """Verifies that touch_group does not shift cursor and does not mutate main cache."""
     engine = SmartWarmupEngine()
     engine.set_top_groups([(10, "G-10"), (20, "G-20"), (30, "G-30")])
     engine._group_cursor = 2
@@ -610,15 +607,25 @@ def test_touch_group_preserves_cursor_and_cache():
     assert engine._groups_cache[0][0] == 10
     assert engine._groups_cache[1][0] == 20
     assert engine._groups_cache[2][0] == 30
+    assert any(item[0] == 20 for item in engine._priority_groups_queue)
 
-    # Touch new group 99: prepends to cache and adjusts cursor by +1 (no starvation)
+    # Touch new group 99: enqueued in priority queue, cursor and main cache unchanged
     engine.touch_group(99, "G-99")
-    assert engine._group_cursor == 3
-    assert engine._groups_cache[0][0] == 99
+    assert engine._group_cursor == 2  # Main cursor NOT shifted
+    assert len(engine._groups_cache) == 3  # Main cache NOT mutated
+    assert engine._groups_cache[0][0] == 10
+    assert any(item[0] == 99 for item in engine._priority_groups_queue)
+    assert engine._priority_groups_queue.maxlen == 25
+
+    # Enqueue > 25 priority groups to verify bounded queue capacity
+    for i in range(100, 135):
+        engine.touch_group(i, f"G-{i}")
+    assert len(engine._priority_groups_queue) == 25
+    assert engine._priority_groups_queue.maxlen == 25
 
 
 def test_touch_teacher_preserves_cursor():
-    """Verifies that touch_teacher does not reset cursor to 0."""
+    """Verifies that touch_teacher does not shift cursor and does not mutate main cache."""
     engine = SmartWarmupEngine()
     engine.set_top_teachers([(101, "T-1"), (102, "T-2"), (103, "T-3")])
     engine._teacher_cursor = 1
@@ -626,11 +633,20 @@ def test_touch_teacher_preserves_cursor():
     # Touch existing teacher 103: cursor should remain 1
     engine.touch_teacher(103, "T-3")
     assert engine._teacher_cursor == 1
+    assert any(item[0] == 103 for item in engine._priority_teachers_queue)
 
-    # Touch new teacher 999: prepends to cache and adjusts cursor by +1
+    # Touch new teacher 999: enqueued in priority queue, cursor and main cache unchanged
     engine.touch_teacher(999, "T-999")
-    assert engine._teacher_cursor == 2
-    assert engine._teachers_cache[0][0] == 999
+    assert engine._teacher_cursor == 1  # Main cursor NOT shifted
+    assert len(engine._teachers_cache) == 3  # Main cache NOT mutated
+    assert any(item[0] == 999 for item in engine._priority_teachers_queue)
+    assert engine._priority_teachers_queue.maxlen == 25
+
+    # Enqueue > 25 priority teachers to verify bounded capacity
+    for i in range(200, 235):
+        engine.touch_teacher(i, f"T-{i}")
+    assert len(engine._priority_teachers_queue) == 25
+    assert engine._priority_teachers_queue.maxlen == 25
 
 
 @pytest.mark.asyncio
@@ -786,7 +802,7 @@ async def test_warm_teacher_null_timestamp_and_none_canonical_id():
 
 
 def test_add_urgent_group_and_teacher():
-    """Verifies that add_urgent_group and add_urgent_teacher enroll items into priority lists without resetting cursors."""
+    """Verifies that add_urgent_group and add_urgent_teacher enroll items into priority lists without shifting cursors."""
     engine = SmartWarmupEngine()
     engine.set_top_groups([(1, "G-1"), (2, "G-2")])
     engine.set_top_teachers([(10, "T-1"), (20, "T-2")])
@@ -794,14 +810,14 @@ def test_add_urgent_group_and_teacher():
     engine._teacher_cursor = 1
 
     engine.add_urgent_group("G-New", 55)
-    assert engine._group_cursor == 2
+    assert engine._group_cursor == 1
     assert 55 in engine._priority_groups
-    assert engine._groups_cache[0][0] == 55
+    assert any(item[0] == 55 for item in engine._priority_groups_queue)
 
     engine.add_urgent_teacher("T-New", 77)
-    assert engine._teacher_cursor == 2
+    assert engine._teacher_cursor == 1
     assert 77 in engine._priority_teachers
-    assert engine._teachers_cache[0][0] == 77
+    assert any(item[0] == 77 for item in engine._priority_teachers_queue)
 
 
 

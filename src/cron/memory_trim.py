@@ -20,7 +20,7 @@ from src.core.logging import get_logger
 logger = get_logger("memory_trim")
 
 
-HEALTHY_RSS_CEILING_MB: float = 280.0
+HEALTHY_RSS_CEILING_MB: float = 180.0
 _last_rss_mb: float = 0.0
 
 
@@ -28,7 +28,7 @@ def trim_process_memory(force_os_trim: bool = False, min_rss_mb: float = HEALTHY
     """Frees expired API cache entries and dead Python objects.
 
     Only invokes glibc malloc_trim on Linux if RSS memory exceeds min_rss_mb
-    (default 280 MB / ~55% of 512 MB Render limit), if there is meaningful memory growth
+    (default 180 MB / ~35% of 512 MB Render limit), if there is meaningful memory growth
     (e.g., >= 35 MB growth since last trim while above 240 MB), or if force_os_trim is True.
     """
     global _last_rss_mb

@@ -68,15 +68,82 @@ from src.services.user_service import user_service
 logger = get_logger("callbacks_router")
 callbacks_router = Router(name="callbacks_router")
 
+class NightAwareTimer:
+    """Timer for TTLCache that suspends advancing during Kazakhstan night window (01:00 to 06:30).
+
+    Prevents RAM schedule cache from being evicted while API warmup is asleep.
+    """
+
+    def __init__(self) -> None:
+        self._last_real: float = time.monotonic()
+        self._virtual: float = self._last_real
+        self._last_wall: float = time.time()
+
+    def __call__(self) -> float:
+        now_real = time.monotonic()
+        now_wall = time.time()
+        dt = now_real - self._last_real
+        self._last_real = now_real
+        if dt <= 0:
+            return self._virtual
+
+        # Short steps (e.g. within normal requests or unit tests): evaluate at current instant
+        if dt < 60.0:
+            try:
+                from src.cron.cache_warmup import is_night_cache_mode_kz
+
+                if not is_night_cache_mode_kz():
+                    self._virtual += dt
+            except Exception:
+                self._virtual += dt
+            self._last_wall = now_wall
+            return self._virtual
+
+        # For larger gaps (e.g. overnight idle period between 01:00 and 06:30),
+        # integrate only active daytime seconds so night hours do not cause immediate eviction
+        t = self._last_wall
+        self._last_wall = now_wall
+        step = 300.0  # 5-minute sampling
+        active_dt = 0.0
+        try:
+            from datetime import datetime
+            import zoneinfo
+            from src.core.constants import TIMEZONE_NAME
+            from src.cron.cache_warmup import is_night_cache_mode_kz
+
+            tz = zoneinfo.ZoneInfo(TIMEZONE_NAME)
+            while t + step <= now_wall:
+                mid_dt = datetime.fromtimestamp(t + step / 2, tz=tz)
+                if not is_night_cache_mode_kz(mid_dt):
+                    active_dt += step
+                t += step
+            if t < now_wall:
+                mid_dt = datetime.fromtimestamp((t + now_wall) / 2, tz=tz)
+                if not is_night_cache_mode_kz(mid_dt):
+                    active_dt += (now_wall - t)
+            self._virtual += min(dt, active_dt)
+        except Exception:
+            self._virtual += dt
+        return self._virtual
+
+
+night_aware_timer = NightAwareTimer()
+
 # In-memory RAM caches for schedule viewing (bounded LRU with TTL matching AGENTS.md §4)
 # Key: f"{group_id}_{lang}" -> {"data": [...], "timestamp": float, "group": Any, "is_from_db": bool}
-student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0)
+student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+    maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0, timer=night_aware_timer
+)
 
 # Key: f"{teacher_id}_{lang}" -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
-teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0)
+teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+    maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0, timer=night_aware_timer
+)
 
 # Key: str(teacher_id) -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
-teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0)
+teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+    maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0, timer=night_aware_timer
+)
 
 # Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
 _persisted_student_hashes: TTLCache[tuple[int, int | str], str] = TTLCache(maxsize=1000, ttl=3600.0)
@@ -967,7 +1034,17 @@ async def get_or_fetch_student_schedule(
         cached = None
 
     max_age_sec = 1800.0  # 30 minutes
-    needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= max_age_sec)
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    if is_night:
+        needs_fetch = is_refresh or not cached
+    else:
+        needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= max_age_sec)
 
     if not needs_fetch and cached:
         if not cached.get("is_from_db"):
@@ -1668,7 +1745,17 @@ async def get_or_fetch_teacher_text_schedule(
         if cached:
             break
 
-    needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1800.0)
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    if is_night:
+        needs_fetch = is_refresh or not cached
+    else:
+        needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1800.0)
     if not needs_fetch and cached:
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
@@ -2063,7 +2150,17 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
         return
 
     # 2. Fetch fresh data if needed
-    needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1200.0)
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    if is_night:
+        needs_fetch = is_refresh or not cached
+    else:
+        needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1200.0)
     if needs_fetch:
         await call.answer("⌛️ Создаю таблицу недели...", show_alert=False)
         lock = _get_fetch_lock(f"teacher_table_{can_id_num}")
