@@ -161,6 +161,9 @@ class SmartWarmupEngine:
         self._priority_groups[gid] = (g_name, expires_at)
 
         pair = (gid, g_name)
+        if self._priority_groups_queue and self._priority_groups_queue[-1] == pair:
+            return
+
         # Deduplicate: remove any existing entry for this group id in priority queue
         self._priority_groups_queue = collections.deque(
             (item for item in self._priority_groups_queue if item[0] != gid),
@@ -275,6 +278,9 @@ class SmartWarmupEngine:
         self._priority_teachers[norm_id] = (t_name, expires_at)
 
         t_pair = (norm_id, t_name)
+        if self._priority_teachers_queue and self._priority_teachers_queue[-1] == t_pair:
+            return
+
         # Deduplicate: remove any existing entry for this teacher id in priority queue
         self._priority_teachers_queue = collections.deque(
             (item for item in self._priority_teachers_queue if item[0] != norm_id),

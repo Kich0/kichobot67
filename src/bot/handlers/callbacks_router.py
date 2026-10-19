@@ -1447,7 +1447,7 @@ async def build_student_day_schedule_view(
     back_callback = "faculty|0"
     group_age = None
     client_id = id(get_client())
-    cached_meta = _group_meta_cache.get((client_id, group_id))
+    cached_meta = _group_meta_cache.get((client_id, group_id)) or _group_meta_cache.get((0, group_id))
 
     if cached_meta is not None:
         if not group_name and cached_meta.get("name"):
@@ -1462,9 +1462,15 @@ async def build_student_day_schedule_view(
             from src.database.models.group import Group
 
             num_g_id = int(group_id) if str(group_id).isdigit() else group_id
-            g_doc = await Group.find_one(Group.group_id == num_g_id) or await Group.find_one({"id": num_g_id})
+            g_doc = await Group.find_one({"id": num_g_id})
+            if not g_doc:
+                try:
+                    if hasattr(Group, "group_id"):
+                        g_doc = await Group.find_one(Group.group_id == num_g_id)
+                except Exception:
+                    pass
             if not g_doc and group_name:
-                g_doc = await Group.find_one(Group.name == group_name) or await Group.find_one({"name": group_name})
+                g_doc = await Group.find_one({"name": group_name})
             if g_doc:
                 if not group_name and getattr(g_doc, "name", None):
                     grp_name = g_doc.name
@@ -1478,7 +1484,13 @@ async def build_student_day_schedule_view(
                         from src.database.models.program import Program
 
                         num_p_id = int(prog_id) if str(prog_id).isdigit() else prog_id
-                        p_doc = await Program.find_one(Program.program_id == num_p_id) or await Program.find_one({"id": num_p_id})
+                        p_doc = await Program.find_one({"id": num_p_id})
+                        if not p_doc:
+                            try:
+                                if hasattr(Program, "program_id"):
+                                    p_doc = await Program.find_one(Program.program_id == num_p_id)
+                            except Exception:
+                                pass
                         if p_doc and getattr(p_doc, "faculty", None):
                             fac_id = p_doc.faculty
                     fac_id = fac_id or 0
