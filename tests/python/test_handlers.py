@@ -726,6 +726,7 @@ async def test_admin_info_displays_health_metrics(mock_db):
         assert "1234 сек." in output
         assert "142.5 MB" in output
         assert "CLOSED" in output
+        assert "Прогрев:" in output
 
 
 @pytest.mark.asyncio

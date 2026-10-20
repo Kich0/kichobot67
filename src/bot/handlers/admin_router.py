@@ -543,12 +543,29 @@ async def handle_info(message: Message) -> None:
         memory_val = mem_dict.get("rss_mb", 0) if isinstance(mem_dict, dict) else 0
 
     api_val = health.get("buketov_api", "OK")
+
+    warmup_line = ""
+    try:
+        from src.cron.cache_warmup import smart_warmup_engine
+
+        st = smart_warmup_engine.get_stats()
+        g_m, g_s = divmod(st["groups_max_age_sec"], 60)
+        t_m, t_s = divmod(st["teachers_max_age_sec"], 60)
+        warmup_line = (
+            f"• <b>Прогрев:</b> G max {g_m}m{g_s:02d}s (&gt;10m: {st['groups_over_10m']}) | "
+            f"T max {t_m}m{t_s:02d}s (&gt;5m: {st['teachers_over_5m']}) | "
+            f"304: {st['api_304']}, 200: {st['api_200']} | Исх. API: {st['out_req_per_min']}/мин\n"
+        )
+    except Exception as e:
+        logger.debug(f"Failed to format warmup stats for /info: {e}")
+
     info_text = (
         "ℹ️ <b>ДИАГНОСТИЧЕСКАЯ ИНФОРМАЦИЯ:</b>\n\n"
         f"• <b>Время (UTC+5):</b> {now_kz.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"• <b>Аптайм:</b> {uptime_sec} сек.\n"
         f"• <b>RAM процесс:</b> {memory_val} MB\n"
         f"• <b>Статус API КарУ:</b> {api_val}\n"
+        f"{warmup_line}"
     )
     await message.answer(info_text, parse_mode="HTML")
 

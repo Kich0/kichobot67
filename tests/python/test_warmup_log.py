@@ -596,3 +596,68 @@ def test_export_script_warmup_formatting_offline():
     assert ws.cell(row=1, column=1).value == "Дата и Время"
     assert ws.cell(row=2, column=3).value == "ИС-23-1"
     assert ws.cell(row=3, column=3).value == "Калиев К.К."
+
+
+@pytest.mark.asyncio
+async def test_smart_warmup_engine_smart_persistence_filter(mock_db):
+    """Verifies that SmartWarmupEngine logs only meaningful state transitions, latency jumps >= 50%, and errors."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.database.models.warmup_log import WarmupLog
+
+    engine = SmartWarmupEngine()
+    group = "ИС-20-ФИЛЬТР"
+
+    # 1. Initial hit (🟢 api, 50ms) -> persisted
+    engine._log_warmup_result(group, "group", "🟢", "api", 50, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 1
+    assert logs[0].source == "api"
+    assert logs[0].duration_ms == 50
+
+    # 2. Identical hit (🟢 api, 52ms) -> skipped (diff 2ms < 100ms)
+    engine._log_warmup_result(group, "group", "🟢", "api", 52, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 1
+
+    # 3. Source transition (🟣 api_304, 25ms) -> persisted
+    engine._log_warmup_result(group, "group", "🟣", "api_304", 25, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 2
+    assert logs[1].source == "api_304"
+
+    # 4. Same 304 hit (🟣 api_304, 27ms) -> skipped
+    engine._log_warmup_result(group, "group", "🟣", "api_304", 27, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 2
+
+    # 5. Latency spike >= 50% AND >= 100ms (🟣 api_304, 500ms vs 25ms) -> persisted
+    engine._log_warmup_result(group, "group", "🟣", "api_304", 500, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 3
+    assert logs[2].duration_ms == 500
+
+    # 6. Fallback transition (🔵 db, 5ms) -> persisted
+    engine._log_warmup_result(group, "group", "🔵", "db", 5, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 4
+    assert logs[3].source == "db"
+
+    # 7. Recovery transition back to API (🟢 api, 45ms) -> persisted
+    engine._log_warmup_result(group, "group", "🟢", "api", 45, True)
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 5
+    assert logs[4].source == "api"
+
+    # 8. Error (🔴 error) -> persisted
+    engine._log_warmup_result(group, "group", "🔴", "error", 4500, False, "Connection reset")
+    await asyncio.sleep(0.05)
+    logs = await WarmupLog.find(WarmupLog.name == group).to_list()
+    assert len(logs) == 6
+    assert logs[5].status is False

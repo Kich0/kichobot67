@@ -248,23 +248,25 @@ def test_is_warmup_active_kz_boundaries():
 def test_smart_warmup_engine_pacing_and_intervals():
     """Validates SmartWarmupEngine pacing math and API rate limit headroom."""
     engine = SmartWarmupEngine()
-    assert engine.GROUP_INTERVAL_SEC == 3.5
-    assert engine.TEACHER_INTERVAL_SEC == 4.0
+    assert engine.GROUP_TARGET_AGE_SEC == 480.0
+    assert engine.TEACHER_TARGET_AGE_SEC == 240.0
+    assert engine.GROUP_INTERVAL_SEC == 2.5
+    assert engine.TEACHER_INTERVAL_SEC == 2.5
     assert engine.TOP_GROUPS_LIMIT == 150
     assert engine.TOP_TEACHERS_LIMIT == 60
     assert engine.HEADROOM == 25
 
-    group_req_per_min = 60.0 / engine.GROUP_INTERVAL_SEC  # ~17.14 req/min
-    teacher_req_per_min = 60.0 / engine.TEACHER_INTERVAL_SEC  # 15.0 req/min
-    total_req_per_min = group_req_per_min + teacher_req_per_min  # ~32.14 req/min
+    group_req_per_min = engine.TOP_GROUPS_LIMIT / (engine.GROUP_TARGET_AGE_SEC / 60.0)  # 18.75 req/min
+    teacher_req_per_min = engine.TOP_TEACHERS_LIMIT / (engine.TEACHER_TARGET_AGE_SEC / 60.0)  # 15.0 req/min
+    total_req_per_min = group_req_per_min + teacher_req_per_min  # 33.75 req/min
 
-    assert round(total_req_per_min, 1) == 32.1
-    # Must consume under 30% of university 110 req/min limit, leaving > 70% free
-    assert total_req_per_min <= 110.0 * 0.30
+    assert round(total_req_per_min, 2) == 33.75
+    # Must consume ~31% of university 110 req/min limit, leaving > 65% free
+    assert total_req_per_min <= 110.0 * 0.35
 
 
 @pytest.mark.asyncio
-async def test_smart_warmup_engine_lifecycle():
+async def test_smart_warmup_engine_lifecycle(mock_db):
     """Tests SmartWarmupEngine start, pause, resume, and graceful stop."""
     engine = SmartWarmupEngine()
     engine.SLEEP_CHECK_INTERVAL_SEC = 0.05
@@ -370,14 +372,14 @@ async def test_smart_warmup_engine_warm_group_and_teacher(mock_db):
 
     with patch("src.cron.cache_warmup.buketov_api_service.get_group_schedule", AsyncMock(return_value=sample_group_data)) as mock_g:
         await engine._warm_group(group_id=555, group_name="CS-55")
-        mock_g.assert_called_once_with("CS-55", force_refresh=False)
+        mock_g.assert_called_once_with("CS-55", force_refresh=True)
         assert "555_ru" in student_schedule_cache
         assert "555_kz" in student_schedule_cache
         assert student_schedule_cache["555_ru"]["data"] is not None
 
     with patch("src.cron.cache_warmup.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=sample_teacher_data)) as mock_t:
         await engine._warm_teacher(teacher_id=777, teacher_name="Петров П. П.")
-        mock_t.assert_called_once_with("Петров П. П.", force_refresh=False)
+        mock_t.assert_called_once_with("Петров П. П.", force_refresh=True)
         assert "777_ru" in teacher_text_cache
         assert "777_kz" in teacher_text_cache
         assert teacher_text_cache["777_ru"]["data"] is not None
@@ -818,6 +820,225 @@ def test_add_urgent_group_and_teacher():
     assert engine._teacher_cursor == 1
     assert 77 in engine._priority_teachers
     assert any(item[0] == 77 for item in engine._priority_teachers_queue)
+
+
+@pytest.mark.asyncio
+async def test_warmup_top_schedules_skipped_when_engine_running():
+    """Verifies that 07:30 cron skips execution if SmartWarmupEngine is currently active."""
+    from src.cron.cache_warmup import smart_warmup_engine, warmup_top_schedules
+
+    orig_running = smart_warmup_engine._is_running
+    try:
+        smart_warmup_engine._is_running = True
+        with patch("src.services.buketov_api.buketov_api_service.get_group_schedule") as mock_get:
+            count = await warmup_top_schedules(limit=30)
+            assert count == 0
+            mock_get.assert_not_called()
+    finally:
+        smart_warmup_engine._is_running = orig_running
+
+
+@pytest.mark.asyncio
+async def test_304_bumps_timestamp_without_adapt():
+    """Verifies that 304 Not Modified updates cache timestamp without expensive adapt or Mongo writes."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.bot.handlers.callbacks_router import student_schedule_cache
+    from src.services.buketov_api import ScheduleApiResponse
+
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    initial_ts = 1000.0
+    student_schedule_cache["101_ru"] = {
+        "data": [{"day": "Понедельник", "time": "09:00", "subject": "Math"}],
+        "timestamp": initial_ts,
+        "is_from_db": False,
+        "is_from_cache": True,
+    }
+    student_schedule_cache["101_kz"] = {
+        "data": [{"day": "Дүйсенбі", "time": "09:00", "subject": "Math"}],
+        "timestamp": initial_ts,
+        "is_from_db": False,
+        "is_from_cache": True,
+    }
+
+    fresh_ts = 2000.0
+    mock_resp = ScheduleApiResponse(
+        {"records": [], "_cacheTimestamp": fresh_ts},
+        from_cache=True,
+        not_modified=True,
+    )
+
+    with patch("src.services.buketov_api.buketov_api_service.get_group_schedule", AsyncMock(return_value=mock_resp)), \
+         patch("src.services.schedule_adapter.schedule_api_adapter.adapt_group_schedule") as mock_adapt, \
+         patch("src.bot.handlers.callbacks_router._bg_persist_student_schedule") as mock_persist:
+
+        await engine._warm_group(101, "CS-101")
+
+        mock_adapt.assert_not_called()
+        mock_persist.assert_not_called()
+
+        assert student_schedule_cache["101_ru"]["timestamp"] == fresh_ts
+        assert student_schedule_cache["101_kz"]["timestamp"] == fresh_ts
+        assert engine._stats["api_304"] == 1
+
+    clear_schedule_caches()
+
+
+@pytest.mark.asyncio
+async def test_304_teacher_bumps_timestamp_without_adapt():
+    """Verifies that 304 Not Modified for teacher updates all aliases without re-adapting."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.bot.handlers.callbacks_router import teacher_text_cache
+    from src.services.buketov_api import ScheduleApiResponse
+
+    engine = SmartWarmupEngine()
+    clear_schedule_caches()
+
+    initial_ts = 1000.0
+    entry_ru = {
+        "data": [{"day": "Понедельник", "time": "09:00", "subject": "Physics"}],
+        "timestamp": initial_ts,
+        "is_from_db": False,
+        "is_from_cache": True,
+    }
+    teacher_text_cache["505_ru"] = entry_ru
+    teacher_text_cache["Иванов И. И._ru"] = entry_ru
+
+    fresh_ts = 2500.0
+    mock_resp = ScheduleApiResponse(
+        {"records": [], "_cacheTimestamp": fresh_ts},
+        from_cache=True,
+        not_modified=True,
+    )
+
+    with patch("src.bot.handlers.callbacks_router.resolve_teacher_identity", AsyncMock(return_value=(505, "Иванов И. И.", None, "Иванов И. И."))), \
+         patch("src.services.buketov_api.buketov_api_service.get_teacher_schedule", AsyncMock(return_value=mock_resp)), \
+         patch("src.services.schedule_adapter.schedule_api_adapter.adapt_teacher_schedule") as mock_adapt:
+
+        await engine._warm_teacher(505, "Иванов И. И.")
+
+        mock_adapt.assert_not_called()
+        assert teacher_text_cache["505_ru"]["timestamp"] == fresh_ts
+        assert teacher_text_cache["Иванов И. И._ru"]["timestamp"] == fresh_ts
+        assert engine._stats["api_304"] == 1
+
+    clear_schedule_caches()
+
+
+@pytest.mark.asyncio
+async def test_stale_fallback_retries_in_60s_not_hot_loop():
+    """Verifies that Buketov API error/stale fallback sets retry 60s in the future and doesn't hot loop."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.services.buketov_api import ScheduleApiResponse
+
+    engine = SmartWarmupEngine()
+    now = 10000.0
+
+    mock_resp = ScheduleApiResponse(
+        {"records": [], "_cacheTimestamp": now - 500.0},
+        from_cache=True,
+        not_modified=False,  # Stale cache fallback
+    )
+
+    with patch("time.time", return_value=now), \
+         patch("src.services.buketov_api.buketov_api_service.get_group_schedule", AsyncMock(return_value=mock_resp)):
+
+        await engine._warm_group(202, "GROUP-STALE")
+        assert engine._stats["stale"] == 1
+        # Target retry is now + ERROR_RETRY_SEC (60s) from now - TARGET_AGE_SEC
+        attempt = engine._group_attempt_ts[202]
+        # age should be GROUP_TARGET_AGE_SEC - ERROR_RETRY_SEC (480 - 60 = 420s)
+        # so it won't be due immediately (age < 480)
+        age = engine._group_age(202, now)
+        assert age < engine.GROUP_TARGET_AGE_SEC
+        assert 419.0 <= age <= 421.0
+
+
+@pytest.mark.asyncio
+async def test_touched_group_joins_candidates_without_stealing_slots():
+    """Verifies that touched groups become candidates and are picked by oldest age without slot starvation."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+
+    engine = SmartWarmupEngine()
+    engine.set_top_groups([(1, "G-1"), (2, "G-2")])
+
+    engine.touch_group(3, "G-3")
+    candidates = engine._group_candidates(engine._groups_cache)
+
+    candidate_ids = [gid for gid, _ in candidates]
+    assert 3 in candidate_ids
+    assert 1 in candidate_ids
+    assert 2 in candidate_ids
+
+
+@pytest.mark.asyncio
+async def test_deadline_scheduler_guarantees_max_age():
+    """Simulates 10 groups with deadline scheduling ensuring max age stays within target."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.bot.handlers.callbacks_router import student_schedule_cache
+
+    engine = SmartWarmupEngine()
+    groups = [(i, f"Group-{i}") for i in range(1, 11)]
+    engine.set_top_groups(groups)
+
+    now = 1000.0
+    for gid, name in groups:
+        best, best_age = engine._pick_due_group(groups, now)
+        assert best is not None
+        assert best_age >= engine.GROUP_TARGET_AGE_SEC
+        # Simulate warming
+        student_schedule_cache[f"{best[0]}_ru"] = {
+            "data": [{"day": "Test"}],
+            "timestamp": now,
+            "is_from_db": False,
+        }
+        engine._group_attempt_ts[best[0]] = now
+        now += 10.0
+
+    # All 10 groups are now warmed
+    stats = engine.get_stats(now=now)
+    assert stats["groups_over_10m"] == 0
+    assert stats["groups_max_age_sec"] <= 100  # All warmed within last 100s
+
+
+@pytest.mark.asyncio
+async def test_morning_0630_force_refresh_bypasses_night_cache():
+    """Verifies that morning warmup at 06:30 calls API with force_refresh=True, bypassing night cache freeze."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+    from src.services.buketov_api import buketov_api_service
+
+    engine = SmartWarmupEngine()
+    engine._is_running = True
+
+    called_kwargs = {}
+
+    async def mock_get_group_schedule(group_name, force_refresh=False):
+        called_kwargs["group_name"] = group_name
+        called_kwargs["force_refresh"] = force_refresh
+        return {"records": [{"day": "Mon"}], "not_modified": False, "_cacheTimestamp": time.time()}
+
+    with patch.object(buketov_api_service, "get_group_schedule", side_effect=mock_get_group_schedule):
+        await engine._warm_group(101, "CS-21")
+
+    assert called_kwargs.get("group_name") == "CS-21"
+    assert called_kwargs.get("force_refresh") is True
+
+
+@pytest.mark.asyncio
+async def test_smart_warmup_engine_start_warnings():
+    """Verifies that start() logs warnings if TARGET_AGE is too close to cooldown."""
+    from src.cron.cache_warmup import SmartWarmupEngine
+
+    engine = SmartWarmupEngine()
+    engine.GROUP_TARGET_AGE_SEC = 590.0  # Cooldown is 600s, 590 >= 600 - 30
+
+    with patch("src.cron.cache_warmup.logger.warning") as mock_warn:
+        engine.start()
+        await engine.stop_async()
+        assert any("GROUP_TARGET_AGE_SEC" in str(call) for call in mock_warn.call_args_list)
+
+
 
 
 

@@ -202,11 +202,11 @@ async def test_get_top_teachers_resolves_string_actions():
 
 
 def test_warmup_engine_timing_and_5_minute_cycle():
-    """Verifies that engine warms TOP-60 teachers in strictly under 5 minutes (4.0s pacing = 4.0 min)."""
+    """Verifies that engine warms TOP-60 teachers in strictly under 5 minutes (target age 240s = 4.0 min)."""
     engine = SmartWarmupEngine()
     assert engine.TOP_TEACHERS_LIMIT == 60
-    assert engine.TEACHER_INTERVAL_SEC == 4.0
-    assert engine.TOP_TEACHERS_LIMIT * engine.TEACHER_INTERVAL_SEC == 240.0  # Exactly 4.0 minutes (240 seconds <= 300s)
+    assert engine.TEACHER_TARGET_AGE_SEC == 240.0  # Exactly 4.0 minutes (240 seconds <= 300s cooldown)
+    assert engine.TEACHER_INTERVAL_SEC == 2.5
 
 
 def test_user_action_ttl_index_30_days():
@@ -458,7 +458,7 @@ async def test_warm_teacher_numeric_id_resolution_before_api_call():
         await engine._warm_teacher(770, "ID 770")
 
         # buketov_api_service must be called with the resolved teacher name, NOT 'ID 770' or '770'
-        mock_api.assert_called_once_with("Мусина С. Т.", force_refresh=False)
+        mock_api.assert_called_once_with("Мусина С. Т.", force_refresh=True)
 
 
 @pytest.mark.asyncio
