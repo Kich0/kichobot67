@@ -522,6 +522,18 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             self._flush_task.cancel()
         self._flush_task = None
 
+    def _schedule_debounced_flush(self) -> None:
+        """Schedules debounced flush if not already scheduled."""
+        if self._flush_task is None or self._flush_task.done():
+            async def _debounced() -> None:
+                try:
+                    await asyncio.sleep(self.debounce_interval)
+                except asyncio.CancelledError:
+                    return
+                await asyncio.shield(self.flush())
+
+            self._flush_task = asyncio.create_task(_debounced())
+
     async def flush(self) -> None:
         """Flushes enqueued action records to MongoDB."""
         current = asyncio.current_task()
@@ -536,6 +548,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             items_to_save = self._queue[:]
             self._queue.clear()
 
+        failed_items: list[dict[str, Any]] = []
         try:
             from src.database.models.user_action import UserAction
 
@@ -572,7 +585,21 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                     )
                     await action_doc.insert()
                 except Exception:
-                    pass
+                    failed_items.append(r)
+
+        # Prepend failed items back to the head of the queue so they can be retried
+        if failed_items:
+            async with self._flush_lock:
+                available_space = max(0, self._max_queue_size - len(self._queue))
+                to_readd = failed_items[:available_space]
+                self._queue = to_readd + self._queue
+
+        # Check if new items arrived in queue while DB insert was running
+        async with self._flush_lock:
+            has_more = bool(self._queue)
+
+        if has_more:
+            self._schedule_debounced_flush()
 
     async def _save_record(self, record: dict[str, Any]) -> None:
         """Enqueues record and triggers debounced background flush."""
@@ -583,15 +610,8 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
         if len(self._queue) >= self._batch_threshold:
             self._flush_task = asyncio.create_task(self.flush())
-        elif self._flush_task is None or self._flush_task.done():
-            async def _debounced() -> None:
-                try:
-                    await asyncio.sleep(self.debounce_interval)
-                except asyncio.CancelledError:
-                    return
-                await asyncio.shield(self.flush())
-
-            self._flush_task = asyncio.create_task(_debounced())
+        else:
+            self._schedule_debounced_flush()
 
     async def _check_has_prior_action(self, user_id: int) -> bool:
         """Checks whether user has performed any prior interaction in queue or DB."""
@@ -816,8 +836,6 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
         elif isinstance(event, CallbackQuery):
             call_data = event.data or "callback"
-            if call_data == "nothing":
-                return await handler(event, data)
 
             data_holder: dict[str, Any] = {}
             data["data"] = data_holder

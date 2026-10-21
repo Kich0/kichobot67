@@ -36,7 +36,7 @@ CIRCUIT_BREAKER_FAIL_THRESHOLD = 2
 CIRCUIT_BREAKER_RESET_TIMEOUT = 120.0  # seconds (2 minutes)
 
 # Message Gate & Anti-Spam
-MESSAGE_GATE_THROTTLE_INTERVAL = 0.5  # seconds (500ms between interactions)
+MESSAGE_GATE_THROTTLE_INTERVAL = 0.05  # seconds (50ms between interactions per AGENTS.md)
 ANTI_SPAM_WINDOW = 3.0  # seconds
 ANTI_SPAM_MAX_REQUESTS = 5
 ANTI_SPAM_FIRST_BAN_DURATION = 60.0  # seconds (1 minute)

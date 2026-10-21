@@ -136,17 +136,17 @@ night_aware_timer = NightAwareTimer()
 # In-memory RAM caches for schedule viewing (bounded LRU with TTL matching AGENTS.md §4)
 # Key: f"{group_id}_{lang}" -> {"data": [...], "timestamp": float, "group": Any, "is_from_db": bool}
 student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0, timer=night_aware_timer
+    maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0, timer=time.monotonic
 )
 
 # Key: f"{teacher_id}_{lang}" -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
 teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0, timer=night_aware_timer
+    maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0, timer=time.monotonic
 )
 
 # Key: str(teacher_id) -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
 teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0, timer=night_aware_timer
+    maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0, timer=time.monotonic
 )
 
 # Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
@@ -2612,6 +2612,15 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
                     logger.debug(f"editMessageText error: {e}")
 
     await call.answer()
+
+
+@callbacks_router.callback_query()
+async def handle_unknown_callback(call: CallbackQuery) -> None:
+    """Fallback handler for unknown, deprecated, or custom inline button callbacks."""
+    try:
+        await call.answer()
+    except Exception:
+        pass
 
 
 __all__ = [

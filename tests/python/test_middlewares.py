@@ -782,3 +782,94 @@ async def test_user_action_logger_flush_no_deadlock(mock_db):
 
 
 
+@pytest.mark.asyncio
+async def test_user_action_logger_tail_flush(mock_db):
+    """Verifies that items arriving during an active flush are not stranded in RAM."""
+    from src.bot.middlewares.user_action_logger import UserActionLoggingMiddleware
+    logger_mid = UserActionLoggingMiddleware()
+    logger_mid.debounce_interval = 0.01
+
+    # First record
+    await logger_mid._save_record({
+        "user_id": 222,
+        "username": "user2",
+        "action": "click1",
+        "text": "sample1",
+        "is_first": False,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    # While flush task is scheduled or running, add second record
+    await logger_mid._save_record({
+        "user_id": 222,
+        "username": "user2",
+        "action": "click2",
+        "text": "sample2",
+        "is_first": False,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    # Wait for debounced flush to complete
+    await asyncio.sleep(0.08)
+    if logger_mid._flush_task and not logger_mid._flush_task.done():
+        await logger_mid._flush_task
+
+    # Queue must be completely drained
+    assert len(logger_mid._queue) == 0
+    logger_mid.clear_cache()
+
+
+@pytest.mark.asyncio
+async def test_user_action_logger_retry_on_db_failure():
+    """Verifies that failed items are prepended back to queue upon database insert error."""
+    from src.bot.middlewares.user_action_logger import UserActionLoggingMiddleware
+    logger_mid = UserActionLoggingMiddleware()
+
+    logger_mid._queue.append({
+        "user_id": 333,
+        "username": "user3",
+        "action": "click3",
+        "text": "sample3",
+        "is_first": False,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    # Mock UserAction.insert_many and insert to raise Exception
+    with patch("src.database.models.user_action.UserAction.insert_many", AsyncMock(side_effect=Exception("DB connection error"))):
+        with patch("src.database.models.user_action.UserAction.insert", AsyncMock(side_effect=Exception("DB insert error"))):
+            await logger_mid.flush()
+
+    # The failed item must be retained in queue for retry!
+    assert len(logger_mid._queue) == 1
+    assert logger_mid._queue[0]["user_id"] == 333
+    logger_mid.clear_cache()
+
+
+@pytest.mark.asyncio
+async def test_user_action_logger_logs_nothing_button(dummy_user, dummy_chat):
+    """Verifies that callback query with data 'nothing' is recorded in user actions."""
+    from src.bot.middlewares.user_action_logger import UserActionLoggingMiddleware
+    logger_mid = UserActionLoggingMiddleware()
+    logger_mid.log_action = AsyncMock()
+
+    call = make_callback(dummy_user, dummy_chat, data="nothing")
+    handler = AsyncMock(return_value="OK")
+
+    res = await logger_mid(handler, call, {})
+    assert res == "OK"
+    assert handler.call_count == 1
+    assert logger_mid.log_action.call_count == 1
+    args, kwargs = logger_mid.log_action.call_args
+    assert args[0] == dummy_user.id
+    assert args[2] == "nothing"
+    logger_mid.clear_cache()
+
+
+@pytest.mark.asyncio
+async def test_catch_all_unknown_callback(dummy_user, dummy_chat):
+    """Verifies that handle_unknown_callback answers arbitrary unexpected callbacks."""
+    from src.bot.handlers.callbacks_router import handle_unknown_callback
+    call = make_callback(dummy_user, dummy_chat, data="unknown_legacy_button_xyz")
+
+    await handle_unknown_callback(call)
+    call.answer.assert_called_once()
