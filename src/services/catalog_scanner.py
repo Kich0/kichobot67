@@ -7,6 +7,7 @@ Discovers unindexed entities via in-memory O(1) set-difference against MongoDB.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import html
 import re
 import time
@@ -17,6 +18,7 @@ import httpx
 
 from src.core.config import settings
 from src.core.logging import get_logger
+from src.database.models.catalog_discovery import CatalogDiscovery
 from src.database.models.department import Department
 from src.database.models.faculty import Faculty
 from src.database.models.group import Group
@@ -550,6 +552,7 @@ class CatalogScannerService:
         # 4. Пакетное сохранение только реальных новинок в MongoDB
         inserted_groups_count = 0
         inserted_teachers_count = 0
+        now_utc = datetime.now(timezone.utc)
 
         if new_groups:
             docs = [Group(**g) for g in new_groups]
@@ -561,6 +564,37 @@ class CatalogScannerService:
                 details = getattr(e, "details", {}) or {}
                 inserted_groups_count = details.get("nInserted", 0)
             logger.info(f"[CatalogScanner] Добавлено новых групп: {inserted_groups_count}")
+
+            # Бессрочный постоянный учёт новинок в catalog_discoveries
+            try:
+                disc_docs = []
+                for g in new_groups:
+                    g_id = _safe_int(g.get("id") or g.get("groupId"))
+                    if not g_id:
+                        continue
+                    disc_docs.append(
+                        CatalogDiscovery(
+                            entity_type="group",
+                            entity_id=g_id,
+                            name=str(g.get("name") or "").strip(),
+                            faculty_id=_safe_int(g.get("facultyId") or g.get("faculty")),
+                            faculty_name=g.get("facultyName"),
+                            course=_safe_int(g.get("age")),
+                            language=g.get("language"),
+                            discovered_at=now_utc,
+                            scan_source="weekly_catalog_sync",
+                            meta={
+                                "href": g.get("href"),
+                                "studentCount": g.get("studentCount"),
+                                "program": g.get("program"),
+                            },
+                        )
+                    )
+                if disc_docs:
+                    await CatalogDiscovery.insert_many(disc_docs, ordered=False)
+                    logger.info(f"[CatalogScanner] Зафиксировано {len(disc_docs)} новинок групп в catalog_discoveries.")
+            except Exception as e:
+                logger.warning(f"[CatalogScanner] Замечание при записи в catalog_discoveries (группы): {e}")
 
         if new_teachers:
             enriched_teachers = []
@@ -579,6 +613,36 @@ class CatalogScannerService:
                 details = getattr(e, "details", {}) or {}
                 inserted_teachers_count = details.get("nInserted", 0)
             logger.info(f"[CatalogScanner] Добавлено новых преподавателей: {inserted_teachers_count}")
+
+            # Бессрочный постоянный учёт новинок в catalog_discoveries
+            try:
+                teach_disc_docs = []
+                for t in enriched_teachers:
+                    t_id = _safe_int(t.get("id") or t.get("teacherId"))
+                    if not t_id:
+                        continue
+                    teach_disc_docs.append(
+                        CatalogDiscovery(
+                            entity_type="teacher",
+                            entity_id=t_id,
+                            name=str(t.get("name") or t.get("fullName") or "").strip(),
+                            department_id=_safe_int(t.get("department") or t.get("departmentIdOnSite")),
+                            department_name=t.get("departmentName"),
+                            discovered_at=now_utc,
+                            scan_source="weekly_catalog_sync",
+                            meta={
+                                "jobTitle": t.get("jobTitle"),
+                                "isHead": t.get("isHead", False),
+                                "photoUrl": t.get("photoUrl"),
+                                "href": t.get("href"),
+                            },
+                        )
+                    )
+                if teach_disc_docs:
+                    await CatalogDiscovery.insert_many(teach_disc_docs, ordered=False)
+                    logger.info(f"[CatalogScanner] Зафиксировано {len(teach_disc_docs)} новинок преподавателей в catalog_discoveries.")
+            except Exception as e:
+                logger.warning(f"[CatalogScanner] Замечание при записи в catalog_discoveries (преподаватели): {e}")
 
         # 5. Если найдены новинки — мгновенно обновляем умный поиск
         if inserted_groups_count > 0 or inserted_teachers_count > 0:
