@@ -28,6 +28,14 @@ def get_kz_start_of_day() -> datetime:
 async def log_daily_user_statistics() -> dict[str, int]:
     """Computes daily active users and registrations and stores snapshot in database."""
     logger.info("[DailyStats] 📊 Расчет ежедневной статистики пользователей (23:59 Asia/Almaty)...")
+
+    # Flush all buffered actions from RAM to MongoDB before calculating statistics
+    try:
+        from src.bot.middlewares.user_action_logger import user_action_logging_middleware
+        await user_action_logging_middleware.flush()
+    except Exception as e:
+        logger.debug(f"[DailyStats] Pre-stats flush skipped or errored: {e}")
+
     start_utc = get_kz_start_of_day()
     start_naive = start_utc.replace(tzinfo=None)
 

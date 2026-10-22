@@ -20,7 +20,6 @@ from src.database.models.log import Log
 from src.database.models.user_registration_stat import UserRegistrationStat
 from src.database.models.user_activity import UserActivity
 from src.database.models.user_toll import UserToll
-from src.database.models.warmup_log import WarmupLog
 from src.database.models.catalog_discovery import CatalogDiscovery
 
 ALL_DOCUMENT_MODELS = [
@@ -41,7 +40,6 @@ ALL_DOCUMENT_MODELS = [
     UserRegistrationStat,
     UserActivity,
     UserToll,
-    WarmupLog,
     CatalogDiscovery,
 ]
 
@@ -67,7 +65,6 @@ __all__ = [
     "UserRegistrationStat",
     "UserActivity",
     "UserToll",
-    "WarmupLog",
     "CatalogDiscovery",
     "ALL_DOCUMENT_MODELS",
 ]

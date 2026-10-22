@@ -1701,12 +1701,7 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
             except Exception as e:
                 if "message is not modified" not in str(e):
                     logger.debug(f"editMessageText error: {e}")
-        night_msg = (
-            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
-            if ui_lang == "ru"
-            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
-        )
-        await call.answer(night_msg)
+        await call.answer()
         return
 
     # 2. Refresh button clicked within cooldown (10 minutes) during daytime
@@ -2383,12 +2378,7 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
                 await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
             except Exception:
                 pass
-        night_msg = (
-            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
-            if ui_lang == "ru"
-            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
-        )
-        await call.answer(night_msg)
+        await call.answer()
         return
 
     # 2. 20-minute cooldown check on refresh during daytime
@@ -2431,7 +2421,7 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
     else:
         needs_fetch = is_refresh or not cached or (now - cached["timestamp"] >= 1200.0)
     if needs_fetch:
-        await call.answer("⌛️ Создаю таблицу недели...", show_alert=False)
+        await call.answer()
         lock = _get_fetch_lock(f"teacher_table_{can_id_num}")
         async with lock:
             now = time.time()
@@ -2707,12 +2697,7 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
             except Exception as e:
                 if "message is not modified" not in str(e):
                     logger.debug(f"editMessageText error: {e}")
-        night_msg = (
-            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
-            if ui_lang == "ru"
-            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
-        )
-        await call.answer(night_msg)
+        await call.answer()
         return
 
     # 2. Refresh button clicked within cooldown (5 minutes) during daytime

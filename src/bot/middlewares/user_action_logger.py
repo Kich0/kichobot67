@@ -412,6 +412,15 @@ def _parse_callback_query(
         desc = f"Открыл профиль преподавателя {p_label}" if p_label else "Открыл профиль преподавателя"
         return ("view_profile", desc, p_id, p_name)
 
+    if raw.startswith("srch|"):
+        parts = raw.split("|")
+        tab_code = parts[1] if len(parts) > 1 else "a"
+        tab_label = "групп" if tab_code == "g" else ("преподавателей" if tab_code == "t" else "все")
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        q = parts[3].strip() if len(parts) > 3 else ""
+        query_str = f' "{q}"' if q else ""
+        return ("search_pagination", f'Поиск{query_str}: вкладка {tab_label} (стр. {page + 1})', None, q or None)
+
     if raw.startswith("searchGroup|"):
         parts = raw.split("|")
         name = parts[1] if len(parts) > 1 else ""
@@ -506,6 +515,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         self._flush_lock = asyncio.Lock()
         self._log_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
+        self._flush_timer: asyncio.Task[None] | None = None
         self._bg_log_tasks: set[asyncio.Task[Any]] = set()
         self.debounce_interval: float = 0.02 if "pytest" in sys.modules else 1.5
 
@@ -518,13 +528,16 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             if not t_item.done():
                 t_item.cancel()
         self._bg_log_tasks.clear()
+        if self._flush_timer and not self._flush_timer.done():
+            self._flush_timer.cancel()
+        self._flush_timer = None
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
         self._flush_task = None
 
     def _schedule_debounced_flush(self) -> None:
         """Schedules debounced flush if not already scheduled."""
-        if self._flush_task is None or self._flush_task.done():
+        if self._flush_timer is None or self._flush_timer.done():
             async def _debounced() -> None:
                 try:
                     await asyncio.sleep(self.debounce_interval)
@@ -532,11 +545,16 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                     return
                 await asyncio.shield(self.flush())
 
-            self._flush_task = asyncio.create_task(_debounced())
+            self._flush_timer = asyncio.create_task(_debounced())
+            self._flush_task = self._flush_timer
 
     async def flush(self) -> None:
         """Flushes enqueued action records to MongoDB."""
         current = asyncio.current_task()
+        if self._flush_timer and not self._flush_timer.done() and self._flush_timer is not current:
+            self._flush_timer.cancel()
+        self._flush_timer = None
+
         pending = [t_item for t_item in list(self._bg_log_tasks) if not t_item.done() and t_item is not current]
         self._bg_log_tasks.clear()
         if pending:
@@ -568,6 +586,8 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             await UserAction.insert_many(docs)
         except Exception as e:
             logger.debug(f"User action batch flush error: {e}")
+            from pydantic import ValidationError
+
             # Fallback: try individual inserts
             for r in items_to_save:
                 try:
@@ -584,6 +604,8 @@ class UserActionLoggingMiddleware(BaseMiddleware):
                         createdAt=r.get("created_at") or datetime.now(timezone.utc),
                     )
                     await action_doc.insert()
+                except (ValidationError, TypeError, ValueError) as val_err:
+                    logger.warning(f"Dropping permanently invalid user action record {r}: {val_err}")
                 except Exception:
                     failed_items.append(r)
 
@@ -609,7 +631,10 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             self._queue.pop(0)
 
         if len(self._queue) >= self._batch_threshold:
-            self._flush_task = asyncio.create_task(self.flush())
+            if self._flush_timer and not self._flush_timer.done():
+                self._flush_timer.cancel()
+                self._flush_timer = None
+            asyncio.create_task(self.flush())
         else:
             self._schedule_debounced_flush()
 
@@ -756,10 +781,9 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             and not safe_action.startswith("search_")
         )
 
-        # Fast path: user is already known in RAM and no background log tasks are pending -> 0ms
+        # Fast path: user is already known in RAM -> 0ms
         if (
-            not self._bg_log_tasks
-            and user_id in self._known_active_users
+            user_id in self._known_active_users
             and (not is_button_action or user_id in self._known_button_users)
         ):
             record = {

@@ -119,7 +119,6 @@ class SmartWarmupEngine:
         self._teacher_cursor: int = 0
         self._group_attempt_ts: dict[int, float] = {}
         self._teacher_attempt_ts: dict[int | str, float] = {}
-        self._entity_last_logged_state: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=1000, ttl=86400.0, timer=time.time)
         self._stats: dict[str, int] = {
             "api_200": 0,
             "api_304": 0,
@@ -345,19 +344,11 @@ class SmartWarmupEngine:
         status: bool = True,
         error_msg: str | None = None,
     ) -> None:
-        """Persists warmup cycle audit entry into ring buffer and conditionally into WarmupLog.
+        """Records warmup cycle audit entry into in-memory ring buffer.
 
-        Smart persistence filter:
-        - All entries are appended to the in-memory ring buffer (self._recent_logs).
-        - Pure local memory hits (source == "cache") stay in RAM only to prevent 38k idle TLS writes/day.
-        - MongoDB Atlas persistence is strictly throttled to prevent spamming:
-          1. Failure / Error (status is False) or recovery from a previous failure.
-          2. Source transitions (e.g. api -> api_304, api_304 -> api, api -> db, db -> api).
-          3. Significant latency changes (>= 50% shift AND >= 100ms absolute difference).
-          4. Initial session record for each entity.
-          5. Routine identical ticks are SKIPPED to save CPU, TLS roundtrips, and MongoDB storage.
+        MongoDB persistence has been completely eliminated to save database IOPS,
+        TLS roundtrips, disk space, and prevent background load.
         """
-        now = time.time()
         entry = {
             "name": name,
             "target_type": target_type,
@@ -369,66 +360,6 @@ class SmartWarmupEngine:
             "created_at": datetime.now(timezone.utc),
         }
         self._recent_logs.append(entry)
-
-        # Pure in-memory cache skips (duration ~0ms) remain in RAM ring buffer only
-        if source == "cache" and status is True:
-            return
-
-        entity_key = f"{target_type}:{name}"
-        prev_state = self._entity_last_logged_state.get(entity_key)
-
-        should_persist = False
-        if prev_state is None:
-            # 1. First warmup event of this entity in current server session
-            should_persist = True
-        elif status is False or prev_state.get("status") is False:
-            # 2. Error or recovery from error
-            should_persist = True
-        elif prev_state.get("source") != source:
-            # 3. Source transition (e.g. api <-> api_304 <-> db)
-            should_persist = True
-        else:
-            # 4. Same source and successful: check for significant latency shift (>= 50% AND >= 100ms)
-            prev_ms = int(prev_state.get("duration_ms") or 0)
-            if prev_ms > 0:
-                diff = abs(duration_ms - prev_ms)
-                ratio = diff / max(prev_ms, 50)
-                if ratio >= 0.50 and diff >= 100:
-                    should_persist = True
-
-        # 5. Periodic heartbeat: if entity was active but unchanged for > 12 hours, persist one refresh snapshot
-        if not should_persist and prev_state is not None:
-            if now - float(prev_state.get("logged_at", 0.0)) >= 43200.0:
-                should_persist = True
-
-        if not should_persist:
-            return
-
-        self._entity_last_logged_state[entity_key] = {
-            "source": source,
-            "status": status,
-            "duration_ms": duration_ms,
-            "logged_at": now,
-        }
-
-        async def _persist() -> None:
-            try:
-                from src.database.models.warmup_log import WarmupLog
-
-                log_entry = WarmupLog(
-                    name=name,
-                    target_type=target_type,
-                    badge=badge,
-                    source=source,
-                    duration_ms=duration_ms,
-                    status=status,
-                    error_msg=error_msg,
-                )
-                await log_entry.insert()
-            except Exception as e:
-                logger.debug(f"[SmartWarmupEngine] Failed to save WarmupLog: {e}")
-
-        self._create_background_task(_persist())
 
     @property
     def is_running(self) -> bool:

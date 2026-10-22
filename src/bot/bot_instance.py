@@ -63,8 +63,8 @@ def create_dispatcher(
     dp.callback_query.middleware(user_action_logging_middleware)
     dp.callback_query.middleware(user_toll_middleware)
 
-    # 3. Handlers and Routers (priority order: admin -> payment -> commands -> callbacks -> free-text search)
-    for r in (admin_router, payment_router, commands_router, callbacks_router, search_router):
+    # 3. Handlers and Routers (priority order: admin -> payment -> commands -> search -> callbacks)
+    for r in (admin_router, payment_router, commands_router, search_router, callbacks_router):
         r._parent_router = None
         dp.include_router(r)
 

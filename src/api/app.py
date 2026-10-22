@@ -162,17 +162,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error stopping scheduler: {e}")
 
-    try:
-        from src.bot.middlewares.user_action_logger import user_action_logging_middleware
-        await user_action_logging_middleware.flush()
-    except Exception as e:
-        logger.warning(f"Error flushing user actions during shutdown: {e}")
-
+    # Drain in-flight webhook handler tasks first so any emitted user actions reach the queue
     if _background_tasks:
         try:
             await asyncio.gather(*_background_tasks, return_exceptions=True)
         except Exception as e:
             logger.warning(f"Error draining background tasks: {e}")
+
+    # Flush all remaining user actions to MongoDB ensuring zero loss on shutdown
+    try:
+        from src.bot.middlewares.user_action_logger import user_action_logging_middleware
+        await user_action_logging_middleware.flush()
+    except Exception as e:
+        logger.warning(f"Error flushing user actions during shutdown: {e}")
 
     try:
         await bot.session.close()
