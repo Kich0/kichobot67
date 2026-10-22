@@ -704,6 +704,18 @@ class BuketovApiService:
                     fut.set_result(res)
                 return res
 
+            # Night mode: do NOT make outbound network calls to external API; fallback to MongoDB
+            if is_night and not force_refresh:
+                logger.info(f"Night cache mode active: falling back to MongoDB for {cache_key} instead of external API.")
+                try:
+                    db_res = await self.fetch_schedule_from_db(params, cache_type)
+                    if db_res and isinstance(db_res.get("records"), list) and len(db_res["records"]) > 0:
+                        if not fut.done():
+                            fut.set_result(db_res)
+                        return db_res
+                except Exception as db_err:
+                    logger.debug(f"DB fallback during night mode failed: {db_err}")
+
             # 2. Circuit Breaker check
             if self.circuit_state == "API_DOWN":
                 if now - self.circuit_tripped_at < self.CIRCUIT_COOLDOWN_SECONDS:

@@ -136,17 +136,17 @@ night_aware_timer = NightAwareTimer()
 # In-memory RAM caches for schedule viewing (bounded LRU with TTL matching AGENTS.md §4)
 # Key: f"{group_id}_{lang}" -> {"data": [...], "timestamp": float, "group": Any, "is_from_db": bool}
 student_schedule_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0, timer=time.monotonic
+    maxsize=CACHE_CAPACITY_STUDENT_GROUPS, ttl=1800.0, timer=night_aware_timer
 )
 
 # Key: f"{teacher_id}_{lang}" -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
 teacher_text_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0, timer=time.monotonic
+    maxsize=CACHE_CAPACITY_TEACHER_TEXT, ttl=1800.0, timer=night_aware_timer
 )
 
 # Key: str(teacher_id) -> {"data": [...], "timestamp": float, "teacher": Any, "is_from_db": bool}
 teacher_table_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0, timer=time.monotonic
+    maxsize=CACHE_CAPACITY_TEACHER_IMAGES, ttl=1200.0, timer=night_aware_timer
 )
 
 # Deduplication hashes for background MongoDB persistence & metadata caches for 0ms pagination
@@ -1129,6 +1129,40 @@ async def get_or_fetch_student_schedule(
             grp_name = group_name or (meta.get("name") if meta else None)
             fac_val = meta.get("faculty") if meta else None
             is_perm_empty = _is_college_group(grp_name, fac_val)
+            if is_night and not is_refresh:
+                # Night cache freeze: do NOT query external Buketov API, fetch directly from MongoDB Schedule
+                try:
+                    from src.database.models.schedule import Schedule
+
+                    doc = (
+                        await Schedule.find_one({"groupId": num_g_id})
+                        or await Schedule.find_one({"groupId": group_id})
+                    )
+                    if not doc and (grp_name or group_name):
+                        gn = grp_name or group_name
+                        doc = await Schedule.find_one({"name": gn}) or await Schedule.find_one({"groupName": gn})
+                    if doc and doc.data and _has_any_lessons(doc.data):
+                        localized_ru = _localize_schedule_days(doc.data, "ru")
+                        localized_kz = _localize_schedule_days(doc.data, "kz")
+                        doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
+                        cached_ru = {
+                            "data": localized_ru,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+                        cached_kz = {
+                            "data": localized_kz,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+                        student_schedule_cache[f"{group_id}_ru"] = cached_ru
+                        student_schedule_cache[f"{group_id}_kz"] = cached_kz
+                        return cached_kz if norm_lang == "kz" else cached_ru
+                except Exception as db_err:
+                    logger.debug(f"Night DB lookup for group {group_id} failed: {db_err}")
+
             if meta and meta.get("permanent_empty") is True:
                 is_perm_empty = True
 
@@ -1644,7 +1678,38 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
 
     target_data = data if data is not None else kwargs
 
-    # 1. Refresh button clicked within cooldown (10 minutes)
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    # 1. Refresh button clicked at night (01:00 - 06:45): freeze schedule, do NOT hit API, keep honest timestamp
+    if is_refresh and is_night and cached:
+        from_cache = False if cached.get("is_from_db") else True
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
+        text, markup = await build_student_day_schedule_view(
+            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache
+        )
+        if call.message:
+            try:
+                await call.message.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+            except Exception as e:
+                if "message is not modified" not in str(e):
+                    logger.debug(f"editMessageText error: {e}")
+        night_msg = (
+            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
+            if ui_lang == "ru"
+            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
+        )
+        await call.answer(night_msg)
+        return
+
+    # 2. Refresh button clicked within cooldown (10 minutes) during daytime
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_STUDENT_REFRESH.total_seconds()):
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
@@ -1858,6 +1923,44 @@ async def get_or_fetch_teacher_text_schedule(
                 if not cached.get("is_from_db"):
                     cached["is_from_cache"] = True
                 return cached
+
+            if is_night and not is_refresh:
+                # Night cache freeze: do NOT query external Buketov API; fetch directly from MongoDB TeacherSchedule
+                try:
+                    from src.database.models.teacher_schedule import TeacherSchedule
+
+                    num_t_id = int(canonical_id) if str(canonical_id).isdigit() else canonical_id
+                    doc = await TeacherSchedule.find_one({"teacherId": num_t_id})
+                    if not doc and (tch_name or lookup_name):
+                        tn = tch_name or lookup_name
+                        doc = await TeacherSchedule.find_one({"name": tn})
+                    if doc and doc.data and _has_any_lessons(doc.data):
+                        localized_ru = _localize_schedule_days(doc.data, "ru")
+                        localized_kz = _localize_schedule_days(doc.data, "kz")
+                        doc_ts = doc.updated_at.timestamp() if doc.updated_at else now
+                        cached_ru = {
+                            "data": localized_ru,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+                        cached_kz = {
+                            "data": localized_kz,
+                            "timestamp": doc_ts,
+                            "is_from_db": True,
+                            "is_from_cache": False,
+                        }
+                        for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                            if not base:
+                                continue
+                            teacher_text_cache[f"{base}_ru"] = cached_ru
+                            teacher_text_cache[f"{base}_kz"] = cached_kz
+                            teacher_text_cache[f"{base}_рус"] = cached_ru
+                            teacher_text_cache[f"{base}_каз"] = cached_kz
+                            teacher_text_cache[f"{base}_қаз"] = cached_kz
+                        return cached_kz if norm_lang == "kz" else cached_ru
+                except Exception as db_err:
+                    logger.debug(f"Night DB lookup for teacher {canonical_id} failed: {db_err}")
 
             if lookup_name:
                 try:
@@ -2249,7 +2352,46 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
 
     target_data = data if data is not None else kwargs
 
-    # 1. 20-minute cooldown check on refresh
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    # 1. Refresh button clicked at night (01:00 - 06:45): freeze teacher table image
+    if is_refresh and is_night and cached:
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
+        if call.message and call.message.photo:
+            from_cache = False if cached.get("is_from_db") else True
+            elapsed = format_elapsed_time(
+                cached["timestamp"],
+                ui_lang,
+                is_from_db=cached.get("is_from_db", False),
+                is_from_cache=from_cache,
+            )
+            clock = format_timestamp_clock(cached["timestamp"])
+            caption = (
+                f"{t('teacher_grid_caption', ui_lang, teacherName=teacher_name)}\n\n"
+                f"🕒 <i><b>{elapsed} || {clock}</b></i>"
+            )
+            markup = get_teacher_table_keyboard(can_id_num, day_num, department_id=dept_id, lang=ui_lang)
+            try:
+                await call.message.edit_caption(caption=caption, reply_markup=markup, parse_mode="HTML")
+            except Exception:
+                pass
+        night_msg = (
+            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
+            if ui_lang == "ru"
+            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
+        )
+        await call.answer(night_msg)
+        return
+
+    # 2. 20-minute cooldown check on refresh during daytime
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_IMAGE_REFRESH.total_seconds()):
         if not cached.get("is_from_db"):
             cached["is_from_cache"] = True
@@ -2537,6 +2679,43 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
 
     target_data = data if data is not None else kwargs
 
+    try:
+        from src.cron.cache_warmup import is_night_cache_mode_kz
+
+        is_night = is_night_cache_mode_kz()
+    except Exception:
+        is_night = False
+
+    # 1. Refresh button clicked at night (01:00 - 06:45): freeze teacher schedule, keep honest timestamp
+    if is_refresh and is_night and cached:
+        from_cache = False if cached.get("is_from_db") else True
+        if not cached.get("is_from_db"):
+            cached["is_from_cache"] = True
+        badge = "🔵" if cached.get("is_from_db") else "🟣"
+        target_data["schedule_badge"] = badge
+        text, markup = await build_teacher_day_text_view(
+            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache
+        )
+        if call.message:
+            try:
+                await call.message.edit_text(
+                    text,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                if "message is not modified" not in str(e):
+                    logger.debug(f"editMessageText error: {e}")
+        night_msg = (
+            "ℹ️ Ночной режим (01:00–06:45): сайт КарУ спит, данные актуальны."
+            if ui_lang == "ru"
+            else "ℹ️ Түнгі режим (01:00–06:45): ҚарУ сайты демалуда, деректер өзекті."
+        )
+        await call.answer(night_msg)
+        return
+
+    # 2. Refresh button clicked within cooldown (5 minutes) during daytime
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
