@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -274,18 +275,48 @@ async def handle_sms(message: Message) -> None:
             users = await User.find().to_list()
             sent = 0
             failed = 0
+            blocked = 0
             for u in users:
-                try:
-                    await bot.send_message(u.user_id, sms_text, disable_web_page_preview=True)
-                    sent += 1
-                except Exception:
+                if not getattr(u, "user_id", None):
+                    continue
+                delivered = False
+                for attempt in range(3):
+                    try:
+                        await bot.send_message(u.user_id, sms_text, disable_web_page_preview=True)
+                        sent += 1
+                        delivered = True
+                        break
+                    except TelegramRetryAfter as e:
+                        wait_sec = max(1, int(e.retry_after) + 1)
+                        logger.warning(
+                            f"TelegramRetryAfter during /sms all: waiting {wait_sec}s for user {u.user_id} (attempt {attempt + 1}/3)"
+                        )
+                        await asyncio.sleep(wait_sec)
+                    except TelegramForbiddenError:
+                        blocked += 1
+                        failed += 1
+                        delivered = True  # Handled, do not retry
+                        break
+                    except Exception as err:
+                        logger.debug(f"Failed to deliver broadcast to {u.user_id}: {err}")
+                        failed += 1
+                        delivered = True  # Non-retryable error, do not retry
+                        break
+                if not delivered:
                     failed += 1
                 await asyncio.sleep(0.5)  # 500ms pacing against Telegram rate limits
 
-            await message.answer(
-                f"✅ <b>Разовое оповещение завершено:</b>\n• Доставлено: {sent}\n• Не доставлено: {failed}",
-                parse_mode="HTML",
+            report = (
+                f"✅ <b>Разовое оповещение завершено:</b>\n"
+                f"• Доставлено: {sent}\n"
+                f"• Не доставлено: {failed}"
             )
+            if blocked > 0:
+                report += f"\n• Заблокировали бота: {blocked}"
+            try:
+                await message.answer(report, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Failed to send broadcast completion report: {e}")
 
         _create_admin_task(_run_broadcast_task())
         await message.answer("📢 <b>Разовое оповещение запущено в фоновом режиме...</b>", parse_mode="HTML")
@@ -293,7 +324,7 @@ async def handle_sms(message: Message) -> None:
 
     # Single user direct message
     target_user = await user_service.find_user(target)
-    if not target_user:
+    if not target_user or not getattr(target_user, "user_id", None):
         await message.answer(f"❌ Пользователь <b>{escape_html(target)}</b> не найден.", parse_mode="HTML")
         return
 
@@ -305,6 +336,10 @@ async def handle_sms(message: Message) -> None:
             f"• <b>Текст:</b> {escape_html(sms_text)}",
             parse_mode="HTML",
         )
+    except TelegramForbiddenError:
+        await message.answer(f"❌ Пользователь <code>{target_user.user_id}</code> заблокировал бота.", parse_mode="HTML")
+    except TelegramRetryAfter as e:
+        await message.answer(f"⏳ Превышен лимит Telegram. Попробуйте через {e.retry_after} сек.", parse_mode="HTML")
     except Exception as e:
         await message.answer(f"❌ Не удалось доставить сообщение: {e}")
 

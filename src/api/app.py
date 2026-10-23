@@ -351,11 +351,28 @@ def create_app() -> FastAPI:
 
         # Student schedule lookup
         if user.group:
-            group = await Group.find_one({"id": user.group})
+            num_g_id = int(user.group) if str(user.group).isdigit() else None
+            group = None
+            if num_g_id is not None:
+                group = await Group.find_one({"id": num_g_id}) or await Group.find_one({"groupId": num_g_id})
+            if not group:
+                clean_g = str(user.group).strip()
+                group = await Group.find_one({"name": clean_g})
+                if not group:
+                    import re
+                    from beanie.operators import RegEx
+                    group = await Group.find_one(RegEx("name", f"^{re.escape(clean_g)}$", "i"))
+
             if group:
                 try:
+                    target_gid = getattr(group, "group_id", None) or getattr(group, "item_id", None)
+                    if target_gid is None and isinstance(getattr(group, "id", None), int):
+                        target_gid = group.id
+                    if target_gid is not None and str(target_gid).isdigit():
+                        target_gid = int(target_gid)
+
                     sched = await buketov_api_service.fetch_schedule(
-                        {"groupId": group.group_id, "group": group.name},
+                        {"groupId": target_gid or group.name, "group": group.name},
                         cache_type="student",
                     )
                     records = sched.get("records") if isinstance(sched, dict) else sched
@@ -367,7 +384,12 @@ def create_app() -> FastAPI:
                         "isNew": True,
                     }
                 except Exception:
-                    db_sched = await Schedule.find_one({"groupId": group.group_id})
+                    gid = getattr(group, "group_id", None) or getattr(group, "item_id", None)
+                    if gid is None and isinstance(getattr(group, "id", None), int):
+                        gid = group.id
+                    if gid is not None and str(gid).isdigit():
+                        gid = int(gid)
+                    db_sched = await Schedule.find_one({"groupId": gid}) if gid is not None else None
                     if db_sched:
                         raw_records = getattr(db_sched, "data", None) or getattr(db_sched, "schedule", None) or []
                         serialized = [
@@ -380,13 +402,45 @@ def create_app() -> FastAPI:
                             "group": group.model_dump(by_alias=True, mode="json"),
                             "isNew": False,
                         }
+            elif num_g_id is not None:
+                # Group doc not found in groups collection, query Schedule by numeric groupId
+                db_sched = await Schedule.find_one({"groupId": num_g_id})
+                if db_sched:
+                    raw_records = getattr(db_sched, "data", None) or getattr(db_sched, "schedule", None) or []
+                    serialized = [
+                        d.model_dump(by_alias=True, mode="json") if hasattr(d, "model_dump") else d
+                        for d in raw_records
+                    ]
+                    data["studentSchedule"] = {
+                        "schedule": serialized,
+                        "updatedAt": int(db_sched.updated_at.timestamp() * 1000) if db_sched.updated_at else int(time.time() * 1000),
+                        "group": {"id": num_g_id, "name": f"Group {num_g_id}"},
+                        "isNew": False,
+                    }
 
         # Teacher schedule lookup
         if user.teacher:
-            teacher = await Teacher.find_one({"id": user.teacher})
+            num_t_id = int(user.teacher) if str(user.teacher).isdigit() else None
+            teacher = None
+            if num_t_id is not None:
+                teacher = await Teacher.find_one({"id": num_t_id}) or await Teacher.find_one({"teacher_id": num_t_id})
+            if not teacher:
+                clean_t = str(user.teacher).strip()
+                teacher = await Teacher.find_one({"name": clean_t}) or await Teacher.find_one({"fullName": clean_t})
+                if not teacher:
+                    import re
+                    from beanie.operators import RegEx
+                    esc_t = re.escape(clean_t)
+                    teacher = await Teacher.find_one(RegEx("name", f"^{esc_t}$", "i")) or await Teacher.find_one(RegEx("fullName", f"^{esc_t}$", "i"))
+
             if teacher:
                 try:
-                    target_teacher_id = getattr(teacher, "teacher_id", getattr(teacher, "id", None))
+                    target_teacher_id = getattr(teacher, "teacher_id", None) or getattr(teacher, "item_id", None)
+                    if target_teacher_id is None and isinstance(getattr(teacher, "id", None), int):
+                        target_teacher_id = teacher.id
+                    if target_teacher_id is not None and str(target_teacher_id).isdigit():
+                        target_teacher_id = int(target_teacher_id)
+
                     sched = await buketov_api_service.get_teacher_schedule(
                         teacher_name=teacher.name,
                         teacher_id=target_teacher_id,
@@ -400,8 +454,17 @@ def create_app() -> FastAPI:
                         "isNew": True,
                     }
                 except Exception:
-                    target_teacher_id = getattr(teacher, "teacher_id", getattr(teacher, "id", None))
-                    db_sched = await TeacherSchedule.find_one({"$or": [{"teacherId": target_teacher_id}, {"teacher_id": target_teacher_id}]})
+                    target_teacher_id = getattr(teacher, "teacher_id", None) or getattr(teacher, "item_id", None)
+                    if target_teacher_id is None and isinstance(getattr(teacher, "id", None), int):
+                        target_teacher_id = teacher.id
+                    if target_teacher_id is not None and str(target_teacher_id).isdigit():
+                        target_teacher_id = int(target_teacher_id)
+
+                    db_sched = (
+                        await TeacherSchedule.find_one({"teacherId": target_teacher_id})
+                        if target_teacher_id is not None
+                        else None
+                    )
                     if db_sched:
                         raw_records = getattr(db_sched, "data", None) or getattr(db_sched, "schedule", None) or []
                         serialized = [
@@ -414,6 +477,21 @@ def create_app() -> FastAPI:
                             "teacher": teacher.model_dump(by_alias=True, mode="json"),
                             "isNew": False,
                         }
+            elif num_t_id is not None:
+                # Teacher doc not found in teachers collection, query TeacherSchedule by numeric teacherId
+                db_sched = await TeacherSchedule.find_one({"teacherId": num_t_id})
+                if db_sched:
+                    raw_records = getattr(db_sched, "data", None) or getattr(db_sched, "schedule", None) or []
+                    serialized = [
+                        d.model_dump(by_alias=True, mode="json") if hasattr(d, "model_dump") else d
+                        for d in raw_records
+                    ]
+                    data["teacherSchedule"] = {
+                        "schedule": serialized,
+                        "updatedAt": int(db_sched.updated_at.timestamp() * 1000) if db_sched.updated_at else int(time.time() * 1000),
+                        "teacher": {"id": num_t_id, "name": f"Teacher {num_t_id}"},
+                        "isNew": False,
+                    }
 
         return ORJSONResponse(content=data, status_code=200)
 

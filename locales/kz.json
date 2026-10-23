@@ -72,5 +72,11 @@
   "no_schedule_for_group": "ℹ️ {{groupName}} тобында сабақ кестесі жоқ.",
   "schedule_refreshed": "Кесте жаңартылды!",
   "schedule_up_to_date": "Мәліметтер өзекті!",
-  "schedule_up_to_date_ago": "Мәліметтер өзекті ({{time}} бұрын)"
+  "schedule_up_to_date_ago": "Мәліметтер өзекті ({{time}} бұрын)",
+  "user_profile_card": "👤 <b>Пайдаланушы профилі:</b>\n\n• <b>Telegram ID:</b> <code>{{userId}}</code>\n• <b>Аты-жөні:</b> {{userName}}\n• <b>Тіл:</b> {{langDisplay}}\n• <b>Топ:</b> {{groupName}}\n• <b>Оқытушы:</b> {{teacherName}}\n\n<i>Кестені таңдау немесе ауыстыру үшін /new басыңыз</i>",
+  "not_selected_female": "Таңдалмаған",
+  "not_selected_male": "Таңдалмаған",
+  "search_results_heading": "✨ Сұраныс бойынша: <b>{{query}}</b> табылған сәйкестіктер саны: <b>{{count}}</b>\n\nТізімнен қажетті нұсқаны таңдаңыз:",
+  "search_fuzzy_prompt": "🔍 <b>{{query}}</b> сұранысы бойынша нақты ештеңе табылмады.\n\nМүмкін, мынаны іздедіңіз бе:",
+  "search_not_found_details": "🔍 Өкінішке орай, <b>{{query}}</b> сұранысы бойынша ештеңе табылмады.\n\n✍️ Оқытушының тегі немесе топ атауының дұрыс жазылғанын тексеріңіз.\n💡 Іздеу туралы толығырақ: /search"
 }

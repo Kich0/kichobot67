@@ -1140,7 +1140,22 @@ async def get_or_fetch_student_schedule(
                     )
                     if not doc and (grp_name or group_name):
                         gn = grp_name or group_name
-                        doc = await Schedule.find_one({"name": gn}) or await Schedule.find_one({"groupName": gn})
+                        from src.database.models.group import Group
+                        g_rec = await Group.find_one({"name": gn.strip()})
+                        if not g_rec:
+                            import re
+                            from beanie.operators import RegEx
+                            g_rec = await Group.find_one(RegEx("name", f"^{re.escape(gn.strip())}$", "i"))
+                        if g_rec:
+                            gid_found = getattr(g_rec, "group_id", None) or getattr(g_rec, "item_id", None)
+                            if gid_found is None and isinstance(getattr(g_rec, "id", None), int):
+                                gid_found = g_rec.id
+                            if gid_found is not None:
+                                try:
+                                    gid_found = int(gid_found)
+                                except (ValueError, TypeError):
+                                    pass
+                                doc = await Schedule.find_one({"groupId": gid_found})
                     if doc and doc.data and _has_any_lessons(doc.data):
                         localized_ru = _localize_schedule_days(doc.data, "ru")
                         localized_kz = _localize_schedule_days(doc.data, "kz")
@@ -1928,7 +1943,24 @@ async def get_or_fetch_teacher_text_schedule(
                     doc = await TeacherSchedule.find_one({"teacherId": num_t_id})
                     if not doc and (tch_name or lookup_name):
                         tn = tch_name or lookup_name
-                        doc = await TeacherSchedule.find_one({"name": tn})
+                        from src.database.models.teacher import Teacher
+                        clean_tn = tn.strip()
+                        t_rec = await Teacher.find_one({"name": clean_tn}) or await Teacher.find_one({"fullName": clean_tn})
+                        if not t_rec:
+                            import re
+                            from beanie.operators import RegEx
+                            esc_tn = re.escape(clean_tn)
+                            t_rec = await Teacher.find_one(RegEx("name", f"^{esc_tn}$", "i")) or await Teacher.find_one(RegEx("fullName", f"^{esc_tn}$", "i"))
+                        if t_rec:
+                            t_rec_id = getattr(t_rec, "teacher_id", None) or getattr(t_rec, "item_id", None)
+                            if t_rec_id is None and isinstance(getattr(t_rec, "id", None), int):
+                                t_rec_id = t_rec.id
+                            if t_rec_id is not None:
+                                try:
+                                    t_rec_id = int(t_rec_id)
+                                except (ValueError, TypeError):
+                                    pass
+                                doc = await TeacherSchedule.find_one({"teacherId": t_rec_id})
                     if doc and doc.data and _has_any_lessons(doc.data):
                         localized_ru = _localize_schedule_days(doc.data, "ru")
                         localized_kz = _localize_schedule_days(doc.data, "kz")

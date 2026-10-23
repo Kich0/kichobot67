@@ -6,6 +6,7 @@ Handles standard commands (/start, /help, /profile, /settings, /new, /schedule,
 
 from __future__ import annotations
 
+from html import escape as escape_html
 import re
 
 from aiogram import F, Router
@@ -93,14 +94,19 @@ async def handle_profile(message: Message) -> None:
     lang = await user_service.get_user_language(user_id)
 
     user_doc = await user_service.get_or_create_user(user_id)
-    group_name = "Не выбрана"
-    teacher_name = "Не выбран"
+    group_name = t("not_selected_female", lang)
+    teacher_name = t("not_selected_male", lang)
 
     if user_doc and user_doc.group:
         try:
             from src.database.models.group import Group
 
-            grp = await Group.find_one({"id": user_doc.group})
+            num_g = int(user_doc.group) if str(user_doc.group).isdigit() else None
+            grp = None
+            if num_g is not None:
+                grp = await Group.find_one({"id": num_g}) or await Group.find_one({"groupId": num_g})
+            if not grp:
+                grp = await Group.find_one({"name": str(user_doc.group)})
             if grp:
                 group_name = grp.name
         except Exception:
@@ -110,21 +116,28 @@ async def handle_profile(message: Message) -> None:
         try:
             from src.database.models.teacher import Teacher
 
-            tch = await Teacher.find_one({"id": user_doc.teacher})
+            num_t = int(user_doc.teacher) if str(user_doc.teacher).isdigit() else user_doc.teacher
+            tch = (
+                await Teacher.find_one({"id": num_t})
+                or await Teacher.find_one({"teacher_id": num_t})
+                or await Teacher.find_one({"name": str(user_doc.teacher)})
+                or await Teacher.find_one({"fullName": str(user_doc.teacher)})
+            )
             if tch:
                 teacher_name = tch.name
         except Exception:
             teacher_name = str(user_doc.teacher)
 
     lang_display = "🇷🇺 Русский" if lang == "ru" else "🇰🇿 Қазақша"
-    profile_text = (
-        f"👤 <b>Профиль пользователя:</b>\n\n"
-        f"• <b>Telegram ID:</b> <code>{user_id}</code>\n"
-        f"• <b>Имя:</b> {message.from_user.full_name if message.from_user else '—'}\n"
-        f"• <b>Язык:</b> {lang_display}\n"
-        f"• <b>Группа:</b> {group_name}\n"
-        f"• <b>Преподаватель:</b> {teacher_name}\n\n"
-        f"<i>Для выбора или смены расписания нажмите /new</i>"
+    user_name = escape_html(message.from_user.full_name) if message.from_user else "—"
+    profile_text = t(
+        "user_profile_card",
+        lang,
+        userId=user_id,
+        userName=user_name,
+        langDisplay=lang_display,
+        groupName=escape_html(group_name),
+        teacherName=escape_html(teacher_name),
     )
 
     await message.answer(profile_text, parse_mode="HTML")

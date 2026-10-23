@@ -200,16 +200,39 @@ class UserService:
             pass
         return False
 
-    async def find_user(self, query: str | int) -> Any:
-        """Finds user by Telegram ID or @username."""
+    async def find_user(self, query: str | int | None) -> Any:
+        """Finds user by Telegram ID or @username (case-insensitive)."""
+        if query is None:
+            return None
         try:
             from src.database.models.user import User
 
-            if isinstance(query, int) or (isinstance(query, str) and query.isdigit()):
+            if isinstance(query, int):
                 return await User.find_one({"userId": int(query)})
 
-            clean_q = str(query).lstrip("@").strip()
-            return await User.find_one({"username": clean_q})
+            query_str = str(query).strip()
+            if not query_str:
+                return None
+
+            # Numeric Telegram ID (supports both positive user IDs and negative supergroup IDs)
+            if query_str.isdigit() or (query_str.startswith("-") and query_str[1:].isdigit()):
+                return await User.find_one({"userId": int(query_str)})
+
+            clean_q = query_str.lstrip("@").strip()
+            if not clean_q:
+                return None
+
+            # Fast path: exact match on username (both bare and with leading @)
+            user = await User.find_one({"username": clean_q}) or await User.find_one({"username": f"@{clean_q}"})
+            if user:
+                return user
+
+            # Case-insensitive match via Beanie RegEx
+            import re
+            from beanie.operators import RegEx
+
+            escaped = re.escape(clean_q)
+            return await User.find_one(RegEx("username", f"^@?{escaped}$", "i"))
         except Exception:
             return None
 

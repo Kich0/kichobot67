@@ -72,5 +72,11 @@
   "no_schedule_for_group": "ℹ️ У группы {{groupName}} нет расписания.",
   "schedule_refreshed": "Расписание обновлено!",
   "schedule_up_to_date": "Данные уже актуальны!",
-  "schedule_up_to_date_ago": "Данные уже актуальны ({{time}} назад)"
+  "schedule_up_to_date_ago": "Данные уже актуальны ({{time}} назад)",
+  "user_profile_card": "👤 <b>Профиль пользователя:</b>\n\n• <b>Telegram ID:</b> <code>{{userId}}</code>\n• <b>Имя:</b> {{userName}}\n• <b>Язык:</b> {{langDisplay}}\n• <b>Группа:</b> {{groupName}}\n• <b>Преподаватель:</b> {{teacherName}}\n\n<i>Для выбора или смены расписания нажмите /new</i>",
+  "not_selected_female": "Не выбрана",
+  "not_selected_male": "Не выбран",
+  "search_results_heading": "✨ По вашему запросу: <b>{{query}}</b> найдено совпадений: <b>{{count}}</b>\n\nВыберите нужный вариант из списка:",
+  "search_fuzzy_prompt": "🔍 По запросу <b>{{query}}</b> ничего точного не найдено.\n\nВозможно, вы имели в виду:",
+  "search_not_found_details": "🔍 К сожалению, по запросу <b>{{query}}</b> ничего не найдено.\n\n✍️ Проверьте правильность написания фамилии преподавателя или названия группы.\n💡 Подробнее о поиске: /search"
 }

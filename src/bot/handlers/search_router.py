@@ -7,6 +7,7 @@ disambiguation menus, and typo-tolerant suggestions.
 
 from __future__ import annotations
 
+from html import escape as escape_html
 import re
 from typing import Any
 
@@ -185,10 +186,7 @@ async def handle_text_search(message: Message) -> None:
         curr_day = get_current_day_number()
 
         total_matches = len(result.groups) + len(result.teachers)
-        heading = (
-            f"✨ По вашему запросу: <b>{text}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
-            "Выберите нужный вариант из списка:"
-        )
+        heading = t("search_results_heading", lang, query=escape_html(text), count=total_matches)
         markup = get_search_results_keyboard(
             groups=result.groups,
             teachers=result.teachers,
@@ -233,10 +231,7 @@ async def handle_text_search(message: Message) -> None:
         from src.bot.handlers.callbacks_router import get_current_day_number
         curr_day = get_current_day_number()
 
-        prompt = (
-            f"🔍 По запросу <b>{text}</b> ничего точного не найдено.\n\n"
-            "Возможно, вы имели в виду:"
-        )
+        prompt = t("search_fuzzy_prompt", lang, query=escape_html(text))
         markup = get_fuzzy_suggestions_keyboard(
             result.fuzzy_suggestions,
             lang=lang,
@@ -256,11 +251,7 @@ async def handle_text_search(message: Message) -> None:
     except Exception:
         pass
 
-    not_found_msg = (
-        f"🔍 К сожалению, по запросу <b>{text}</b> ничего не найдено.\n\n"
-        "✍️ Проверьте правильность написания фамилии преподавателя или названия группы.\n"
-        "💡 Подробнее о поиске: /search"
-    )
+    not_found_msg = t("search_not_found_details", lang, query=escape_html(text))
     await message.answer(not_found_msg, parse_mode="HTML")
 
 
@@ -288,11 +279,7 @@ async def handle_search_tabs_and_pagination(call: CallbackQuery) -> None:
     from src.bot.handlers.callbacks_router import get_current_day_number
     curr_day = get_current_day_number()
     total_matches = len(result.groups) + len(result.teachers)
-
-    heading = (
-        f"✨ По вашему запросу: <b>{query}</b> найдено совпадений: <b>{total_matches}</b>\n\n"
-        "Выберите нужный вариант из списка:"
-    )
+    heading = t("search_results_heading", lang, query=escape_html(query), count=total_matches)
 
     markup = get_search_results_keyboard(
         groups=result.groups,
