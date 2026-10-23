@@ -60,6 +60,26 @@ async def handle_text_search(message: Message) -> None:
     if any(text.startswith(p) for p in COMMAND_PREFIXES):
         return
 
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private:
+        from src.bot.utils import is_bot_mentioned
+
+        is_mentioned, clean_text = is_bot_mentioned(message)
+        if not is_mentioned:
+            # Strictly ignore casual messages in group chats
+            return
+
+        if not clean_text or re.match(
+            r"^(?:расписание|кесте|кестесі|старт|start|меню|мәзір)$",
+            clean_text,
+            re.IGNORECASE,
+        ):
+            from src.bot.handlers.commands_router import handle_schedule_command
+
+            await handle_schedule_command(message)
+            return
+        text = clean_text
+
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     if is_kazakh_text(text):

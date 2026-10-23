@@ -830,6 +830,9 @@ class UserActionLoggingMiddleware(BaseMiddleware):
 
         if isinstance(event, Message):
             is_private = (event.chat.type == "private") if (hasattr(event, "chat") and event.chat) else True
+            from src.bot.utils import is_message_for_bot
+            if not is_private and not is_message_for_bot(event):
+                return None
             is_cmd = bool(
                 event.text
                 and (

@@ -111,6 +111,15 @@ class MessageGateMiddleware(BaseMiddleware):
 
         user_id = user.id
 
+        # 0. Check group message filter: drop casual chatter in group chats immediately
+        if isinstance(event, Message):
+            is_private = not getattr(event, "chat", None) or event.chat.type == "private"
+            if not is_private:
+                from src.bot.utils import is_message_for_bot
+
+                if not is_message_for_bot(event):
+                    return None
+
         # 1. Check temporary spam ban (applies strictly to incoming text messages)
         if isinstance(event, Message) and self.is_user_banned(user_id):
             return None
@@ -228,7 +237,8 @@ class MessageGateMiddleware(BaseMiddleware):
                             "<i>Пожалуйста, не спамьте.</i>"
                         )
                     try:
-                        await event.answer(warning_text, parse_mode="HTML")
+                        if getattr(event, "chat", None) and event.chat.type == "private":
+                            await event.answer(warning_text, parse_mode="HTML")
                     except Exception as e:
                         logger.debug(f"Failed to send spam ban warning: {e}")
                 return None

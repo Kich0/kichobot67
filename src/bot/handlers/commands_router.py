@@ -72,6 +72,10 @@ async def handle_start(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:[💡❓⚠️\u26A0\uFE0F\s])*(?:Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)", flags=2))
 async def handle_help(message: Message) -> None:
     """Handles /help command and help text triggers."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
     try:
         await message.delete()
     except Exception:
@@ -90,6 +94,10 @@ async def handle_help(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:👤\s*)?(?:профиль|менің профилім)", flags=2))
 async def handle_profile(message: Message) -> None:
     """Handles /profile command displaying user details and preferences."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
 
@@ -144,7 +152,9 @@ async def handle_profile(message: Message) -> None:
 
 
 @commands_router.message(Command("schedule"))
-@commands_router.message(F.text.regexp(r"^расписание", flags=2))
+@commands_router.message(F.text.regexp(r"^(?:расписание|кесте|кестесі)(?:\b|\s|$)", flags=2))
+@commands_router.message(F.text.regexp(r"^@(?:\w+bot|kicho1bot)\s+(?:расписание|кесте|кестесі)(?:\b|\s|$)", flags=2))
+@commands_router.message(F.text.regexp(r"^@(?:\w+bot|kicho1bot)$", flags=2))
 async def handle_schedule_command(message: Message) -> None:
     """Handles /schedule and 'расписание' command, opening saved group or teacher schedule."""
     user_id = message.from_user.id if message.from_user else 0
@@ -199,6 +209,10 @@ async def handle_settings(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^🗒\s*(?:Новое расписание|Жаңа кесте)", flags=2))
 async def handle_new_schedule(message: Message) -> None:
     """Handles /new and '🗒 Новое расписание' / '🗒 Жаңа кесте' command, opening student vs teacher picker."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
     is_reply_button = bool(message.text and not message.text.startswith("/"))
     try:
         await message.delete()
@@ -227,6 +241,10 @@ async def handle_new_schedule(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание преподавателя|Оқытушының кестесі)|[Пп]реподаватель|[Оо]қытушы)$"))
 async def handle_teacher_menu(message: Message) -> None:
     """Handles /teacher and '🗓 Расписание преподавателя' / '🗓 Оқытушының кестесі'."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
     is_reply_button = bool(message.text and not message.text.startswith("/"))
     try:
         await message.delete()
@@ -304,6 +322,10 @@ async def handle_teacher_menu(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:🗓\s*(?:Расписание студента|Студенттің кестесі)|[Гг]руппа|[Тт]обы)$"))
 async def handle_group_menu(message: Message) -> None:
     """Handles /group and '🗓 Расписание студента' / '🗓 Студенттің кестесі'."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
     is_reply_button = bool(message.text and not message.text.startswith("/"))
     try:
         await message.delete()
@@ -370,6 +392,9 @@ async def handle_group_menu(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:[ГгТт]|[Гг]руппа|[Тт]обы)(?:\s+(.*))?$"))
 async def handle_group_search_prefix(message: Message) -> None:
     """Handles group search shortcuts with validation."""
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private:
+        return
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     text = (message.text or "").strip()
@@ -423,6 +448,9 @@ async def handle_group_search_prefix(message: Message) -> None:
 @commands_router.message(F.text.regexp(r"^(?:[ПпОо]|[Пп]реподаватель|[Оо]қытушы)(?:\s+(.*))?$"))
 async def handle_teacher_search_prefix(message: Message) -> None:
     """Handles teacher search shortcuts with validation."""
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private:
+        return
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     text = (message.text or "").strip()
@@ -474,7 +502,23 @@ async def handle_teacher_search_prefix(message: Message) -> None:
 @commands_router.message(Command("search"))
 @commands_router.message(F.text.regexp(r"^Поиск", flags=2))
 async def handle_search_help(message: Message) -> None:
-    """Handles /search command explaining smart text search."""
+    """Handles /search command explaining smart text search or running search query."""
+    text = (message.text or "").strip()
+    is_private = not getattr(message, "chat", None) or message.chat.type == "private"
+    if not is_private and not text.startswith("/"):
+        return
+
+    user_id = message.from_user.id if message.from_user else 0
+    lang = await user_service.get_user_language(user_id)
+
+    parts = text.split(maxsplit=1)
+    query = parts[1].strip() if len(parts) > 1 else ""
+    if query:
+        from src.bot.handlers.search_router import handle_text_search
+
+        msg = message.model_copy(update={"text": query})
+        await handle_text_search(msg)
+        return
     user_id = message.from_user.id if message.from_user else 0
     lang = await user_service.get_user_language(user_id)
     await message.answer(t("search_command_content", lang), parse_mode="HTML")

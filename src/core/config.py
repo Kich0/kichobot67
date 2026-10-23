@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     MEDIA_DUMP_CHANNEL_ID: str = Field(default="", description="Channel ID for media dumps")
     LOGGER_TG_TOKEN: str = Field(default="", description="Telegram Token for dedicated logger bot")
     BOT_ID: int = Field(default=0, description="Numeric Telegram ID of the bot")
+    BOT_USERNAME: str = Field(default="kicho1bot", description="Telegram username of the bot")
     BOT_MODE: Literal["polling", "webhook"] = Field(
         default="polling", description="Mode: 'polling' or 'webhook'"
     )
