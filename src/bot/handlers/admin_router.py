@@ -79,6 +79,64 @@ def _format_action_time(dt: datetime | None, fmt: str) -> str:
         return "—"
 
 
+async def _resolve_user_group_name(group_val: Any) -> str:
+    """Resolves group name by ID or name string."""
+    if not group_val or str(group_val).strip() in ("", "0", "None"):
+        return "—"
+    try:
+        from src.database.models.group import Group
+
+        raw_str = str(group_val).strip()
+        num_g = int(raw_str) if raw_str.isdigit() else None
+        grp = None
+        if num_g is not None:
+            grp = await Group.find_one({"id": num_g}) or await Group.find_one({"groupId": num_g})
+        if not grp:
+            grp = await Group.find_one({"name": raw_str})
+        if grp and grp.name:
+            return grp.name
+        return raw_str
+    except Exception:
+        return str(group_val)
+
+
+async def _resolve_user_teacher_name(teacher_val: Any) -> str:
+    """Resolves teacher display name by ID or name string."""
+    if not teacher_val or str(teacher_val).strip() in ("", "0", "None"):
+        return "—"
+    try:
+        from src.database.models.teacher import Teacher
+        from src.services.teacher_directory import teacher_directory_service
+
+        raw_str = str(teacher_val).strip()
+        num_t = int(raw_str) if raw_str.isdigit() else None
+        tch = None
+        if num_t is not None:
+            tch = (
+                await Teacher.find_one({"id": num_t})
+                or await Teacher.find_one({"teacher_id": num_t})
+            )
+        if not tch:
+            tch = (
+                await Teacher.find_one({"name": raw_str})
+                or await Teacher.find_one({"fullName": raw_str})
+            )
+
+        if tch:
+            return tch.full_name or tch.name
+        if num_t is not None:
+            prof = teacher_directory_service.find_by_id(num_t)
+            if prof:
+                return prof.get("fullName") or prof.get("name") or raw_str
+        else:
+            prof = teacher_directory_service.find_match(raw_str)
+            if prof:
+                return prof.get("fullName") or prof.get("name") or raw_str
+        return raw_str
+    except Exception:
+        return str(teacher_val)
+
+
 async def _check_admin(message: Message) -> bool:
     """Verifies that the message sender has admin privileges."""
     user_id = message.from_user.id if message.from_user else 0
@@ -202,14 +260,17 @@ async def handle_get_user(message: Message) -> None:
     clean_username = (target_user.username or "").strip().lstrip("@")
     username_display = f"@{escape_html(clean_username)}" if clean_username else "отсутствует"
 
+    group_display = await _resolve_user_group_name(target_user.group)
+    teacher_display = await _resolve_user_teacher_name(target_user.teacher)
+
     user_card = (
         f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ:</b>\n\n"
         f"• <b>ID:</b> <code>{target_user.user_id}</code>\n"
-        f"• <b>Ник:</b> {username_display}\n"
+        f"• <b>Username:</b> {username_display}\n"
         f"• <b>Имя:</b> {user_link}\n"
         f"• <b>Язык:</b> {escape_html(target_user.language or 'ru')}\n"
-        f"• <b>Группа:</b> {escape_html(target_user.group or '—')}\n"
-        f"• <b>Преподаватель:</b> {escape_html(target_user.teacher or '—')}\n"
+        f"• <b>Группа:</b> {escape_html(group_display)}\n"
+        f"• <b>Преподаватель:</b> {escape_html(teacher_display)}\n"
         f"• <b>Админ:</b> {'Да' if target_user.is_admin else 'Нет'}\n\n"
         f"📋 <b>Последние 5 действий:</b>\n{actions_block}"
     )
