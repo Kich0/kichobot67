@@ -183,13 +183,19 @@ async def handle_get_user(message: Message) -> None:
 
     actions_block = "\n".join(action_lines) if action_lines else "<i>Нет недавних действий</i>"
 
+    raw_name = " ".join(f"{target_user.first_name or ''} {target_user.last_name or ''}".split())
+    name_display = escape_html(raw_name) if raw_name else f"ID: {target_user.user_id}"
+    user_link = f'<a href="tg://user?id={target_user.user_id}">{name_display}</a>'
+    clean_username = (target_user.username or "").strip().lstrip("@")
+    username_display = f"@{escape_html(clean_username)}" if clean_username else "отсутствует"
+
     user_card = (
         f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ:</b>\n\n"
         f"• <b>ID:</b> <code>{target_user.user_id}</code>\n"
-        f"• <b>Ник:</b> @{escape_html(target_user.username or 'отсутствует')}\n"
-        f"• <b>Имя:</b> {escape_html(target_user.first_name or '—')} {escape_html(target_user.last_name or '')}\n"
-        f"• <b>Язык:</b> {target_user.language or 'ru'}\n"
-        f"• <b>Группа:</b> {target_user.group or '—'}\n"
+        f"• <b>Ник:</b> {username_display}\n"
+        f"• <b>Имя:</b> {user_link}\n"
+        f"• <b>Язык:</b> {escape_html(target_user.language or 'ru')}\n"
+        f"• <b>Группа:</b> {escape_html(target_user.group or '—')}\n"
         f"• <b>Преподаватель:</b> {escape_html(target_user.teacher or '—')}\n"
         f"• <b>Админ:</b> {'Да' if target_user.is_admin else 'Нет'}\n\n"
         f"📋 <b>Последние 5 действий:</b>\n{actions_block}"
@@ -232,11 +238,15 @@ async def handle_user_logs(message: Message) -> None:
         .to_list()
     )
 
+    raw_user_name = " ".join(f"{target_user.first_name or ''} {target_user.last_name or ''}".split())
+    user_display = escape_html(raw_user_name) if raw_user_name else f"ID: {target_user.user_id}"
+    user_link = f'<a href="tg://user?id={target_user.user_id}">{user_display}</a>'
+
     if not actions:
-        await message.answer(f"Логи для пользователя {target_user.user_id} пусты.")
+        await message.answer(f"Логи для пользователя {user_link} пусты.", parse_mode="HTML")
         return
 
-    lines = [f"📋 <b>Логи пользователя {target_user.user_id} (последние {len(actions)}):</b>\n"]
+    lines = [f"📋 <b>Логи пользователя {user_link} (последние {len(actions)}):</b>\n"]
     for a in actions:
         t_str = a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "—"
         lines.append(f"• <code>{t_str}</code> [{escape_html(a.action)}]: {escape_html(a.text)}")
