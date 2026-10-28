@@ -1473,6 +1473,31 @@ async def get_or_fetch_student_schedule(
     return cached
 
 
+async def _get_ad_block_for_viewer(viewer_user_id: int | None) -> tuple[str, tuple[str, str] | None]:
+    """Returns (ad_text, ad_button_tuple) ONLY if viewer is admin (testing mode), else ('', None)."""
+    if not viewer_user_id:
+        return "", None
+    try:
+        from src.services.user_service import user_service
+
+        is_adm = (viewer_user_id == 1516988645) or await user_service.is_admin(viewer_user_id)
+        if not is_adm:
+            return "", None
+    except Exception:
+        if viewer_user_id != 1516988645:
+            return "", None
+
+    ad_text = (
+        "────────────────────\n"
+        "🌯 <b>Doner House</b>\n"
+        "📍 <a href=\"https://2gis.kz/karaganda/geo/70030076250721502\">Адрес</a>\n"
+        "Сочные донеры, бургеры и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
+        "────────────────────\n\n"
+    )
+    ad_btn = ("🌯 Открыть Doner House в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70030076250721502")
+    return ad_text, ad_btn
+
+
 async def build_student_day_schedule_view(
     cached: dict[str, Any],
     group_id: int,
@@ -1481,6 +1506,7 @@ async def build_student_day_schedule_view(
     ui_lang: str,
     group_name: str | None = None,
     is_from_cache: bool | None = None,
+    viewer_user_id: int | None = None,
 ) -> tuple[str, Any]:
     """Builds formatted message text and pagination markup for student schedule."""
     days = cached.get("data", [])
@@ -1608,10 +1634,11 @@ async def build_student_day_schedule_view(
         f"{t('official_site_compare', ui_lang)}\n"
     )
 
-    full_text = group_header + body + footer
+    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
+    full_text = group_header + body + ad_text + footer
 
     pre_callback = f"schedule|{sch_lang}|{group_id}"
-    markup = get_schedule_pagination_keyboard(pre_callback, day_num, back_callback, ui_lang)
+    markup = get_schedule_pagination_keyboard(pre_callback, day_num, back_callback, ui_lang, ad_button=ad_btn)
     return full_text, markup
 
 
@@ -1623,6 +1650,7 @@ async def render_student_day_schedule_message(
     ui_lang: str,
     is_edit: bool = False,
     group_name: str | None = None,
+    viewer_user_id: int | None = None,
 ) -> None:
     """Helper to render student schedule directly into a Message."""
     cached = await get_or_fetch_student_schedule(group_id, sch_lang, group_name=group_name)
@@ -1638,8 +1666,9 @@ async def render_student_day_schedule_message(
             await target_msg.answer(text, reply_markup=markup, parse_mode="HTML")
         return
 
+    viewer_id = viewer_user_id or (target_msg.from_user.id if getattr(target_msg, "from_user", None) else None)
     text, markup = await build_student_day_schedule_view(
-        cached, group_id, sch_lang, day_num, ui_lang, group_name=group_name
+        cached, group_id, sch_lang, day_num, ui_lang, group_name=group_name, viewer_user_id=viewer_id
     )
     if is_edit:
         await target_msg.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
@@ -1701,6 +1730,7 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
         is_night = False
 
     # 1. Refresh button clicked at night (01:00 - 06:45): freeze schedule, do NOT hit API, keep honest timestamp
+    viewer_id = call.from_user.id if call.from_user else None
     if is_refresh and is_night and cached:
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):
@@ -1708,7 +1738,7 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
         badge = "🔵" if cached.get("is_from_db") else "🟣"
         target_data["schedule_badge"] = badge
         text, markup = await build_student_day_schedule_view(
-            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache
+            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache, viewer_user_id=viewer_id
         )
         if call.message:
             try:
@@ -1727,7 +1757,7 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
         badge = "🔵" if cached.get("is_from_db") else "🟣"
         target_data["schedule_badge"] = badge
         text, markup = await build_student_day_schedule_view(
-            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache
+            cached, group_id, sch_lang, day_num, ui_lang, is_from_cache=from_cache, viewer_user_id=viewer_id
         )
         if call.message:
             try:
@@ -1755,7 +1785,9 @@ async def handle_student_schedule_view(call: CallbackQuery, data: dict[str, Any]
     badge = "🔵" if cached.get("is_from_db") else ("🟣" if cached.get("is_from_cache") else "🟢")
     target_data["schedule_badge"] = badge
 
-    text, markup = await build_student_day_schedule_view(cached, group_id, sch_lang, day_num, ui_lang)
+    text, markup = await build_student_day_schedule_view(
+        cached, group_id, sch_lang, day_num, ui_lang, viewer_user_id=viewer_id
+    )
     if call.message:
         try:
             await call.message.edit_text(
@@ -2210,6 +2242,7 @@ async def build_teacher_day_text_view(
     ui_lang: str,
     teacher_name: str | None = None,
     is_from_cache: bool | None = None,
+    viewer_user_id: int | None = None,
 ) -> tuple[str, Any]:
     """Builds formatted message text and pagination markup for teacher text schedule."""
     days = cached.get("data", [])
@@ -2299,8 +2332,9 @@ async def build_teacher_day_text_view(
         f"{t('official_site_compare', ui_lang)}\n"
     )
 
-    full_text = header + body + footer
-    markup = get_teacher_text_keyboard(canonical_id, day_num, department_id=dept_id, lang=ui_lang)
+    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
+    full_text = header + body + ad_text + footer
+    markup = get_teacher_text_keyboard(canonical_id, day_num, department_id=dept_id, lang=ui_lang, ad_button=ad_btn)
     return full_text, markup
 
 
@@ -2311,6 +2345,7 @@ async def render_teacher_day_schedule_message(
     ui_lang: str,
     is_edit: bool = False,
     teacher_name: str | None = None,
+    viewer_user_id: int | None = None,
 ) -> None:
     """Helper to render teacher text schedule directly into a Message."""
     try:
@@ -2332,8 +2367,14 @@ async def render_teacher_day_schedule_message(
             await target_msg.answer(text, reply_markup=markup, parse_mode="HTML")
         return
 
+    viewer_id = viewer_user_id or (target_msg.from_user.id if getattr(target_msg, "from_user", None) else None)
     text, markup = await build_teacher_day_text_view(
-        cached, teacher_id, day_num, ui_lang, teacher_name=teacher_name
+        cached,
+        teacher_id,
+        day_num,
+        ui_lang,
+        teacher_name=teacher_name,
+        viewer_user_id=viewer_id,
     )
     if is_edit:
         await target_msg.edit_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
@@ -2716,7 +2757,7 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
         badge = "🔵" if cached.get("is_from_db") else "🟣"
         target_data["schedule_badge"] = badge
         text, markup = await build_teacher_day_text_view(
-            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache
+            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache, viewer_user_id=user_id
         )
         if call.message:
             try:
@@ -2740,7 +2781,7 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
         badge = "🔵" if cached.get("is_from_db") else "🟣"
         target_data["schedule_badge"] = badge
         text, markup = await build_teacher_day_text_view(
-            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache
+            cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, is_from_cache=from_cache, viewer_user_id=user_id
         )
         if call.message:
             try:
@@ -2782,7 +2823,9 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
     badge = "🔵" if cached.get("is_from_db") else ("🟣" if cached.get("is_from_cache") else "🟢")
     target_data["schedule_badge"] = badge
 
-    text, markup = await build_teacher_day_text_view(cached, canonical_id, day_num, ui_lang, teacher_name=tch_name)
+    text, markup = await build_teacher_day_text_view(
+        cached, canonical_id, day_num, ui_lang, teacher_name=tch_name, viewer_user_id=user_id
+    )
     if call.message:
         if call.message.photo:
             try:

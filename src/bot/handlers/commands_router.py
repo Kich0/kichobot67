@@ -178,6 +178,7 @@ async def handle_schedule_command(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
+            viewer_user_id=user_id,
         )
         return
 
@@ -188,6 +189,7 @@ async def handle_schedule_command(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
+            viewer_user_id=user_id,
         )
         return
 

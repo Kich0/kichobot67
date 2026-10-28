@@ -378,23 +378,25 @@ def get_schedule_pagination_keyboard(
     day_number: int,
     back_callback: str,
     lang: str = "ru",
+    ad_button: tuple[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Day-by-day navigation keyboard: ◀️, 🔄, ▶️ and 🔙."""
+    """Day-by-day navigation keyboard: ◀️, 🔄, ▶️, optional ad button, and 🔙."""
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"{pre_callback}|{prev_day}"),
-                InlineKeyboardButton(text="🔄", callback_data=f"refresh{pre_callback}|{day_number}"),
-                InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"{pre_callback}|{next_day}"),
-            ],
-            [
-                InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_callback)
-            ],
-        ]
-    )
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"{pre_callback}|{prev_day}"),
+            InlineKeyboardButton(text="🔄", callback_data=f"refresh{pre_callback}|{day_number}"),
+            InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"{pre_callback}|{next_day}"),
+        ],
+    ]
+    if ad_button:
+        btn_text, btn_url = ad_button
+        rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
+    rows.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _safe_teacher_cb_id(raw_id: Any, fallback_name: str = "") -> int | str:
@@ -466,43 +468,42 @@ def get_teacher_text_keyboard(
     day_number: int = 0,
     department_id: int | str = 0,
     lang: str = "ru",
+    ad_button: tuple[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, back."""
+    """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, optional ad button, back."""
     cb_tid = _safe_teacher_cb_id(teacher_id)
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"◀️ {t('go_back', lang)}",
-                    callback_data=f"TeacherSchedule|{cb_tid}|{prev_day}",
-                ),
-                InlineKeyboardButton(
-                    text="🔄",
-                    callback_data=f"refreshTeacherSchedule|{cb_tid}|{day_number}",
-                ),
-                InlineKeyboardButton(
-                    text=f"{t('go_forward', lang)} ▶️",
-                    callback_data=f"TeacherSchedule|{cb_tid}|{next_day}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
-                    callback_data=f"teacherImg|{cb_tid}|{day_number}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=t("go_prev_menu", lang),
-                    callback_data=back_cb,
-                )
-            ],
-        ]
-    )
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=f"◀️ {t('go_back', lang)}",
+                callback_data=f"TeacherSchedule|{cb_tid}|{prev_day}",
+            ),
+            InlineKeyboardButton(
+                text="🔄",
+                callback_data=f"refreshTeacherSchedule|{cb_tid}|{day_number}",
+            ),
+            InlineKeyboardButton(
+                text=f"{t('go_forward', lang)} ▶️",
+                callback_data=f"TeacherSchedule|{cb_tid}|{next_day}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
+                callback_data=f"teacherImg|{cb_tid}|{day_number}",
+            )
+        ],
+    ]
+    if ad_button:
+        btn_text, btn_url = ad_button
+        rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
+    rows.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_cb)])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_search_results_keyboard(

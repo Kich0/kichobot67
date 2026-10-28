@@ -37,6 +37,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
 from src.services.buketov_api import buketov_api_service
 from src.services.schedule_adapter import schedule_api_adapter
@@ -64,6 +65,18 @@ def escape_html(text: Any) -> str:
     if not text:
         return ""
     return html.escape(str(text))
+
+
+def _format_action_time(dt: datetime | None, fmt: str) -> str:
+    """Formats datetime in Asia/Almaty (UTC+5) timezone."""
+    if not isinstance(dt, datetime):
+        return "—"
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TIMEZONE).strftime(fmt)
+    except Exception:
+        return "—"
 
 
 async def _check_admin(message: Message) -> bool:
@@ -178,8 +191,8 @@ async def handle_get_user(message: Message) -> None:
 
     action_lines = []
     for a in recent_actions:
-        t_str = a.created_at.strftime("%d.%m %H:%M") if a.created_at else "—"
-        action_lines.append(f"• <i>{t_str}</i> [{escape_html(a.action)}]: {escape_html(a.text)}")
+        t_str = _format_action_time(a.created_at, "%d.%m %H:%M")
+        action_lines.append(f"• <i>{t_str}</i>: {escape_html(a.text)}")
 
     actions_block = "\n".join(action_lines) if action_lines else "<i>Нет недавних действий</i>"
 
@@ -248,8 +261,8 @@ async def handle_user_logs(message: Message) -> None:
 
     lines = [f"📋 <b>Логи пользователя {user_link} (последние {len(actions)}):</b>\n"]
     for a in actions:
-        t_str = a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "—"
-        lines.append(f"• <code>{t_str}</code> [{escape_html(a.action)}]: {escape_html(a.text)}")
+        t_str = _format_action_time(a.created_at, "%Y-%m-%d %H:%M:%S")
+        lines.append(f"• <code>{t_str}</code>: {escape_html(a.text)}")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
@@ -1094,4 +1107,5 @@ __all__ = [
     "handle_unpaywall_command",
     "handle_user_logs",
     "handle_users_count",
+    "_format_action_time",
 ]
