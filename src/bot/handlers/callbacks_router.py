@@ -1129,7 +1129,7 @@ async def get_or_fetch_student_schedule(
             grp_name = group_name or (meta.get("name") if meta else None)
             fac_val = meta.get("faculty") if meta else None
             is_perm_empty = _is_college_group(grp_name, fac_val)
-            if is_night and not is_refresh:
+            if is_night:
                 # Night cache freeze: do NOT query external Buketov API, fetch directly from MongoDB Schedule
                 try:
                     from src.database.models.schedule import Schedule
@@ -1177,6 +1177,27 @@ async def get_or_fetch_student_schedule(
                         return cached_kz if norm_lang == "kz" else cached_ru
                 except Exception as db_err:
                     logger.debug(f"Night DB lookup for group {group_id} failed: {db_err}")
+
+                # If no schedule in DB at night, return empty fallback WITHOUT touching external API
+                empty_ru = schedule_api_adapter.adapt_group_schedule([], "ru")
+                empty_kz = schedule_api_adapter.adapt_group_schedule([], "kz")
+                cached_ru = {
+                    "data": empty_ru,
+                    "timestamp": now,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                    "is_empty": True,
+                }
+                cached_kz = {
+                    "data": empty_kz,
+                    "timestamp": now,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                    "is_empty": True,
+                }
+                student_schedule_cache[f"{group_id}_ru"] = cached_ru
+                student_schedule_cache[f"{group_id}_kz"] = cached_kz
+                return cached_kz if norm_lang == "kz" else cached_ru
 
             if meta and meta.get("permanent_empty") is True:
                 is_perm_empty = True
@@ -1966,8 +1987,8 @@ async def get_or_fetch_teacher_text_schedule(
                     cached["is_from_cache"] = True
                 return cached
 
-            if is_night and not is_refresh:
-                # Night cache freeze: do NOT query external Buketov API; fetch directly from MongoDB TeacherSchedule
+            if is_night:
+                # Night cache freeze: do NOT query external Buketov API under any circumstances; fetch directly from MongoDB TeacherSchedule
                 try:
                     from src.database.models.teacher_schedule import TeacherSchedule
 
@@ -2020,6 +2041,28 @@ async def get_or_fetch_teacher_text_schedule(
                         return cached_kz if norm_lang == "kz" else cached_ru
                 except Exception as db_err:
                     logger.debug(f"Night DB lookup for teacher {canonical_id} failed: {db_err}")
+
+                # If no schedule in DB at night, return empty fallback WITHOUT touching external API
+                empty_ru = schedule_api_adapter.adapt_teacher_schedule([], "ru")
+                empty_kz = schedule_api_adapter.adapt_teacher_schedule([], "kz")
+                cached_ru = {
+                    "data": empty_ru,
+                    "timestamp": now,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                }
+                cached_kz = {
+                    "data": empty_kz,
+                    "timestamp": now,
+                    "is_from_db": True,
+                    "is_from_cache": False,
+                }
+                for base in (canonical_id, teacher_id, tch_name, lookup_name):
+                    if not base:
+                        continue
+                    teacher_text_cache[f"{base}_ru"] = cached_ru
+                    teacher_text_cache[f"{base}_kz"] = cached_kz
+                return cached_kz if norm_lang == "kz" else cached_ru
 
             if lookup_name:
                 try:
