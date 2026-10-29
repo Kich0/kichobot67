@@ -1510,12 +1510,12 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | None) -> tuple[str, tup
 
     ad_text = (
         "────────────────────\n"
-        "🌯 <b>Doner House</b>\n"
-        "📍 <a href=\"https://2gis.kz/karaganda/geo/70030076250721502\">Адрес</a>\n"
-        "Сочные донеры, бургеры и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
+        "🌯 <b>Донер на Юге</b>\n"
+        "📍 <a href=\"https://2gis.kz/karaganda/geo/70000001117430885\">Адрес</a>\n"
+        "Сочные донеры, снеки и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("🌯 Открыть Doner House в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70030076250721502")
+    ad_btn = ("🌯 Открыть Донер на Юге в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70000001117430885")
     return ad_text, ad_btn
 
 
