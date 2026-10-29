@@ -386,9 +386,9 @@ def get_schedule_pagination_keyboard(
     next_day = day_number + 1 if day_number < 5 else 0
 
     if is_halloween:
-        back_text = f"◀️ 🦇 {t('go_back', lang)}"
-        refresh_text = "🔄🎃"
-        fwd_text = f"{t('go_forward', lang)} 🦇 ▶️"
+        back_text = f"🦇 {t('go_back', lang)}"
+        refresh_text = "🎃"
+        fwd_text = f"{t('go_forward', lang)} 🦇"
         prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
     else:
         back_text = f"◀️ {t('go_back', lang)}"
@@ -490,9 +490,9 @@ def get_teacher_text_keyboard(
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
 
     if is_halloween:
-        back_text = f"◀️ 🦇 {t('go_back', lang)}"
-        refresh_text = "🔄🎃"
-        fwd_text = f"{t('go_forward', lang)} 🦇 ▶️"
+        back_text = f"🦇 {t('go_back', lang)}"
+        refresh_text = "🎃"
+        fwd_text = f"{t('go_forward', lang)} 🦇"
         img_view_text = f"🖼 🎃 {t('teacher_img_view', lang, default='Таблица недели')}"
         prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
     else:

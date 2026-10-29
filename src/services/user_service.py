@@ -183,17 +183,28 @@ class UserService:
         except Exception as e:
             logger.debug(f"Failed to save user schedule preference: {e}")
 
-    async def is_admin(self, user_id: int) -> bool:
+    async def is_admin(self, user_id: int | str | None) -> bool:
         """Checks if a user has administrator rights."""
+        if not user_id:
+            return False
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        # Owner / Developer has unconditional administrator privileges
+        if uid == 1516988645:
+            return True
+
         from src.core.config import settings
 
-        if settings.BOT_ID and user_id == settings.BOT_ID:
+        if settings.BOT_ID and uid == settings.BOT_ID:
             return True
 
         try:
             from src.database.models.user import User
 
-            user = await User.find_one({"userId": user_id})
+            user = await User.find_one({"userId": uid})
             if user and user.is_admin:
                 return True
         except Exception:
