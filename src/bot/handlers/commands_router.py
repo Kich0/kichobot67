@@ -299,6 +299,7 @@ async def handle_teacher_menu(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             teacher_name=tch_name,
+            viewer_user_id=user_id,
         )
         return
 
@@ -491,6 +492,7 @@ async def handle_teacher_search_prefix(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             teacher_name=t_name,
+            viewer_user_id=user_id,
         )
         return
 

@@ -1494,18 +1494,29 @@ async def get_or_fetch_student_schedule(
     return cached
 
 
-async def _get_ad_block_for_viewer(viewer_user_id: int | None) -> tuple[str, tuple[str, str] | None]:
-    """Returns (ad_text, ad_button_tuple) ONLY if viewer is admin (testing mode), else ('', None)."""
+# Advertisement banner toggle: temporarily disabled while negotiations are ongoing.
+# When enabled (_AD_ENABLED = True), the ad preview is shown strictly to admin/owner (1516988645).
+_AD_ENABLED: bool = False
+
+
+async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[str, tuple[str, str] | None]:
+    """Returns (ad_text, ad_button_tuple) ONLY if viewer is admin and ads are enabled, else ('', None)."""
+    if not _AD_ENABLED:
+        return "", None
     if not viewer_user_id:
         return "", None
     try:
         from src.services.user_service import user_service
 
-        is_adm = (viewer_user_id == 1516988645) or await user_service.is_admin(viewer_user_id)
+        uid = int(viewer_user_id)
+        is_adm = (uid == 1516988645) or await user_service.is_admin(uid)
         if not is_adm:
             return "", None
     except Exception:
-        if viewer_user_id != 1516988645:
+        try:
+            if int(viewer_user_id) != 1516988645:
+                return "", None
+        except Exception:
             return "", None
 
     ad_text = (
@@ -1519,12 +1530,22 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | None) -> tuple[str, tup
     return ad_text, ad_btn
 
 
+# Halloween theme configuration: enabled for all users.
+HALLOWEEN_THEME_ENABLED: bool = True
 HALLOWEEN_PREVIEW_USER_IDS: set[int] = {1516988645}
 
 
-def is_halloween_preview_user(user_id: int | None) -> bool:
-    """Checks whether the viewer is authorized to see the experimental Halloween theme."""
-    return bool(user_id and user_id in HALLOWEEN_PREVIEW_USER_IDS)
+def is_halloween_preview_user(user_id: int | str | None = None) -> bool:
+    """Checks whether Halloween theme is active for the viewer or globally for all users."""
+    if not HALLOWEEN_THEME_ENABLED:
+        if not user_id:
+            return False
+        try:
+            return int(user_id) in HALLOWEEN_PREVIEW_USER_IDS
+        except (ValueError, TypeError):
+            return False
+    return bool(user_id)
+
 
 
 async def build_student_day_schedule_view(
@@ -3005,9 +3026,11 @@ async def handle_unknown_callback(call: CallbackQuery) -> None:
 
 
 __all__ = [
+    "_AD_ENABLED",
     "_bg_persist_empty_student_schedule",
     "_bg_persist_student_schedule",
     "_bg_persist_teacher_schedule",
+    "_get_ad_block_for_viewer",
     "_has_any_lessons",
     "_is_college_group",
     "_known_persisted_empty_groups",
@@ -3022,6 +3045,8 @@ __all__ = [
     "get_current_day_number",
     "get_or_fetch_student_schedule",
     "get_or_fetch_teacher_text_schedule",
+    "HALLOWEEN_THEME_ENABLED",
+    "is_halloween_preview_user",
     "render_student_day_schedule_message",
     "render_teacher_day_schedule_message",
     "resolve_teacher_identity",
