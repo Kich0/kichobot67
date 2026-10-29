@@ -1530,13 +1530,26 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[st
     return ad_text, ad_btn
 
 
-# Halloween theme configuration: enabled for all users.
+# Halloween theme configuration: active until November 7, 2026 04:00 AM (Asia/Almaty, UTC+5).
+# After this exact moment, the bot automatically and seamlessly reverts to the standard academic design.
+HALLOWEEN_EXPIRATION_DATETIME = datetime(2026, 11, 7, 4, 0, 0, tzinfo=TIMEZONE)
 HALLOWEEN_THEME_ENABLED: bool = True
 HALLOWEEN_PREVIEW_USER_IDS: set[int] = {1516988645}
 
 
+def is_halloween_active_kz(target_dt: datetime | None = None) -> bool:
+    """Checks whether current Asia/Almaty time is within the active Halloween event window (before Nov 7, 04:00 AM)."""
+    now = target_dt or datetime.now(TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=TIMEZONE)
+    return now < HALLOWEEN_EXPIRATION_DATETIME
+
+
 def is_halloween_preview_user(user_id: int | str | None = None) -> bool:
     """Checks whether Halloween theme is active for the viewer or globally for all users."""
+    if not is_halloween_active_kz():
+        return False
+
     if not HALLOWEEN_THEME_ENABLED:
         if not user_id:
             return False
@@ -3045,7 +3058,9 @@ __all__ = [
     "get_current_day_number",
     "get_or_fetch_student_schedule",
     "get_or_fetch_teacher_text_schedule",
+    "HALLOWEEN_EXPIRATION_DATETIME",
     "HALLOWEEN_THEME_ENABLED",
+    "is_halloween_active_kz",
     "is_halloween_preview_user",
     "render_student_day_schedule_message",
     "render_teacher_day_schedule_message",
