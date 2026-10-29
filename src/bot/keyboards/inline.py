@@ -379,22 +379,34 @@ def get_schedule_pagination_keyboard(
     back_callback: str,
     lang: str = "ru",
     ad_button: tuple[str, str] | None = None,
+    is_halloween: bool = False,
 ) -> InlineKeyboardMarkup:
     """Day-by-day navigation keyboard: ◀️, 🔄, ▶️, optional ad button, and 🔙."""
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
 
+    if is_halloween:
+        back_text = f"◀️ 🦇 {t('go_back', lang)}"
+        refresh_text = "🔄🎃"
+        fwd_text = f"{t('go_forward', lang)} 🦇 ▶️"
+        prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
+    else:
+        back_text = f"◀️ {t('go_back', lang)}"
+        refresh_text = "🔄"
+        fwd_text = f"{t('go_forward', lang)} ▶️"
+        prev_menu_text = t("go_prev_menu", lang)
+
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text=f"◀️ {t('go_back', lang)}", callback_data=f"{pre_callback}|{prev_day}"),
-            InlineKeyboardButton(text="🔄", callback_data=f"refresh{pre_callback}|{day_number}"),
-            InlineKeyboardButton(text=f"{t('go_forward', lang)} ▶️", callback_data=f"{pre_callback}|{next_day}"),
+            InlineKeyboardButton(text=back_text, callback_data=f"{pre_callback}|{prev_day}"),
+            InlineKeyboardButton(text=refresh_text, callback_data=f"refresh{pre_callback}|{day_number}"),
+            InlineKeyboardButton(text=fwd_text, callback_data=f"{pre_callback}|{next_day}"),
         ],
     ]
     if ad_button:
         btn_text, btn_url = ad_button
         rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
-    rows.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_callback)])
+    rows.append([InlineKeyboardButton(text=prev_menu_text, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -469,6 +481,7 @@ def get_teacher_text_keyboard(
     department_id: int | str = 0,
     lang: str = "ru",
     ad_button: tuple[str, str] | None = None,
+    is_halloween: bool = False,
 ) -> InlineKeyboardMarkup:
     """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, optional ad button, back."""
     cb_tid = _safe_teacher_cb_id(teacher_id)
@@ -476,24 +489,37 @@ def get_teacher_text_keyboard(
     next_day = day_number + 1 if day_number < 5 else 0
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
 
+    if is_halloween:
+        back_text = f"◀️ 🦇 {t('go_back', lang)}"
+        refresh_text = "🔄🎃"
+        fwd_text = f"{t('go_forward', lang)} 🦇 ▶️"
+        img_view_text = f"🖼 🎃 {t('teacher_img_view', lang, default='Таблица недели')}"
+        prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
+    else:
+        back_text = f"◀️ {t('go_back', lang)}"
+        refresh_text = "🔄"
+        fwd_text = f"{t('go_forward', lang)} ▶️"
+        img_view_text = f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}"
+        prev_menu_text = t("go_prev_menu", lang)
+
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
-                text=f"◀️ {t('go_back', lang)}",
+                text=back_text,
                 callback_data=f"TeacherSchedule|{cb_tid}|{prev_day}",
             ),
             InlineKeyboardButton(
-                text="🔄",
+                text=refresh_text,
                 callback_data=f"refreshTeacherSchedule|{cb_tid}|{day_number}",
             ),
             InlineKeyboardButton(
-                text=f"{t('go_forward', lang)} ▶️",
+                text=fwd_text,
                 callback_data=f"TeacherSchedule|{cb_tid}|{next_day}",
             ),
         ],
         [
             InlineKeyboardButton(
-                text=f"🖼 {t('teacher_img_view', lang, default='Таблица недели')}",
+                text=img_view_text,
                 callback_data=f"teacherImg|{cb_tid}|{day_number}",
             )
         ],
@@ -501,7 +527,7 @@ def get_teacher_text_keyboard(
     if ad_button:
         btn_text, btn_url = ad_button
         rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
-    rows.append([InlineKeyboardButton(text=t("go_prev_menu", lang), callback_data=back_cb)])
+    rows.append([InlineKeyboardButton(text=prev_menu_text, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

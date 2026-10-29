@@ -134,6 +134,7 @@ async def handle_text_search(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             group_name=g_name,
+            viewer_user_id=user_id,
         )
         return
 
@@ -171,6 +172,7 @@ async def handle_text_search(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             teacher_name=t_name,
+            viewer_user_id=user_id,
         )
         return
 

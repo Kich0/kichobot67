@@ -1519,6 +1519,14 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | None) -> tuple[str, tup
     return ad_text, ad_btn
 
 
+HALLOWEEN_PREVIEW_USER_IDS: set[int] = {1516988645}
+
+
+def is_halloween_preview_user(user_id: int | None) -> bool:
+    """Checks whether the viewer is authorized to see the experimental Halloween theme."""
+    return bool(user_id and user_id in HALLOWEEN_PREVIEW_USER_IDS)
+
+
 async def build_student_day_schedule_view(
     cached: dict[str, Any],
     group_id: int,
@@ -1619,47 +1627,96 @@ async def build_student_day_schedule_view(
         except Exception:
             pass
 
-    if group_age:
-        group_header = (
-            f"{t('group_and_year', ui_lang, groupName=grp_name, groupYear=group_age)}\n"
-            f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+    is_halloween = is_halloween_preview_user(viewer_user_id)
+
+    if is_halloween:
+        if group_age:
+            group_header = (
+                f"🎃 Группа: {grp_name} | 🕯️ Курс: {group_age}\n"
+                if ui_lang not in ("kz", "каз")
+                else f"🎃 Топ: {grp_name} | 🕯️ Курс: {group_age}\n"
+            )
+            group_header += f"🕸️ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+        else:
+            group_header = (
+                f"🎃 <b>{grp_name}</b>\n"
+                f"🕸️ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+            )
+
+        if not active_subjects:
+            vac_text = t("vacation", ui_lang)
+            vac_clean = vac_text.replace("🎉", "👻") if "🎉" in vac_text else f"👻 {vac_text}"
+            body = f"<b>{vac_clean}</b>\n\n"
+        else:
+            items = []
+            for s in active_subjects:
+                s_name = s.get("subject", "").strip() if isinstance(s, dict) else getattr(s, "subject", "").strip()
+                s_time = s.get("time", "") if isinstance(s, dict) else getattr(s, "time", "")
+                if s_name.startswith("📚"):
+                    clean_s = s_name.replace("📚", "🎃", 1)
+                else:
+                    clean_s = f"🎃 {s_name}"
+                clean_s = clean_s.replace("\n📚 ", "\n🎃 ")
+                items.append(f"🦇 {s_time}\n{clean_s}")
+            body = "\n\n".join(items) + "\n\n"
+
+        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+        elapsed = format_elapsed_time(
+            cached["timestamp"],
+            ui_lang,
+            is_from_db=cached.get("is_from_db", False),
+            is_from_cache=from_cache,
+        )
+        clock = format_timestamp_clock(cached["timestamp"])
+        footer = (
+            f"🕯️ <i><b>{elapsed} || {clock}</b></i>\n"
+            f"{t('for_help', ui_lang)}\n"
+            f"{t('official_site_compare', ui_lang)}\n"
         )
     else:
-        group_header = (
-            f"👥 <b>{grp_name}</b>\n"
-            f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+        if group_age:
+            group_header = (
+                f"{t('group_and_year', ui_lang, groupName=grp_name, groupYear=group_age)}\n"
+                f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+            )
+        else:
+            group_header = (
+                f"👥 <b>{grp_name}</b>\n"
+                f"📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+            )
+
+        if not active_subjects:
+            body = f"<b>{t('vacation', ui_lang)}</b>\n\n"
+        else:
+            items = []
+            for s in active_subjects:
+                s_name = s.get("subject", "").strip() if isinstance(s, dict) else getattr(s, "subject", "").strip()
+                s_time = s.get("time", "") if isinstance(s, dict) else getattr(s, "time", "")
+                clean_s = s_name if s_name.startswith("📚") else f"📚 {s_name}"
+                items.append(f"⌚️ {s_time}\n{clean_s}")
+            body = "\n\n".join(items) + "\n\n"
+
+        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+        elapsed = format_elapsed_time(
+            cached["timestamp"],
+            ui_lang,
+            is_from_db=cached.get("is_from_db", False),
+            is_from_cache=from_cache,
         )
-
-    if not active_subjects:
-        body = f"<b>{t('vacation', ui_lang)}</b>\n\n"
-    else:
-        items = []
-        for s in active_subjects:
-            s_name = s.get("subject", "").strip() if isinstance(s, dict) else getattr(s, "subject", "").strip()
-            s_time = s.get("time", "") if isinstance(s, dict) else getattr(s, "time", "")
-            clean_s = s_name if s_name.startswith("📚") else f"📚 {s_name}"
-            items.append(f"⌚️ {s_time}\n{clean_s}")
-        body = "\n\n".join(items) + "\n\n"
-
-    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-    elapsed = format_elapsed_time(
-        cached["timestamp"],
-        ui_lang,
-        is_from_db=cached.get("is_from_db", False),
-        is_from_cache=from_cache,
-    )
-    clock = format_timestamp_clock(cached["timestamp"])
-    footer = (
-        f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
-        f"{t('for_help', ui_lang)}\n"
-        f"{t('official_site_compare', ui_lang)}\n"
-    )
+        clock = format_timestamp_clock(cached["timestamp"])
+        footer = (
+            f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
+            f"{t('for_help', ui_lang)}\n"
+            f"{t('official_site_compare', ui_lang)}\n"
+        )
 
     ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
     full_text = group_header + body + ad_text + footer
 
     pre_callback = f"schedule|{sch_lang}|{group_id}"
-    markup = get_schedule_pagination_keyboard(pre_callback, day_num, back_callback, ui_lang, ad_button=ad_btn)
+    markup = get_schedule_pagination_keyboard(
+        pre_callback, day_num, back_callback, ui_lang, ad_button=ad_btn, is_halloween=is_halloween
+    )
     return full_text, markup
 
 
@@ -2340,44 +2397,86 @@ async def build_teacher_day_text_view(
         register_teacher_name(teacher_id, tch_name)
 
     title_part = f" ({job_title})" if job_title else ""
-    header = f"👥 <b>{tch_name}</b>{title_part}\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+    is_halloween = is_halloween_preview_user(viewer_user_id)
 
-    if not deduplicated:
-        body = f"🥳 <b>{t('vacation', ui_lang)}</b>\n\n"
+    if is_halloween:
+        header = f"🎃 <b>{tch_name}</b>{title_part}\n🕸️ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+
+        if not deduplicated:
+            vac_text = t("vacation", ui_lang)
+            vac_clean = vac_text.replace("🎉", "👻").replace("🥳", "👻") if ("🎉" in vac_text or "🥳" in vac_text) else f"👻 {vac_text}"
+            body = f"<b>{vac_clean}</b>\n\n"
+        else:
+            formatted_items = []
+            for item in deduplicated:
+                slot_time = item.get("time", "")
+                grp_name = item.get("group", "")
+                subj_name = item.get("subject", "")
+                l_type = item.get("lessonType", "")
+
+                text = f"🦇 {slot_time}\n"
+                formatted_group = transform_group_string(grp_name)
+                text += add_symbol_to_each_line(formatted_group, "🎃") + "\n"
+                if subj_name:
+                    formatted_subj = format_subject_with_lesson_type(subj_name, l_type)
+                    text += f"🕯️ <i>{formatted_subj}</i>\n"
+                formatted_items.append(text.rstrip())
+            body = "\n\n".join(formatted_items) + "\n\n"
+
+        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+        elapsed = format_elapsed_time(
+            cached["timestamp"],
+            ui_lang,
+            is_from_db=cached.get("is_from_db", False),
+            is_from_cache=from_cache,
+        )
+        clock = format_timestamp_clock(cached["timestamp"])
+        footer = (
+            f"🕯️ <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
+            f"{t('for_help', ui_lang)}\n"
+            f"{t('official_site_compare', ui_lang)}\n"
+        )
     else:
-        formatted_items = []
-        for item in deduplicated:
-            slot_time = item.get("time", "")
-            grp_name = item.get("group", "")
-            subj_name = item.get("subject", "")
-            l_type = item.get("lessonType", "")
+        header = f"👥 <b>{tch_name}</b>{title_part}\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
 
-            text = f"⌚️ {slot_time}\n"
-            formatted_group = transform_group_string(grp_name)
-            text += add_symbol_to_each_line(formatted_group, "👥") + "\n"
-            if subj_name:
-                formatted_subj = format_subject_with_lesson_type(subj_name, l_type)
-                text += f"📖 <i>{formatted_subj}</i>\n"
-            formatted_items.append(text.rstrip())
-        body = "\n\n".join(formatted_items) + "\n\n"
+        if not deduplicated:
+            body = f"🥳 <b>{t('vacation', ui_lang)}</b>\n\n"
+        else:
+            formatted_items = []
+            for item in deduplicated:
+                slot_time = item.get("time", "")
+                grp_name = item.get("group", "")
+                subj_name = item.get("subject", "")
+                l_type = item.get("lessonType", "")
 
-    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-    elapsed = format_elapsed_time(
-        cached["timestamp"],
-        ui_lang,
-        is_from_db=cached.get("is_from_db", False),
-        is_from_cache=from_cache,
-    )
-    clock = format_timestamp_clock(cached["timestamp"])
-    footer = (
-        f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
-        f"{t('for_help', ui_lang)}\n"
-        f"{t('official_site_compare', ui_lang)}\n"
-    )
+                text = f"⌚️ {slot_time}\n"
+                formatted_group = transform_group_string(grp_name)
+                text += add_symbol_to_each_line(formatted_group, "👥") + "\n"
+                if subj_name:
+                    formatted_subj = format_subject_with_lesson_type(subj_name, l_type)
+                    text += f"📖 <i>{formatted_subj}</i>\n"
+                formatted_items.append(text.rstrip())
+            body = "\n\n".join(formatted_items) + "\n\n"
+
+        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+        elapsed = format_elapsed_time(
+            cached["timestamp"],
+            ui_lang,
+            is_from_db=cached.get("is_from_db", False),
+            is_from_cache=from_cache,
+        )
+        clock = format_timestamp_clock(cached["timestamp"])
+        footer = (
+            f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
+            f"{t('for_help', ui_lang)}\n"
+            f"{t('official_site_compare', ui_lang)}\n"
+        )
 
     ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
     full_text = header + body + ad_text + footer
-    markup = get_teacher_text_keyboard(canonical_id, day_num, department_id=dept_id, lang=ui_lang, ad_button=ad_btn)
+    markup = get_teacher_text_keyboard(
+        canonical_id, day_num, department_id=dept_id, lang=ui_lang, ad_button=ad_btn, is_halloween=is_halloween
+    )
     return full_text, markup
 
 

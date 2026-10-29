@@ -373,6 +373,7 @@ async def handle_group_menu(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             group_name=grp_name,
+            viewer_user_id=user_id,
         )
         return
 
@@ -434,6 +435,7 @@ async def handle_group_search_prefix(message: Message) -> None:
             ui_lang=lang,
             is_edit=False,
             group_name=g.get("name"),
+            viewer_user_id=user_id,
         )
         return
 
