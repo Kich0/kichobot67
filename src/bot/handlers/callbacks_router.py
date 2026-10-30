@@ -1494,9 +1494,9 @@ async def get_or_fetch_student_schedule(
     return cached
 
 
-# Advertisement banner toggle: temporarily disabled while negotiations are ongoing.
+# Advertisement banner toggle: enabled strictly for admin/owner (1516988645).
 # When enabled (_AD_ENABLED = True), the ad preview is shown strictly to admin/owner (1516988645).
-_AD_ENABLED: bool = False
+_AD_ENABLED: bool = True
 
 
 async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[str, tuple[str, str] | None]:
@@ -1521,12 +1521,12 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[st
 
     ad_text = (
         "────────────────────\n"
-        "🌯 <b>Донер на Юге</b>\n"
-        "📍 <a href=\"https://2gis.kz/karaganda/geo/70000001117430885\">Адрес</a>\n"
+        "🌯 <b>Донер на Абая</b>\n"
+        "📍 <a href=\"https://2gis.kz/karaganda/geo/70000001111006769\">Адрес</a>\n"
         "Сочные донеры, снеки и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("🌯 Открыть Донер на Юге в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70000001117430885")
+    ad_btn = ("🌯 Открыть Донер на Абая в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70000001111006769")
     return ad_text, ad_btn
 
 
