@@ -23,6 +23,8 @@ logger = get_logger("doner_ad_service")
 DONER_FIRM_ID = "70000001117430885"
 DONER_2GIS_URL = f"https://2gis.kz/karaganda/geo/{DONER_FIRM_ID}"
 DONER_SHORT_URL = "https://is.gd/doner_na_yuge"
+DONER_SHORT_URL_BUTTON = "https://is.gd/doner_na_yuge"
+DONER_SHORT_URL_LINK = "https://is.gd/doner_yug_addr"
 DONER_DGIS_SCHEME = f"dgis://2gis.ru/firm/{DONER_FIRM_ID}"
 DONER_BUTTON_TEXT = "🌯 Открыть Донер на Юге в 2GIS ↗️"
 
@@ -60,7 +62,9 @@ class DonerAdService:
             short: If True, produces clean compact URL (/r/doner?t=btn&u=...)
         """
         if short:
-            return DONER_SHORT_URL
+            if target in ("link", "text_link", "address", "addr"):
+                return DONER_SHORT_URL_LINK
+            return DONER_SHORT_URL_BUTTON
 
         domain = base_url or settings.WEBHOOK_DOMAIN
         if domain:
@@ -376,7 +380,7 @@ class DonerAdService:
                 }}
             }}
 
-            setTimeout(tryLaunch, 150);
+            tryLaunch();
         }})();
     </script>
 </body>
