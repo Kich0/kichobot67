@@ -203,6 +203,134 @@ async def handle_stat(message: Message) -> None:
         await message.answer(f"❌ Ошибка получения статистики: {e}")
 
 
+def _format_doner_boost_message(summary: dict[str, Any]) -> str:
+    """Formats comprehensive advertising analytics for sponsor «Донер на Юге»."""
+    total_imp = summary.get("total_impressions", 0)
+    uniq_viewers = summary.get("unique_viewers", 0)
+    btn_clicks = summary.get("button_clicks", 0)
+    uniq_btn = summary.get("unique_button_clickers", 0)
+    link_clicks = summary.get("link_clicks", 0)
+    uniq_link = summary.get("unique_link_clickers", 0)
+    total_clicks = summary.get("total_clicks", 0)
+    uniq_clickers = summary.get("unique_clickers", 0)
+    ctr = summary.get("ctr", 0.0)
+
+    today = summary.get("today_stats", {})
+    t_imp = today.get("impressions", 0)
+    t_btn = today.get("button_clicks", 0)
+    t_link = today.get("link_clicks", 0)
+    t_total = today.get("total_clicks", 0)
+
+    sources = summary.get("source_breakdown", {})
+    imp_sources = summary.get("impressions_by_source", {})
+    clk_sources = summary.get("clicks_by_source", {})
+    btn_sources = summary.get("button_clicks_by_source", {})
+    link_sources = summary.get("link_clicks_by_source", {})
+
+    # Impressions: fallback to source_breakdown for backward compatibility with mock tests
+    src_student = imp_sources.get("student_schedule", sources.get("student_schedule", 0))
+    src_teacher = imp_sources.get("teacher_schedule", sources.get("teacher_schedule", 0))
+
+    # Clicks by placement
+    student_clk = clk_sources.get("student_schedule", 0)
+    student_btn = btn_sources.get("student_schedule", 0)
+    student_link = link_sources.get("student_schedule", 0)
+
+    teacher_clk = clk_sources.get("teacher_schedule", 0)
+    teacher_btn = btn_sources.get("teacher_schedule", 0)
+    teacher_link = link_sources.get("teacher_schedule", 0)
+
+    other_clk = total_clicks - (student_clk + teacher_clk)
+    if other_clk < 0:
+        other_clk = 0
+
+    lines = [
+        "🌯 <b>Аналитика рекламы «Донер на Юге»</b> (/boost)\n",
+        "📊 <b>Общие показатели:</b>",
+        f"• Всего показов (просмотров): <b>{total_imp}</b>",
+        f"• Уникальных зрителей: <b>{uniq_viewers}</b> чел.",
+        f"• Кликов по кнопке 2GIS: <b>{btn_clicks}</b> (уник: {uniq_btn})",
+        f"• Переходов по ссылке «Адрес»: <b>{link_clicks}</b> (уник: {uniq_link})",
+        f"• Всего переходов (кнопка + ссылка): <b>{total_clicks}</b>",
+        f"• Уникальных кликеров: <b>{uniq_clickers}</b> чел.",
+        f"• Конверсия (CTR): <b>{ctr:.2f}%</b>\n",
+        "📅 <b>Сегодня (Asia/Almaty, UTC+5):</b>",
+        f"• Показов: <b>{t_imp}</b> | Кликов: <b>{t_total}</b> (🔘 Кнопка: {t_btn}, 🔗 Ссылка: {t_link})\n",
+        "📍 <b>Источники показов (охват):</b>",
+        f"• Расписание студентов: <b>{src_student}</b>",
+        f"• Расписание преподавателей: <b>{src_teacher}</b>",
+    ]
+
+    if total_clicks > 0 and (student_clk > 0 or teacher_clk > 0 or other_clk > 0):
+        lines.append("\n🎯 <b>Клики по местам размещения (кнопки и ссылки):</b>")
+        lines.append(f"• Расписание студентов: <b>{student_clk}</b> (🔘 {student_btn} кнопка, 🔗 {student_link} ссылка)")
+        lines.append(f"• Расписание преподавателей: <b>{teacher_clk}</b> (🔘 {teacher_btn} кнопка, 🔗 {teacher_link} ссылка)")
+        if other_clk > 0:
+            lines.append(f"• Веб-переходы / прямые: <b>{other_clk}</b>")
+    elif sources.get("web_redirect", 0) > 0 or sources.get("direct", 0) > 0:
+        src_web = sources.get("web_redirect", 0) + sources.get("direct", 0)
+        lines.append(f"• Веб-переходы / прямые: <b>{src_web}</b>")
+
+    recent = summary.get("recent_events", [])
+    if recent:
+        lines.append("\n🕒 <b>Последние клики и переходы:</b>")
+        for ev in recent:
+            if isinstance(ev, dict):
+                ev_time_raw = ev.get("created_at") or ev.get("createdAt")
+                ev_type = ev.get("event_type") or ev.get("eventType") or ""
+                ev_source = ev.get("source") or ""
+                user_id = ev.get("user_id") or ev.get("userId") or 0
+                username = ev.get("username")
+                first_name = ev.get("first_name") or ev.get("firstName")
+            else:
+                ev_time_raw = getattr(ev, "created_at", None)
+                ev_type = getattr(ev, "event_type", "")
+                ev_source = getattr(ev, "source", "")
+                user_id = getattr(ev, "user_id", 0) or 0
+                username = getattr(ev, "username", None)
+                first_name = getattr(ev, "first_name", None)
+
+            ev_time = _format_action_time(ev_time_raw, "%d.%m %H:%M:%S")
+            ev_label = "🔘 Кнопка 2GIS" if ev_type == "button_click" else "🔗 Ссылка «Адрес»"
+
+            src_tag = ""
+            if "student" in str(ev_source):
+                src_tag = " [студенты]"
+            elif "teacher" in str(ev_source):
+                src_tag = " [преподаватели]"
+
+            if username:
+                user_disp = f"@{username}"
+            elif first_name:
+                user_disp = f"{first_name} (ID: {user_id})"
+            else:
+                user_disp = f"ID {user_id}"
+
+            user_link = f'<a href="tg://user?id={user_id}">{escape_html(user_disp)}</a>' if user_id else "Аноним"
+            lines.append(f"• <code>{ev_time}</code>: {user_link} — {ev_label}{src_tag}")
+    else:
+        lines.append("\nℹ️ <i>Кликов пока не зафиксировано.</i>")
+
+    return "\n".join(lines)
+
+
+@admin_router.message(Command(commands=["boost", "doner", "ad_stat", "ad_stats"]))
+async def handle_boost(message: Message) -> None:
+    """Displays comprehensive advertising analytics for sponsor «Донер на Юге»."""
+    if not await _check_admin(message):
+        return
+
+    try:
+        from src.services.doner_ad_service import doner_ad_service
+
+        summary = await doner_ad_service.get_analytics_summary()
+        text = _format_doner_boost_message(summary)
+        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Error in /boost: {e}")
+        await message.answer(f"❌ Ошибка получения аналитики /boost: {e}")
+
+
 @admin_router.message(Command("users"))
 async def handle_users_count(message: Message) -> None:
     """Returns total user count in MongoDB."""
@@ -1119,6 +1247,7 @@ async def handle_ahelp(message: Message) -> None:
         "/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n"
         "/find_user [@ник] — <i>быстрый поиск юзера по Telegram-нику</i>\n"
         "/stat — статистика онлайна и регистраций\n"
+        "/boost — аналитика рекламы и кликов «Донер на Юге» (показы, кнопки, ссылки, CTR)\n"
         "/users — общее количество пользователей бота\n"
         "/group_stat — покрытие по группам (+ выгрузка JSON)\n"
         "/get_group [groupId] — инфо о группе\n"
@@ -1147,6 +1276,7 @@ __all__ = [
     "handle_backup_logs",
     "handle_ban_command",
     "handle_bans_list",
+    "handle_boost",
     "handle_get_callback",
     "handle_get_group",
     "handle_get_schedule",
@@ -1169,4 +1299,5 @@ __all__ = [
     "handle_user_logs",
     "handle_users_count",
     "_format_action_time",
+    "_format_doner_boost_message",
 ]

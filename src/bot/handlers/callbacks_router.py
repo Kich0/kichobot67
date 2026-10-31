@@ -1499,7 +1499,10 @@ async def get_or_fetch_student_schedule(
 _AD_ENABLED: bool = True
 
 
-async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[str, tuple[str, str] | None]:
+async def _get_ad_block_for_viewer(
+    viewer_user_id: int | str | None,
+    source: str = "student_schedule",
+) -> tuple[str, tuple[str, str] | None]:
     """Returns (ad_text, ad_button_tuple) ONLY if viewer is admin and ads are enabled, else ('', None)."""
     if not _AD_ENABLED:
         return "", None
@@ -1519,14 +1522,20 @@ async def _get_ad_block_for_viewer(viewer_user_id: int | str | None) -> tuple[st
         except Exception:
             return "", None
 
+    from src.services.doner_ad_service import doner_ad_service
+
+    btn_url = doner_ad_service.get_tracking_url("button", viewer_user_id, source=source)
+    link_url = doner_ad_service.get_tracking_url("link", viewer_user_id, source=source)
+    await doner_ad_service.record_impression(viewer_user_id, source=source)
+
     ad_text = (
         "────────────────────\n"
-        "🌯 <b>Донер на Абая</b>\n"
-        "📍 <a href=\"https://2gis.kz/karaganda/geo/70000001111006769\">Адрес</a>\n"
+        "🌯 <b>Донер на Юге</b>\n"
+        f"📍 <a href=\"{link_url}\">Адрес</a>\n"
         "Сочные донеры, снеки и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("🌯 Открыть Донер на Абая в 2GIS ↗️", "https://2gis.kz/karaganda/geo/70000001111006769")
+    ad_btn = ("🌯 Открыть Донер на Юге в 2GIS ↗️", btn_url)
     return ad_text, ad_btn
 
 
@@ -1744,7 +1753,7 @@ async def build_student_day_schedule_view(
             f"{t('official_site_compare', ui_lang)}\n"
         )
 
-    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
+    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id, source="student_schedule")
     full_text = group_header + body + ad_text + footer
 
     pre_callback = f"schedule|{sch_lang}|{group_id}"
@@ -2506,7 +2515,7 @@ async def build_teacher_day_text_view(
             f"{t('official_site_compare', ui_lang)}\n"
         )
 
-    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id)
+    ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id, source="teacher_schedule")
     full_text = header + body + ad_text + footer
     markup = get_teacher_text_keyboard(
         canonical_id, day_num, department_id=dept_id, lang=ui_lang, ad_button=ad_btn, is_halloween=is_halloween
@@ -3026,6 +3035,31 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
                 if "message is not modified" not in str(e):
                     logger.debug(f"editMessageText error: {e}")
 
+    await call.answer()
+
+
+@callbacks_router.callback_query(F.data.startswith("ad_doner_click"))
+async def handle_ad_doner_callback(call: CallbackQuery) -> None:
+    """Handles callback-based ad clicks for «Донер на Юге»."""
+    from src.services.doner_ad_service import DONER_2GIS_URL, doner_ad_service
+
+    user_id = call.from_user.id if call.from_user else 0
+    username = call.from_user.username if call.from_user else None
+    first_name = call.from_user.first_name if call.from_user else None
+    last_name = call.from_user.last_name if call.from_user else None
+
+    parts = (call.data or "").split("|")
+    target = parts[1] if len(parts) > 1 else "button"
+
+    await doner_ad_service.record_click(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        event_type="button_click",
+        source=f"callback_{target}",
+        target_url=DONER_2GIS_URL,
+    )
     await call.answer()
 
 

@@ -21,7 +21,7 @@ from aiogram.types import BotCommand, Update
 import orjson
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 
 
 class ORJSONResponse(Response):
@@ -546,6 +546,47 @@ def create_app() -> FastAPI:
             content={"ok": True, "message": "Daily sync triggered"},
             status_code=200,
         )
+
+    # 7. Sponsor «Донер на Юге» tracking redirect and stats endpoints
+    @app.get("/ad/doner/click")
+    @app.get("/r/doner")
+    async def doner_click_redirect(
+        request: Request,
+        target: str = Query(default="button"),
+        uid: int | str | None = Query(default=None),
+        source: str | None = Query(default=None),
+    ) -> Response:
+        """Redirects to 2GIS for «Донер на Юге» while recording click analytics."""
+        from src.services.doner_ad_service import DONER_2GIS_URL, doner_ad_service
+
+        client_ip = get_client_ip(request)
+        user_agent = request.headers.get("user-agent")
+        ev_type = "link_click" if target == "link" else "button_click"
+        clean_src = source or ("button" if target == "button" else "text_link")
+
+        await doner_ad_service.record_click(
+            user_id=uid,
+            event_type=ev_type,
+            source=clean_src,
+            target_url=DONER_2GIS_URL,
+            ip=client_ip,
+            user_agent=user_agent,
+        )
+
+        return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
+
+    @app.get("/api/ad/doner/stats")
+    async def get_doner_stats_api() -> ORJSONResponse:
+        """Returns JSON metrics summary for «Донер на Юге»."""
+        from src.services.doner_ad_service import doner_ad_service
+
+        summary = await doner_ad_service.get_analytics_summary()
+        clean_summary = dict(summary)
+        clean_summary["recent_events"] = [
+            ev.model_dump(by_alias=True, mode="json") if hasattr(ev, "model_dump") else str(ev)
+            for ev in clean_summary.get("recent_events", [])
+        ]
+        return ORJSONResponse(content=clean_summary, status_code=200)
 
     return app
 
