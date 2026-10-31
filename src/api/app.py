@@ -21,7 +21,7 @@ from aiogram.types import BotCommand, Update
 import orjson
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 
 class ORJSONResponse(Response):
@@ -548,32 +548,93 @@ def create_app() -> FastAPI:
         )
 
     # 7. Sponsor «Донер на Юге» tracking redirect and stats endpoints
+    @app.get("/doner-na-yuge")
+    @app.get("/doner-na-yuge/")
+    @app.get("/doner-na-yuge/{subpath}")
+    @app.get("/doner_na_yuge")
+    @app.get("/doner_na_yuge/")
+    @app.get("/doner_na_yuge/{subpath}")
     @app.get("/ad/doner/click")
+    @app.get("/ad/doner/click/")
     @app.get("/r/doner")
+    @app.get("/r/doner/")
+    @app.get("/r/doner/{subpath}")
     async def doner_click_redirect(
         request: Request,
-        target: str = Query(default="button"),
+        subpath: str | None = None,
+        t: str | None = Query(default=None),
+        u: int | str | None = Query(default=None),
+        s: str | None = Query(default=None),
+        target: str | None = Query(default=None),
         uid: int | str | None = Query(default=None),
         source: str | None = Query(default=None),
+        mode: str | None = Query(default=None),
     ) -> Response:
-        """Redirects to 2GIS for «Донер на Юге» while recording click analytics."""
+        """Redirects to 2GIS for «Донер на Юге» while recording click analytics.
+
+        Supports compact short parameters (?t=btn&u=123&s=std), path routing (/r/doner/btn), and legacy (?target=button&uid=123).
+        When opened in an interactive browser/webview (e.g. Telegram in-app browser), serves a
+        high-performance branded HTML bridge page with native 2GIS deep link scheme and Android intent.
+        For headless clients/crawlers or when ?mode=302 is specified, returns HTTP 302 redirect.
+        """
         from src.services.doner_ad_service import DONER_2GIS_URL, doner_ad_service
 
         client_ip = get_client_ip(request)
         user_agent = request.headers.get("user-agent")
-        ev_type = "link_click" if target == "link" else "button_click"
-        clean_src = source or ("button" if target == "button" else "text_link")
+
+        raw_target = (t or target or subpath or "button").strip().lower()
+        if raw_target in ("link", "l", "text_link", "address", "addr"):
+            ev_type = "link_click"
+            clean_target = "link"
+        else:
+            ev_type = "button_click"
+            clean_target = "button"
+
+        resolved_uid = u if (u is not None and str(u).strip() != "") else uid
+
+        raw_source = (s or source or "").strip().lower()
+        if raw_source in ("std", "student", "student_schedule"):
+            clean_source = "student_schedule"
+        elif raw_source in ("tch", "teacher", "teacher_schedule"):
+            clean_source = "teacher_schedule"
+        elif raw_source:
+            clean_source = s or source
+        else:
+            clean_source = "button" if clean_target == "button" else "text_link"
 
         await doner_ad_service.record_click(
-            user_id=uid,
+            user_id=resolved_uid,
             event_type=ev_type,
-            source=clean_src,
+            source=clean_source,
             target_url=DONER_2GIS_URL,
             ip=client_ip,
             user_agent=user_agent,
         )
 
-        return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
+        accept_header = request.headers.get("accept", "").lower()
+        ua_header = (user_agent or "").lower()
+
+        # Check for browser / interactive webview environment
+        is_browser = (
+            "text/html" in accept_header
+            or "mozilla" in ua_header
+            or "telegram" in ua_header
+            or "mobile" in ua_header
+            or mode in ("bridge", "html")
+        )
+
+        # Allow explicit override via ?mode=302 or ?mode=raw or ?raw=1
+        force_redirect = (
+            mode in ("302", "redirect", "raw")
+            or request.query_params.get("raw") == "1"
+            or not is_browser
+        )
+
+        if force_redirect:
+            return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
+
+        html_content = doner_ad_service.generate_bridge_html()
+        return HTMLResponse(content=html_content, status_code=200)
 
     @app.get("/api/ad/doner/stats")
     async def get_doner_stats_api() -> ORJSONResponse:

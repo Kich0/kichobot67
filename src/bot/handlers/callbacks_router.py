@@ -1524,8 +1524,8 @@ async def _get_ad_block_for_viewer(
 
     from src.services.doner_ad_service import doner_ad_service
 
-    btn_url = doner_ad_service.get_tracking_url("button", viewer_user_id, source=source)
-    link_url = doner_ad_service.get_tracking_url("link", viewer_user_id, source=source)
+    btn_url = doner_ad_service.get_tracking_url("button", viewer_user_id, source=source, short=True)
+    link_url = doner_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
     await doner_ad_service.record_impression(viewer_user_id, source=source)
 
     ad_text = (
