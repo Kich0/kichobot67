@@ -611,30 +611,11 @@ def create_app() -> FastAPI:
             user_agent=user_agent,
         )
 
-        accept_header = request.headers.get("accept", "").lower()
-        ua_header = (user_agent or "").lower()
+        if mode in ("bridge", "html"):
+            html_content = doner_ad_service.generate_bridge_html()
+            return HTMLResponse(content=html_content, status_code=200)
 
-        # Check for browser / interactive webview environment
-        is_browser = (
-            "text/html" in accept_header
-            or "mozilla" in ua_header
-            or "telegram" in ua_header
-            or "mobile" in ua_header
-            or mode in ("bridge", "html")
-        )
-
-        # Allow explicit override via ?mode=302 or ?mode=raw or ?raw=1
-        force_redirect = (
-            mode in ("302", "redirect", "raw")
-            or request.query_params.get("raw") == "1"
-            or not is_browser
-        )
-
-        if force_redirect:
-            return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
-
-        html_content = doner_ad_service.generate_bridge_html()
-        return HTMLResponse(content=html_content, status_code=200)
+        return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
 
     @app.get("/api/ad/doner/stats")
     async def get_doner_stats_api() -> ORJSONResponse:

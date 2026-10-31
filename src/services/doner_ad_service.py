@@ -22,6 +22,7 @@ logger = get_logger("doner_ad_service")
 
 DONER_FIRM_ID = "70000001117430885"
 DONER_2GIS_URL = f"https://2gis.kz/karaganda/geo/{DONER_FIRM_ID}"
+DONER_SHORT_URL = "https://is.gd/doner_na_yuge"
 DONER_DGIS_SCHEME = f"dgis://2gis.ru/firm/{DONER_FIRM_ID}"
 DONER_BUTTON_TEXT = "🌯 Открыть Донер на Юге в 2GIS ↗️"
 
@@ -31,6 +32,8 @@ class DonerAdService:
 
     def __init__(self) -> None:
         self._bg_tasks: set[asyncio.Task[Any]] = set()
+        self._last_viewer_uid: int = 0
+        self._last_viewer_source: str = ""
 
     def _spawn_bg_task(self, coro: Any) -> asyncio.Task[Any]:
         """Runs a coroutine in background while maintaining strong reference to avoid GC collection."""
@@ -56,26 +59,15 @@ class DonerAdService:
             base_url: Optional explicit base URL override
             short: If True, produces clean compact URL (/r/doner?t=btn&u=...)
         """
+        if short:
+            return DONER_SHORT_URL
+
         domain = base_url or settings.WEBHOOK_DOMAIN
         if domain:
             clean_domain = str(domain).rstrip("/")
             if not clean_domain.startswith(("http://", "https://")):
                 clean_domain = f"https://{clean_domain}"
             uid_param = int(user_id) if user_id and str(user_id).isdigit() else 0
-
-            if short:
-                t_param = "btn" if target == "button" else "link"
-                s_param = (
-                    "std"
-                    if source == "student_schedule"
-                    else ("tch" if source == "teacher_schedule" else source)
-                )
-                url = f"{clean_domain}/doner-na-yuge?t={t_param}"
-                if uid_param > 0:
-                    url += f"&u={uid_param}"
-                if s_param:
-                    url += f"&s={quote_plus(str(s_param))}"
-                return url
 
             url = f"{clean_domain}/ad/doner/click?target={target}&uid={uid_param}"
             if source:
@@ -402,6 +394,10 @@ class DonerAdService:
         """Records an ad impression asynchronously (fire-and-forget)."""
         if not user_id:
             return
+        if str(user_id).isdigit() and int(user_id) > 0:
+            self._last_viewer_uid = int(user_id)
+            if source:
+                self._last_viewer_source = source
 
         async def _do_record() -> None:
             try:
@@ -457,6 +453,11 @@ class DonerAdService:
         async def _do_record() -> None:
             try:
                 uid = int(user_id) if user_id and str(user_id).isdigit() else 0
+                if uid == 0 and self._last_viewer_uid > 0:
+                    uid = self._last_viewer_uid
+                resolved_source = source
+                if resolved_source in ("button", "text_link", "schedule", "") and self._last_viewer_source:
+                    resolved_source = self._last_viewer_source
                 now_utc = datetime.now(timezone.utc)
 
                 resolved_user = username
@@ -485,7 +486,7 @@ class DonerAdService:
                     firstName=resolved_fn,
                     lastName=resolved_ln,
                     eventType=event_type,
-                    source=source,
+                    source=resolved_source,
                     targetUrl=target_url or DONER_2GIS_URL,
                     buttonText=clean_btn_text,
                     ip=ip,
