@@ -3063,7 +3063,7 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
         logger.debug(f"Error recording ad click from callback: {exc}")
 
     popup_text = (
-        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
+        "Decentrathon - крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
         "30–31 октября в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
         "📍 Адрес: ул. Алалыкина, 12/1"
     )
