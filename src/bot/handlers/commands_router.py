@@ -18,6 +18,14 @@ from src.bot.keyboards.inline import (
     get_language_keyboard,
     get_new_schedule_keyboard,
 )
+from src.bot.middlewares.user_action_logger import (
+    KNOWN_GROUPS,
+    KNOWN_TEACHERS,
+    register_group_name,
+    register_teacher_name,
+    resolve_day_name,
+    user_action_logging_middleware,
+)
 from src.core.i18n import t
 from src.services.user_service import user_service
 
@@ -171,6 +179,37 @@ async def handle_schedule_command(message: Message) -> None:
 
     if user_doc and user_doc.schedule_type == "student" and user_doc.group:
         sch_lang = "kz" if lang == "kz" else "ru"
+        num_g_id = int(user_doc.group) if user_doc.group is not None and str(user_doc.group).isdigit() else None
+        grp_name = (KNOWN_GROUPS.get(num_g_id) if num_g_id is not None else None) or KNOWN_GROUPS.get(user_doc.group)
+        if not grp_name:
+            try:
+                from src.database.models.group import Group
+
+                lookup_gid = num_g_id if num_g_id is not None else user_doc.group
+                g_doc = await Group.find_one(Group.group_id == lookup_gid) or await Group.find_one({"id": lookup_gid})
+                if g_doc:
+                    grp_name = g_doc.name
+                    register_group_name(user_doc.group, grp_name)
+            except Exception:
+                pass
+
+        day_name = resolve_day_name(curr_day)
+        grp_label = f'"{grp_name}"' if grp_name else (f"ID {user_doc.group}" if user_doc.group else "")
+        desc = f"Открыл расписание группы {grp_label} ({day_name})" if grp_label else f"Открыл расписание ({day_name})"
+        clean_gid = num_g_id if num_g_id is not None else (int(user_doc.group) if str(user_doc.group).isdigit() else None)
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_group",
+                desc,
+                entity_id=clean_gid,
+                entity_name=grp_name,
+            )
+        except Exception:
+            pass
+
         await render_student_day_schedule_message(
             target_msg=message,
             group_id=user_doc.group,
@@ -178,17 +217,53 @@ async def handle_schedule_command(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
+            group_name=grp_name,
             viewer_user_id=user_id,
         )
         return
 
     if user_doc and user_doc.schedule_type == "teacher" and user_doc.teacher:
+        t_id = user_doc.teacher
+        num_t_id = int(t_id) if t_id is not None and str(t_id).isdigit() else t_id
+        t_name = (KNOWN_TEACHERS.get(num_t_id) if isinstance(num_t_id, int) else None) or KNOWN_TEACHERS.get(t_id)
+        if not t_name:
+            try:
+                from src.database.models.teacher import Teacher
+
+                if isinstance(num_t_id, int):
+                    t_doc = await Teacher.find_one(Teacher.teacher_id == num_t_id) or await Teacher.find_one({"id": num_t_id})
+                else:
+                    t_doc = await Teacher.find_one(Teacher.name == str(num_t_id)) or await Teacher.find_one({"name": str(num_t_id)})
+                if t_doc:
+                    t_name = t_doc.name
+                    register_teacher_name(t_id, t_name)
+            except Exception:
+                pass
+
+        day_name = resolve_day_name(curr_day)
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
+        clean_tid = num_t_id if isinstance(num_t_id, int) else (int(t_id) if str(t_id).isdigit() else None)
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_teacher",
+                desc,
+                entity_id=clean_tid,
+                entity_name=t_name,
+            )
+        except Exception:
+            pass
+
         await render_teacher_day_schedule_message(
             target_msg=message,
             teacher_id=user_doc.teacher,
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
+            teacher_name=t_name,
             viewer_user_id=user_id,
         )
         return
@@ -292,6 +367,25 @@ async def handle_teacher_menu(message: Message) -> None:
             return
 
         curr_day = get_current_day_number()
+        day_name = resolve_day_name(curr_day)
+        tch_label = f'"{tch_name}"' if tch_name else (f"ID {user_doc.teacher}" if user_doc.teacher else "")
+        desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
+        clean_tid = int(user_doc.teacher) if user_doc.teacher is not None and str(user_doc.teacher).isdigit() else None
+        if tch_name and user_doc.teacher:
+            register_teacher_name(user_doc.teacher, tch_name)
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_teacher",
+                desc,
+                entity_id=clean_tid,
+                entity_name=tch_name,
+            )
+        except Exception:
+            pass
+
         await render_teacher_day_schedule_message(
             target_msg=message,
             teacher_id=user_doc.teacher,
@@ -366,6 +460,25 @@ async def handle_group_menu(message: Message) -> None:
 
         sch_lang = grp_lang or ("kz" if lang == "kz" else "ru")
         curr_day = get_current_day_number()
+        day_name = resolve_day_name(curr_day)
+        grp_label = f'"{grp_name}"' if grp_name else (f"ID {user_doc.group}" if user_doc.group else "")
+        desc = f"Открыл расписание группы {grp_label} ({day_name})" if grp_label else f"Открыл расписание ({day_name})"
+        clean_gid = int(user_doc.group) if user_doc.group is not None and str(user_doc.group).isdigit() else None
+        if grp_name and user_doc.group:
+            register_group_name(user_doc.group, grp_name)
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_group",
+                desc,
+                entity_id=clean_gid,
+                entity_name=grp_name,
+            )
+        except Exception:
+            pass
+
         await render_student_day_schedule_message(
             target_msg=message,
             group_id=user_doc.group,
@@ -427,7 +540,28 @@ async def handle_group_search_prefix(message: Message) -> None:
     if len(matched) == 1:
         g = matched[0]
         g_id = g.get("id") or g.get("group_id")
+        g_name = g.get("name")
         g_lang = g.get("language") or ("kz" if lang == "kz" else "ru")
+        if g_id and g_name:
+            register_group_name(g_id, g_name)
+
+        day_name = resolve_day_name(curr_day)
+        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
+        desc = f"Открыл расписание группы {grp_label} ({day_name})" if grp_label else f"Открыл расписание ({day_name})"
+        clean_gid = int(g_id) if g_id is not None and str(g_id).isdigit() else None
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_group",
+                desc,
+                entity_id=clean_gid,
+                entity_name=g_name,
+            )
+        except Exception:
+            pass
+
         await render_student_day_schedule_message(
             target_msg=message,
             group_id=g_id,
@@ -435,7 +569,7 @@ async def handle_group_search_prefix(message: Message) -> None:
             day_num=curr_day,
             ui_lang=lang,
             is_edit=False,
-            group_name=g.get("name"),
+            group_name=g_name,
             viewer_user_id=user_id,
         )
         return
@@ -485,6 +619,26 @@ async def handle_teacher_search_prefix(message: Message) -> None:
         tch = matched[0]
         t_name = tch.get("fullName") or tch.get("name") or ""
         t_id = tch.get("id") or tch.get("teacher_id") or tch.get("name") or t_name
+        if t_id and t_name:
+            register_teacher_name(t_id, t_name)
+
+        day_name = resolve_day_name(curr_day)
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
+        clean_tid = int(t_id) if t_id is not None and str(t_id).isdigit() else None
+        try:
+            username = message.from_user.username if message.from_user else None
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_teacher",
+                desc,
+                entity_id=clean_tid,
+                entity_name=t_name,
+            )
+        except Exception:
+            pass
+
         await render_teacher_day_schedule_message(
             target_msg=message,
             teacher_id=t_id,

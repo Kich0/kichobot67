@@ -23,6 +23,7 @@ from src.bot.keyboards.inline import (
 from src.bot.middlewares.user_action_logger import (
     register_group_name,
     register_teacher_name,
+    resolve_day_name,
     user_action_logging_middleware,
 )
 from src.core.i18n import t
@@ -126,6 +127,22 @@ async def handle_text_search(message: Message) -> None:
             render_student_day_schedule_message,
         )
         curr_day = get_current_day_number()
+        day_name = resolve_day_name(curr_day)
+        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
+        desc = f"Открыл расписание группы {grp_label} ({day_name})" if grp_label else f"Открыл расписание ({day_name})"
+        clean_gid = int(g_id) if g_id is not None and str(g_id).isdigit() else None
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_group",
+                desc,
+                entity_id=clean_gid,
+                entity_name=g_name,
+            )
+        except Exception:
+            pass
+
         await render_student_day_schedule_message(
             target_msg=message,
             group_id=g_id,
@@ -165,6 +182,22 @@ async def handle_text_search(message: Message) -> None:
             render_teacher_day_schedule_message,
         )
         curr_day = get_current_day_number()
+        day_name = resolve_day_name(curr_day)
+        tch_label = f'"{t_name}"' if t_name else (f"ID {t_id}" if t_id else "")
+        desc = f"Открыл расписание преподавателя {tch_label} ({day_name})" if tch_label else f"Открыл расписание преподавателя ({day_name})"
+        clean_tid = int(t_id) if t_id is not None and str(t_id).isdigit() else None
+        try:
+            await user_action_logging_middleware.log_action(
+                user_id,
+                username,
+                "view_teacher",
+                desc,
+                entity_id=clean_tid,
+                entity_name=t_name,
+            )
+        except Exception:
+            pass
+
         await render_teacher_day_schedule_message(
             target_msg=message,
             teacher_id=t_id,

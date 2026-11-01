@@ -236,8 +236,11 @@ def _parse_callback_query(
         or raw_lower.startswith("refresh_schedule|")
         or raw_lower.startswith("refreshchooseschedulelanguage|")
         or raw_lower.startswith("refresh_chooseschedulelanguage|")
+        or raw_lower.startswith("refresh_choose_schedule_language|")
+        or raw_lower.startswith("refreshgroup|")
+        or raw_lower.startswith("refresh_group|")
     ):
-        m = re.match(r"^refresh(?:_)?(?:schedule|chooseschedulelanguage)\|", raw, re.IGNORECASE)
+        m = re.match(r"^refresh(?:_)?(?:schedule|chooseschedulelanguage|choose_schedule_language|group)\|", raw, re.IGNORECASE)
         prefix_len = len(m.group(0)) if m else raw.find("|") + 1
         clean = raw[prefix_len:]
         parts = [p for p in clean.split("|") if p != ""]
@@ -251,12 +254,17 @@ def _parse_callback_query(
             lang_val = parts[0]
             g_id = int(parts[1])
             day_val = parts[2]
+        elif len(parts) >= 2 and parts[1].isdigit():
+            lang_val = parts[0]
+            g_id = int(parts[1])
+            day_val = 0
         elif len(parts) == 1 and parts[0].isdigit():
             g_id = int(parts[0])
 
         day_name = resolve_day_name(day_val)
+        lookup_map = group_map if group_map else {}
         g_name = (
-            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
+            (lookup_map.get(g_id) or (lookup_map.get(str(g_id)) if str(g_id) in lookup_map else None) or KNOWN_GROUPS.get(g_id))
             if g_id is not None
             else None
         )
@@ -264,7 +272,11 @@ def _parse_callback_query(
         desc = f"Обновил расписание группы {grp_label} ({day_name})" if grp_label else f"Обновил расписание ({day_name})"
         return ("refresh_group", desc, g_id, g_name)
 
-    if raw.startswith("chooseScheduleLanguage|"):
+    if (
+        raw_lower.startswith("chooseschedulelanguage|")
+        or raw_lower.startswith("choose_schedule_language|")
+        or raw_lower.startswith("schedule|")
+    ):
         parts = [p for p in raw.split("|")[1:] if p != ""]
         lang_val = ""
         g_id = None
@@ -276,36 +288,17 @@ def _parse_callback_query(
             lang_val = parts[0]
             g_id = int(parts[1])
             day_val = parts[2]
-        elif len(parts) == 1 and parts[0].isdigit():
-            g_id = int(parts[0])
-
-        g_name = (
-            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
-            if g_id is not None
-            else None
-        )
-        grp_label = f'"{g_name}"' if g_name else (f"ID {g_id}" if g_id else "")
-        desc = f"Выбор языка расписания (группа {grp_label})" if grp_label else "Выбор языка расписания"
-        return ("choose_schedule_language", desc, g_id, g_name or lang_val or None)
-
-    if raw.startswith("schedule|"):
-        parts = [p for p in raw.split("|")[1:] if p != ""]
-        lang_val = ""
-        g_id = None
-        day_val: Any = 0
-        if len(parts) >= 2 and parts[0].isdigit():
-            g_id = int(parts[0])
-            day_val = parts[1]
-        elif len(parts) >= 3 and parts[1].isdigit():
+        elif len(parts) >= 2 and parts[1].isdigit():
             lang_val = parts[0]
             g_id = int(parts[1])
-            day_val = parts[2]
+            day_val = 0
         elif len(parts) == 1 and parts[0].isdigit():
             g_id = int(parts[0])
 
         day_name = resolve_day_name(day_val)
+        lookup_map = group_map if group_map else {}
         g_name = (
-            (group_map.get(g_id) if group_map and g_id in group_map else KNOWN_GROUPS.get(g_id))
+            (lookup_map.get(g_id) or (lookup_map.get(str(g_id)) if str(g_id) in lookup_map else None) or KNOWN_GROUPS.get(g_id))
             if g_id is not None
             else None
         )
