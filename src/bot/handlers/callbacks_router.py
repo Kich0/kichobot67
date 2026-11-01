@@ -1529,12 +1529,13 @@ async def _get_ad_block_for_viewer(
 
     ad_text = (
         "────────────────────\n"
-        "🚀 <b>Хакатон в Телеконовой долине: Decentrathon!</b>\n"
+        "🚀 <b>Хакатон в Terricon Valley: Decentrathon!</b>\n"
         "Призовой фонд, полезные знакомства в портфолио и бесплатная пицца. Нужны не только кодеры, но и дизайнеры/презентаторы.\n"
         f"📍 <b>Адрес:</b> <a href=\"{link_url}\">ул. Алалыкина, 12/1</a>\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("👉 Подробнее", "ad_telecon_info")
+    btn_url = telecon_ad_service.get_tracking_url("button", viewer_user_id, source=source, short=True)
+    ad_btn = ("👉 Подробнее ↗️", btn_url)
     return ad_text, ad_btn
 
 
@@ -3050,21 +3051,27 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
     parts = (call.data or "").split("|")
     target = parts[1] if len(parts) > 1 else "button"
 
-    await telecon_ad_service.record_click(
-        user_id=user_id,
-        username=username,
-        first_name=first_name,
-        last_name=last_name,
-        event_type="button_click",
-        source=f"callback_{target}",
-    )
+    try:
+        await telecon_ad_service.record_click(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            event_type="button_click",
+            source=f"callback_{target}",
+        )
+    except Exception as exc:
+        logger.debug(f"Error recording ad click from callback: {exc}")
 
     popup_text = (
-        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане (Телеконовая долина). "
+        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
         "30–31 октября он пройдёт в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
         "📍 Адрес: ул. Алалыкина, 12/1"
     )
-    await call.answer(text=popup_text, show_alert=True)
+    try:
+        await call.answer(text=popup_text, show_alert=True)
+    except Exception as exc:
+        logger.debug(f"Error answering ad callback: {exc}")
 
 
 @callbacks_router.callback_query()

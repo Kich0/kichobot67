@@ -1,4 +1,4 @@
-"""Telecon Valley advertisement event document model."""
+"""Terricon Valley advertisement event document model."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.database.base import BaseMongoDoc
 
 
 class TeleconAdEvent(BaseMongoDoc):
-    """Advertisement event for partner / sponsor «Телеконовая долина».
+    """Advertisement event for partner / sponsor «Terricon Valley».
 
     Stored permanently (without TTL) in MongoDB collection 'telecon_ad_events'
     to provide exact analytics on impressions, button clicks, link clicks,

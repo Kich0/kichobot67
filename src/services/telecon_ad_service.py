@@ -1,4 +1,4 @@
-"""Service for tracking and analyzing advertising metrics for «Телеконовая долина».
+"""Service for tracking and analyzing advertising metrics for «Terricon Valley».
 
 Provides non-blocking async event recording for impressions, button clicks,
 and link clicks, plus comprehensive analytics aggregation for the /boost admin command
@@ -22,15 +22,15 @@ logger = get_logger("telecon_ad_service")
 
 TELECON_FIRM_ID = "70000001083364853"
 TELECON_2GIS_URL = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
-TELECON_SHORT_URL = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
-TELECON_SHORT_URL_BUTTON = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
-TELECON_SHORT_URL_LINK = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
+TELECON_SHORT_URL = "https://is.gd/terricon_btn"
+TELECON_SHORT_URL_BUTTON = "https://is.gd/terricon_btn"
+TELECON_SHORT_URL_LINK = "https://is.gd/terricon_addr"
 TELECON_DGIS_SCHEME = f"dgis://2gis.ru/firm/{TELECON_FIRM_ID}"
 TELECON_BUTTON_TEXT = "👉 Подробнее"
 
 
 class TeleconAdService:
-    """Manages partner metrics and analytics for «Телеконовая долина»."""
+    """Manages partner metrics and analytics for «Terricon Valley»."""
 
     def __init__(self) -> None:
         self._bg_tasks: set[asyncio.Task[Any]] = set()
@@ -61,6 +61,11 @@ class TeleconAdService:
             base_url: Optional explicit base URL override
             short: If True, produces clean compact URL (/r/telecon?t=btn&u=...)
         """
+        if short:
+            if target in ("link", "text_link", "address", "addr"):
+                return TELECON_SHORT_URL_LINK
+            return TELECON_SHORT_URL_BUTTON
+
         domain = base_url or settings.WEBHOOK_DOMAIN
         if domain:
             clean_domain = str(domain).rstrip("/")
@@ -75,8 +80,6 @@ class TeleconAdService:
                 url += f"&s={quote_plus(src_code)}"
             return url
 
-        if short:
-            return TELECON_SHORT_URL
         return TELECON_2GIS_URL
 
     def get_short_tracking_url(
@@ -265,9 +268,9 @@ class TeleconAdService:
                 # Also register UserAction for overall bot audit trail
                 if uid > 0:
                     action_text = (
-                        f"Клик по кнопке «{button_label}» (Телеконовая долина)"
+                        f"Клик по кнопке «{button_label}» (Terricon Valley)"
                         if event_type == "button_click"
-                        else "Переход по ссылке «Адрес» (Телеконовая долина)"
+                        else "Переход по ссылке «Адрес» (Terricon Valley)"
                     )
                     action = UserAction(
                         userId=uid,

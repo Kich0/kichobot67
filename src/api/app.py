@@ -547,7 +547,7 @@ def create_app() -> FastAPI:
             status_code=200,
         )
 
-    # 7. Sponsor «Телеконовая долина» tracking redirect and stats endpoints
+    # 7. Sponsor «Terricon Valley» tracking redirect and stats endpoints
     @app.get("/telecon")
     @app.get("/telecon/")
     @app.get("/telecon/{subpath}")
@@ -570,7 +570,7 @@ def create_app() -> FastAPI:
         source: str | None = Query(default=None),
         mode: str | None = Query(default=None),
     ) -> Response:
-        """Redirects to 2GIS for «Телеконовая долина» while recording click analytics.
+        """Redirects to 2GIS for «Terricon Valley» while recording click analytics.
 
         Supports compact short parameters (?t=btn&u=123&s=std), path routing (/r/telecon/btn), and legacy (?target=button&uid=123).
         When opened in an interactive browser/webview (e.g. Telegram in-app browser), serves a
@@ -632,7 +632,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/ad/telecon/stats")
     async def get_telecon_stats_api() -> ORJSONResponse:
-        """Returns JSON metrics summary for «Телеконовая долина»."""
+        """Returns JSON metrics summary for «Terricon Valley»."""
         from src.services.telecon_ad_service import telecon_ad_service
 
         summary = await telecon_ad_service.get_analytics_summary()

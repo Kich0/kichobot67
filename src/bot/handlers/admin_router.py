@@ -204,7 +204,7 @@ async def handle_stat(message: Message) -> None:
 
 
 def _format_telecon_boost_message(summary: dict[str, Any]) -> str:
-    """Formats comprehensive advertising analytics for partner «Телеконовая долина»."""
+    """Formats comprehensive advertising analytics for partner «Terricon Valley»."""
     total_imp = summary.get("total_impressions", 0)
     uniq_viewers = summary.get("unique_viewers", 0)
     btn_clicks = summary.get("button_clicks", 0)
@@ -245,7 +245,7 @@ def _format_telecon_boost_message(summary: dict[str, Any]) -> str:
         other_clk = 0
 
     lines = [
-        "🚀 <b>Аналитика: «Телеконовая долина»</b> (/boost)\n",
+        "🚀 <b>Аналитика: «Terricon Valley»</b> (/boost)\n",
         "📊 <b>Общие показатели:</b>",
         f"• Всего показов (просмотров): <b>{total_imp}</b>",
         f"• Уникальных зрителей: <b>{uniq_viewers}</b> чел.",
@@ -320,7 +320,7 @@ _format_doner_boost_message = _format_telecon_boost_message
 
 @admin_router.message(Command(commands=["boost", "telecon", "ad_stat", "ad_stats"]))
 async def handle_boost(message: Message) -> None:
-    """Displays comprehensive advertising analytics for partner «Телеконовая долина»."""
+    """Displays comprehensive advertising analytics for partner «Terricon Valley»."""
     if not await _check_admin(message):
         return
 
@@ -1251,7 +1251,7 @@ async def handle_ahelp(message: Message) -> None:
         "/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n"
         "/find_user [@ник] — <i>быстрый поиск юзера по Telegram-нику</i>\n"
         "/stat — статистика онлайна и регистраций\n"
-        "/boost — аналитика рекламы и кликов «Донер на Юге» (показы, кнопки, ссылки, CTR)\n"
+        "/boost — аналитика рекламы и кликов «Terricon Valley» (показы, кнопки, ссылки, CTR)\n"
         "/users — общее количество пользователей бота\n"
         "/group_stat — покрытие по группам (+ выгрузка JSON)\n"
         "/get_group [groupId] — инфо о группе\n"

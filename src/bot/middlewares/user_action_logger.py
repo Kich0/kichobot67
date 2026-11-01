@@ -186,7 +186,7 @@ def _parse_callback_query(
     ):
         parts = raw.split("|")
         target = parts[1] if len(parts) > 1 else "Подробнее"
-        return ("ad_click_telecon", f"Клик по кнопке «{target}» (Телеконовая долина)", None, None)
+        return ("ad_click_telecon", f"Клик по кнопке «{target}» (Terricon Valley)", None, None)
 
     if raw == "language_select":
         return ("language_menu", "Открыл меню выбора языка", None, None)
