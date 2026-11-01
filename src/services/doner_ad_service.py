@@ -96,11 +96,10 @@ class DonerAdService:
         )
 
     def generate_bridge_html(self, firm_id: str = DONER_FIRM_ID) -> str:
-        """Generates an optimized, branded deep-link bridge HTML page for 2GIS app launch.
+        """Generates an ultra-fast, pitch-black deep-link bridge HTML page for 2GIS app launch.
 
-        This page seamlessly triggers the 2GIS mobile app on iOS and Android,
-        provides an interactive fast-loader with fallback controls, and redirects
-        to the 2GIS web version if the app is not installed.
+        Zero visible DOM elements, pure #000000 black screen (no cards, buttons, spinners or text),
+        and immediate location.replace launch of 2GIS mobile app via Android intent / iOS scheme.
         """
         web_fallback = f"https://2gis.kz/karaganda/geo/{firm_id}"
         dgis_scheme = f"dgis://2gis.ru/firm/{firm_id}"
@@ -110,280 +109,49 @@ class DonerAdService:
         )
 
         return f"""<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" style="background:#000;background-color:#000;">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Донер на Юге — 2GIS</title>
-    <meta name="description" content="Переход в приложение 2GIS: Донер на Юге (Караганда)">
-    <meta property="og:title" content="🌯 Донер на Юге — 2GIS">
-    <meta property="og:description" content="Сочные донеры, снеки и комбо 24/7! Скидка по промокоду KICHO.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="{web_fallback}">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+    <title>2GIS</title>
     <style>
-        :root {{
-            --bg-color: #f8fafc;
-            --card-bg: #ffffff;
-            --text-main: #0f172a;
-            --text-muted: #64748b;
-            --primary: #00a550;
-            --primary-hover: #008f45;
-            --primary-text: #ffffff;
-            --secondary-bg: #f1f5f9;
-            --secondary-text: #334155;
-            --accent-border: #e2e8f0;
-            --badge-bg: #fef3c7;
-            --badge-text: #92400e;
-            --badge-border: #fde68a;
-        }}
-        @media (prefers-color-scheme: dark) {{
-            :root {{
-                --bg-color: #0e1621;
-                --card-bg: #17212b;
-                --text-main: #f8fafc;
-                --text-muted: #94a3b8;
-                --primary: #00b859;
-                --primary-hover: #009e4c;
-                --primary-text: #ffffff;
-                --secondary-bg: #242f3d;
-                --secondary-text: #cbd5e1;
-                --accent-border: #242f3d;
-                --badge-bg: #2d2417;
-                --badge-text: #fcd34d;
-                --badge-border: #78350f;
-            }}
-        }}
-        * {{
-            box-sizing: border-box;
+        html, body {{
+            background: #000000 !important;
+            background-color: #000000 !important;
+            color: #000000 !important;
             margin: 0;
             padding: 0;
-        }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 16px;
-        }}
-        .card {{
-            width: 100%;
-            max-width: 400px;
-            background-color: var(--card-bg);
-            border-radius: 20px;
-            border: 1px solid var(--accent-border);
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08);
-            padding: 28px 24px;
-            text-align: center;
-        }}
-        .icon-wrap {{
-            width: 72px;
-            height: 72px;
-            margin: 0 auto 16px;
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 36px;
-            box-shadow: 0 8px 16px rgba(234, 88, 12, 0.25);
-        }}
-        h1 {{
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 6px;
-            letter-spacing: -0.3px;
-        }}
-        .status {{
-            font-size: 14px;
-            color: var(--text-muted);
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }}
-        .spinner {{
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--text-muted);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }}
-        @keyframes spin {{
-            to {{ transform: rotate(360deg); }}
-        }}
-        .btn-main {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            width: 100%;
-            padding: 14px 20px;
-            background-color: var(--primary);
-            color: var(--primary-text);
-            text-decoration: none;
-            font-size: 16px;
-            font-weight: 600;
-            border-radius: 12px;
-            transition: background-color 0.15s ease, transform 0.1s ease;
-            box-shadow: 0 4px 12px rgba(0, 165, 80, 0.25);
-            margin-bottom: 12px;
-        }}
-        .btn-main:hover, .btn-main:active {{
-            background-color: var(--primary-hover);
-            transform: scale(0.99);
-        }}
-        .btn-secondary {{
-            display: block;
-            width: 100%;
-            padding: 11px 16px;
-            background-color: var(--secondary-bg);
-            color: var(--secondary-text);
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 500;
-            border-radius: 10px;
-            transition: opacity 0.15s ease;
-            margin-bottom: 20px;
-        }}
-        .btn-secondary:hover {{
-            opacity: 0.9;
-        }}
-        .promo-pill {{
-            display: inline-block;
-            background-color: var(--badge-bg);
-            color: var(--badge-text);
-            border: 1px solid var(--badge-border);
-            font-size: 12px;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 9999px;
-            letter-spacing: 0.2px;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            border: none;
+            outline: none;
         }}
     </style>
-</head>
-<body>
-    <div class="card">
-        <div class="icon-wrap">🌯</div>
-        <h1>Донер на Юге</h1>
-        <div class="status">
-            <span class="spinner" id="spinner"></span>
-            <span id="status-text">Переход в приложение 2GIS...</span>
-        </div>
-        <a id="btn-open-app" href="{dgis_scheme}" class="btn-main">
-            <span>🗺️ Открыть в приложении 2GIS</span>
-        </a>
-        <a id="btn-open-web" href="{web_fallback}" class="btn-secondary">
-            <span>🌐 Открыть веб-версию 2GIS</span>
-        </a>
-        <div class="promo-pill">
-            🎁 Скидка по промокоду: <strong>KICHO</strong>
-        </div>
-    </div>
-
     <script>
         (function() {{
-            var webFallback = "{web_fallback}";
-            var dgisScheme = "{dgis_scheme}";
-            var androidIntent = "{android_intent}";
-
+            var web = "{web_fallback}";
+            var dgis = "{dgis_scheme}";
+            var intent = "{android_intent}";
             var ua = navigator.userAgent || "";
             var isAndroid = /Android/i.test(ua);
             var isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-            var deepLinkUrl = isAndroid ? androidIntent : (isIOS ? dgisScheme : webFallback);
-
-            var appBtn = document.getElementById("btn-open-app");
-            var webBtn = document.getElementById("btn-open-web");
-            var statusText = document.getElementById("status-text");
-            var spinner = document.getElementById("spinner");
-
-            if (appBtn) {{
-                appBtn.href = deepLinkUrl;
-            }}
-            if (webBtn) {{
-                webBtn.href = webFallback;
+            if (isAndroid) {{
+                window.location.replace(intent);
+            }} else if (isIOS) {{
+                window.location.replace(dgis);
+            }} else {{
+                window.location.replace(web);
             }}
 
-            // Telegram WebApp initialization
-            if (window.Telegram && window.Telegram.WebApp) {{
-                try {{
-                    window.Telegram.WebApp.ready();
-                    window.Telegram.WebApp.expand();
-                }} catch (e) {{}}
-            }}
-
-            var fallbackTimer = null;
-            function cancelFallback() {{
-                if (fallbackTimer) {{
-                    clearTimeout(fallbackTimer);
-                    fallbackTimer = null;
-                }}
-            }}
-
-            if (appBtn) {{
-                appBtn.addEventListener("click", cancelFallback);
-            }}
-            if (webBtn) {{
-                webBtn.addEventListener("click", cancelFallback);
-            }}
-
-            document.addEventListener("visibilitychange", function() {{
-                if (document.hidden) {{
-                    cancelFallback();
-                }}
-            }});
-            window.addEventListener("pagehide", cancelFallback);
-            window.addEventListener("blur", cancelFallback);
-
-            // Inform user if browser security policy prevented instant app launch
             setTimeout(function() {{
-                if (!document.hidden && statusText) {{
-                    statusText.textContent = "Не открылось автоматически? Нажмите кнопку:";
-                    if (spinner) {{
-                        spinner.style.display = "none";
-                    }}
-                }}
-            }}, 1500);
-
-            function tryLaunch() {{
-                if (isAndroid) {{
-                    try {{
-                        window.location.href = androidIntent;
-                    }} catch (err) {{
-                        window.location.href = webFallback;
-                    }}
-                    fallbackTimer = setTimeout(function() {{
-                        if (!document.hidden) {{
-                            window.location.href = webFallback;
-                        }}
-                    }}, 2500);
-                }} else if (isIOS) {{
-                    window.location.href = dgisScheme;
-                    fallbackTimer = setTimeout(function() {{
-                        if (!document.hidden) {{
-                            window.location.href = webFallback;
-                        }}
-                    }}, 2500);
-                }} else {{
-                    if (statusText) {{
-                        statusText.textContent = "Переход на страницу 2GIS...";
-                    }}
-                    fallbackTimer = setTimeout(function() {{
-                        window.location.href = webFallback;
-                    }}, 1000);
-                }}
-            }}
-
-            tryLaunch();
+                window.location.replace(web);
+            }}, 1200);
         }})();
     </script>
-</body>
+</head>
+<body style="background:#000;background-color:#000;margin:0;padding:0;"></body>
 </html>"""
 
     async def record_impression(
