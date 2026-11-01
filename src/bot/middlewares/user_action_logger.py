@@ -178,13 +178,15 @@ def _parse_callback_query(
     if raw == "nothing":
         return ("nothing", "Нажатие на пустой разделитель", None, None)
 
-    if raw == "ad_hackathon_info" or raw.startswith("ad_hackathon_info"):
-        return ("ad_click_hackathon", "Клик по кнопке «Подробнее» (Хакатон Decentrathon)", None, None)
-
-    if raw.startswith("ad_doner_click"):
+    if (
+        raw in ("ad_telecon_info", "ad_hackathon_info")
+        or raw.startswith("ad_telecon_info")
+        or raw.startswith("ad_hackathon_info")
+        or raw.startswith("ad_telecon_click")
+    ):
         parts = raw.split("|")
-        target = parts[1] if len(parts) > 1 else "кнопка"
-        return ("ad_click_doner", f"Клик по рекламе «Донер на Юге» ({target})", None, None)
+        target = parts[1] if len(parts) > 1 else "Подробнее"
+        return ("ad_click_telecon", f"Клик по кнопке «{target}» (Телеконовая долина)", None, None)
 
     if raw == "language_select":
         return ("language_menu", "Открыл меню выбора языка", None, None)

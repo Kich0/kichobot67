@@ -547,19 +547,19 @@ def create_app() -> FastAPI:
             status_code=200,
         )
 
-    # 7. Sponsor «Донер на Юге» tracking redirect and stats endpoints
-    @app.get("/doner-na-yuge")
-    @app.get("/doner-na-yuge/")
-    @app.get("/doner-na-yuge/{subpath}")
-    @app.get("/doner_na_yuge")
-    @app.get("/doner_na_yuge/")
-    @app.get("/doner_na_yuge/{subpath}")
-    @app.get("/ad/doner/click")
-    @app.get("/ad/doner/click/")
-    @app.get("/r/doner")
-    @app.get("/r/doner/")
-    @app.get("/r/doner/{subpath}")
-    async def doner_click_redirect(
+    # 7. Sponsor «Телеконовая долина» tracking redirect and stats endpoints
+    @app.get("/telecon")
+    @app.get("/telecon/")
+    @app.get("/telecon/{subpath}")
+    @app.get("/telecon-valley")
+    @app.get("/telecon-valley/")
+    @app.get("/telecon-valley/{subpath}")
+    @app.get("/ad/telecon/click")
+    @app.get("/ad/telecon/click/")
+    @app.get("/r/telecon")
+    @app.get("/r/telecon/")
+    @app.get("/r/telecon/{subpath}")
+    async def telecon_click_redirect(
         request: Request,
         subpath: str | None = None,
         t: str | None = Query(default=None),
@@ -570,14 +570,14 @@ def create_app() -> FastAPI:
         source: str | None = Query(default=None),
         mode: str | None = Query(default=None),
     ) -> Response:
-        """Redirects to 2GIS for «Донер на Юге» while recording click analytics.
+        """Redirects to 2GIS for «Телеконовая долина» while recording click analytics.
 
-        Supports compact short parameters (?t=btn&u=123&s=std), path routing (/r/doner/btn), and legacy (?target=button&uid=123).
+        Supports compact short parameters (?t=btn&u=123&s=std), path routing (/r/telecon/btn), and legacy (?target=button&uid=123).
         When opened in an interactive browser/webview (e.g. Telegram in-app browser), serves a
         high-performance branded HTML bridge page with native 2GIS deep link scheme and Android intent.
         For headless clients/crawlers or when ?mode=302 is specified, returns HTTP 302 redirect.
         """
-        from src.services.doner_ad_service import DONER_2GIS_URL, doner_ad_service
+        from src.services.telecon_ad_service import TELECON_2GIS_URL, telecon_ad_service
 
         client_ip = get_client_ip(request)
         user_agent = request.headers.get("user-agent")
@@ -602,11 +602,11 @@ def create_app() -> FastAPI:
         else:
             clean_source = "button" if clean_target == "button" else "text_link"
 
-        await doner_ad_service.record_click(
+        await telecon_ad_service.record_click(
             user_id=resolved_uid,
             event_type=ev_type,
             source=clean_source,
-            target_url=DONER_2GIS_URL,
+            target_url=TELECON_2GIS_URL,
             ip=client_ip,
             user_agent=user_agent,
         )
@@ -625,17 +625,17 @@ def create_app() -> FastAPI:
         )
 
         if is_browser and mode not in ("302", "redirect", "raw") and request.query_params.get("raw") != "1":
-            html_content = doner_ad_service.generate_bridge_html()
+            html_content = telecon_ad_service.generate_bridge_html()
             return HTMLResponse(content=html_content, status_code=200)
 
-        return RedirectResponse(url=DONER_2GIS_URL, status_code=302)
+        return RedirectResponse(url=TELECON_2GIS_URL, status_code=302)
 
-    @app.get("/api/ad/doner/stats")
-    async def get_doner_stats_api() -> ORJSONResponse:
-        """Returns JSON metrics summary for «Донер на Юге»."""
-        from src.services.doner_ad_service import doner_ad_service
+    @app.get("/api/ad/telecon/stats")
+    async def get_telecon_stats_api() -> ORJSONResponse:
+        """Returns JSON metrics summary for «Телеконовая долина»."""
+        from src.services.telecon_ad_service import telecon_ad_service
 
-        summary = await doner_ad_service.get_analytics_summary()
+        summary = await telecon_ad_service.get_analytics_summary()
         clean_summary = dict(summary)
         clean_summary["recent_events"] = [
             ev.model_dump(by_alias=True, mode="json") if hasattr(ev, "model_dump") else str(ev)

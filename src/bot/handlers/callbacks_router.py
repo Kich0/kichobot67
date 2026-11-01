@@ -1522,15 +1522,19 @@ async def _get_ad_block_for_viewer(
         except Exception:
             return "", None
 
-    terricon_2gis_url = "https://2gis.kz/karaganda/search/Terricon%20Valley"
+    from src.services.telecon_ad_service import telecon_ad_service
+
+    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
+    await telecon_ad_service.record_impression(viewer_user_id, source=source)
+
     ad_text = (
         "────────────────────\n"
-        "🚀 <b>Хакатон в Terricon Valley: Decentrathon!</b>\n"
+        "🚀 <b>Хакатон в Телеконовой долине: Decentrathon!</b>\n"
         "Призовой фонд, полезные знакомства в портфолио и бесплатная пицца. Нужны не только кодеры, но и дизайнеры/презентаторы.\n"
-        f"📍 <b>Адрес:</b> <a href=\"{terricon_2gis_url}\">ул. Алалыкина, 12/1</a>\n"
+        f"📍 <b>Адрес:</b> <a href=\"{link_url}\">ул. Алалыкина, 12/1</a>\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("👉 Подробнее", "ad_hackathon_info")
+    ad_btn = ("👉 Подробнее", "ad_telecon_info")
     return ad_text, ad_btn
 
 
@@ -3033,21 +3037,10 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
     await call.answer()
 
 
-@callbacks_router.callback_query(F.data == "ad_hackathon_info")
-async def handle_ad_hackathon_callback(call: CallbackQuery) -> None:
-    """Displays Decentrathon hackathon modal details via Telegram alert popup."""
-    popup_text = (
-        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане. "
-        "30–31 октября он пройдёт в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
-        "📍 Адрес: ул. Алалыкина, 12/1"
-    )
-    await call.answer(text=popup_text, show_alert=True)
-
-
-@callbacks_router.callback_query(F.data.startswith("ad_doner_click"))
-async def handle_ad_doner_callback(call: CallbackQuery) -> None:
-    """Handles callback-based ad clicks for «Донер на Юге»."""
-    from src.services.doner_ad_service import DONER_2GIS_URL, doner_ad_service
+@callbacks_router.callback_query(F.data.in_({"ad_telecon_info", "ad_hackathon_info"}) | F.data.startswith("ad_telecon_click"))
+async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
+    """Displays Decentrathon hackathon modal details via Telegram alert popup and tracks button click."""
+    from src.services.telecon_ad_service import telecon_ad_service
 
     user_id = call.from_user.id if call.from_user else 0
     username = call.from_user.username if call.from_user else None
@@ -3057,16 +3050,21 @@ async def handle_ad_doner_callback(call: CallbackQuery) -> None:
     parts = (call.data or "").split("|")
     target = parts[1] if len(parts) > 1 else "button"
 
-    await doner_ad_service.record_click(
+    await telecon_ad_service.record_click(
         user_id=user_id,
         username=username,
         first_name=first_name,
         last_name=last_name,
         event_type="button_click",
         source=f"callback_{target}",
-        target_url=DONER_2GIS_URL,
     )
-    await call.answer()
+
+    popup_text = (
+        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане (Телеконовая долина). "
+        "30–31 октября он пройдёт в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
+        "📍 Адрес: ул. Алалыкина, 12/1"
+    )
+    await call.answer(text=popup_text, show_alert=True)
 
 
 @callbacks_router.callback_query()

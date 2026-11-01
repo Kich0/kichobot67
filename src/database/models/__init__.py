@@ -21,7 +21,7 @@ from src.database.models.user_registration_stat import UserRegistrationStat
 from src.database.models.user_activity import UserActivity
 from src.database.models.user_toll import UserToll
 from src.database.models.catalog_discovery import CatalogDiscovery
-from src.database.models.doner_ad_event import DonerAdEvent
+from src.database.models.telecon_ad_event import TeleconAdEvent
 
 ALL_DOCUMENT_MODELS = [
     User,
@@ -42,7 +42,7 @@ ALL_DOCUMENT_MODELS = [
     UserActivity,
     UserToll,
     CatalogDiscovery,
-    DonerAdEvent,
+    TeleconAdEvent,
 ]
 
 __all__ = [
@@ -68,6 +68,6 @@ __all__ = [
     "UserActivity",
     "UserToll",
     "CatalogDiscovery",
-    "DonerAdEvent",
+    "TeleconAdEvent",
     "ALL_DOCUMENT_MODELS",
 ]

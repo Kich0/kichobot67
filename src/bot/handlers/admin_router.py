@@ -203,8 +203,8 @@ async def handle_stat(message: Message) -> None:
         await message.answer(f"❌ Ошибка получения статистики: {e}")
 
 
-def _format_doner_boost_message(summary: dict[str, Any]) -> str:
-    """Formats comprehensive advertising analytics for sponsor «Донер на Юге»."""
+def _format_telecon_boost_message(summary: dict[str, Any]) -> str:
+    """Formats comprehensive advertising analytics for partner «Телеконовая долина»."""
     total_imp = summary.get("total_impressions", 0)
     uniq_viewers = summary.get("unique_viewers", 0)
     btn_clicks = summary.get("button_clicks", 0)
@@ -245,11 +245,11 @@ def _format_doner_boost_message(summary: dict[str, Any]) -> str:
         other_clk = 0
 
     lines = [
-        "🌯 <b>Аналитика рекламы «Донер на Юге»</b> (/boost)\n",
+        "🚀 <b>Аналитика: «Телеконовая долина»</b> (/boost)\n",
         "📊 <b>Общие показатели:</b>",
         f"• Всего показов (просмотров): <b>{total_imp}</b>",
         f"• Уникальных зрителей: <b>{uniq_viewers}</b> чел.",
-        f"• Кликов по кнопке 2GIS: <b>{btn_clicks}</b> (уник: {uniq_btn})",
+        f"• Кликов по кнопке «Подробнее»: <b>{btn_clicks}</b> (уник: {uniq_btn})",
         f"• Переходов по ссылке «Адрес»: <b>{link_clicks}</b> (уник: {uniq_link})",
         f"• Всего переходов (кнопка + ссылка): <b>{total_clicks}</b>",
         f"• Уникальных кликеров: <b>{uniq_clickers}</b> чел.",
@@ -291,7 +291,7 @@ def _format_doner_boost_message(summary: dict[str, Any]) -> str:
                 first_name = getattr(ev, "first_name", None)
 
             ev_time = _format_action_time(ev_time_raw, "%d.%m %H:%M:%S")
-            ev_label = "🔘 Кнопка 2GIS" if ev_type == "button_click" else "🔗 Ссылка «Адрес»"
+            ev_label = "🔘 Кнопка «Подробнее»" if ev_type == "button_click" else "🔗 Ссылка «Адрес»"
 
             src_tag = ""
             if "student" in str(ev_source):
@@ -314,17 +314,21 @@ def _format_doner_boost_message(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-@admin_router.message(Command(commands=["boost", "doner", "ad_stat", "ad_stats"]))
+# Backwards compatibility alias
+_format_doner_boost_message = _format_telecon_boost_message
+
+
+@admin_router.message(Command(commands=["boost", "telecon", "ad_stat", "ad_stats"]))
 async def handle_boost(message: Message) -> None:
-    """Displays comprehensive advertising analytics for sponsor «Донер на Юге»."""
+    """Displays comprehensive advertising analytics for partner «Телеконовая долина»."""
     if not await _check_admin(message):
         return
 
     try:
-        from src.services.doner_ad_service import doner_ad_service
+        from src.services.telecon_ad_service import telecon_ad_service
 
-        summary = await doner_ad_service.get_analytics_summary()
-        text = _format_doner_boost_message(summary)
+        summary = await telecon_ad_service.get_analytics_summary()
+        text = _format_telecon_boost_message(summary)
         await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         logger.error(f"Error in /boost: {e}")
@@ -1299,5 +1303,6 @@ __all__ = [
     "handle_user_logs",
     "handle_users_count",
     "_format_action_time",
+    "_format_telecon_boost_message",
     "_format_doner_boost_message",
 ]

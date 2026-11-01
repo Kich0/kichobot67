@@ -1,4 +1,4 @@
-"""Doner na Yuge advertisement event document model."""
+"""Telecon Valley advertisement event document model."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pydantic import Field, field_validator
 from src.database.base import BaseMongoDoc
 
 
-class DonerAdEvent(BaseMongoDoc):
-    """Advertisement event for sponsor «Донер на Юге».
+class TeleconAdEvent(BaseMongoDoc):
+    """Advertisement event for partner / sponsor «Телеконовая долина».
 
-    Stored permanently (without TTL) in MongoDB collection 'doner_ad_events'
+    Stored permanently (without TTL) in MongoDB collection 'telecon_ad_events'
     to provide exact analytics on impressions, button clicks, link clicks,
     and user interactions.
     """
@@ -31,11 +31,11 @@ class DonerAdEvent(BaseMongoDoc):
         description="'student_schedule', 'teacher_schedule', 'web_redirect', 'direct'",
     )
     target_url: str = Field(
-        default="https://2gis.kz/karaganda/geo/70000001117430885",
+        default="https://2gis.kz/karaganda/firm/70000001083364853",
         alias="targetUrl",
     )
     button_text: str | None = Field(
-        default="🌯 Открыть Донер на Юге в 2GIS ↗️",
+        default="👉 Подробнее",
         alias="buttonText",
     )
     ip: str | None = Field(default=None)
@@ -64,7 +64,7 @@ class DonerAdEvent(BaseMongoDoc):
         return v if v is not None else datetime.now(timezone.utc)
 
     class Settings:
-        name = "doner_ad_events"
+        name = "telecon_ad_events"
         indexes = [
             IndexModel([("createdAt", DESCENDING)]),
             IndexModel([("eventType", ASCENDING), ("createdAt", DESCENDING)]),
