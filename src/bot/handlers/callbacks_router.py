@@ -1522,20 +1522,15 @@ async def _get_ad_block_for_viewer(
         except Exception:
             return "", None
 
-    from src.services.doner_ad_service import doner_ad_service
-
-    btn_url = doner_ad_service.get_tracking_url("button", viewer_user_id, source=source, short=True)
-    link_url = doner_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
-    await doner_ad_service.record_impression(viewer_user_id, source=source)
-
+    terricon_2gis_url = "https://2gis.kz/karaganda/search/Terricon%20Valley"
     ad_text = (
         "────────────────────\n"
-        "🌯 <b>Донер на Юге</b>\n"
-        f"📍 <a href=\"{link_url}\">Адрес</a>\n"
-        "Сочные донеры, снеки и комбо 24/7! Скидка студентам по промокоду <code>KICHO</code>.\n"
+        "🚀 <b>Хакатон в Terricon Valley: Decentrathon!</b>\n"
+        "Призовой фонд, полезные знакомства в портфолио и бесплатная пицца. Нужны не только кодеры, но и дизайнеры/презентаторы.\n"
+        f"📍 <b>Адрес:</b> <a href=\"{terricon_2gis_url}\">ул. Алалыкина, 12/1</a>\n"
         "────────────────────\n\n"
     )
-    ad_btn = ("🌯 Открыть Донер на Юге в 2GIS ↗️", btn_url)
+    ad_btn = ("👉 Подробнее", "ad_hackathon_info")
     return ad_text, ad_btn
 
 
@@ -3036,6 +3031,17 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
                     logger.debug(f"editMessageText error: {e}")
 
     await call.answer()
+
+
+@callbacks_router.callback_query(F.data == "ad_hackathon_info")
+async def handle_ad_hackathon_callback(call: CallbackQuery) -> None:
+    """Displays Decentrathon hackathon modal details via Telegram alert popup."""
+    popup_text = (
+        "Decentrathon — крупнейший мультилокационный хакатон в Казахстане. "
+        "30–31 октября он пройдёт в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
+        "📍 Адрес: ул. Алалыкина, 12/1"
+    )
+    await call.answer(text=popup_text, show_alert=True)
 
 
 @callbacks_router.callback_query(F.data.startswith("ad_doner_click"))

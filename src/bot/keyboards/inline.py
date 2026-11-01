@@ -404,8 +404,11 @@ def get_schedule_pagination_keyboard(
         ],
     ]
     if ad_button:
-        btn_text, btn_url = ad_button
-        rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
+        btn_text, btn_target = ad_button
+        if btn_target.startswith("http://") or btn_target.startswith("https://") or btn_target.startswith("tg://"):
+            rows.append([InlineKeyboardButton(text=btn_text, url=btn_target)])
+        else:
+            rows.append([InlineKeyboardButton(text=btn_text, callback_data=btn_target)])
     rows.append([InlineKeyboardButton(text=prev_menu_text, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -525,8 +528,11 @@ def get_teacher_text_keyboard(
         ],
     ]
     if ad_button:
-        btn_text, btn_url = ad_button
-        rows.append([InlineKeyboardButton(text=btn_text, url=btn_url)])
+        btn_text, btn_target = ad_button
+        if btn_target.startswith("http://") or btn_target.startswith("https://") or btn_target.startswith("tg://"):
+            rows.append([InlineKeyboardButton(text=btn_text, url=btn_target)])
+        else:
+            rows.append([InlineKeyboardButton(text=btn_text, callback_data=btn_target)])
     rows.append([InlineKeyboardButton(text=prev_menu_text, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)

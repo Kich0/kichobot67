@@ -178,6 +178,9 @@ def _parse_callback_query(
     if raw == "nothing":
         return ("nothing", "Нажатие на пустой разделитель", None, None)
 
+    if raw == "ad_hackathon_info" or raw.startswith("ad_hackathon_info"):
+        return ("ad_click_hackathon", "Клик по кнопке «Подробнее» (Хакатон Decentrathon)", None, None)
+
     if raw.startswith("ad_doner_click"):
         parts = raw.split("|")
         target = parts[1] if len(parts) > 1 else "кнопка"
