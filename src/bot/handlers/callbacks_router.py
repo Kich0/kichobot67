@@ -1534,8 +1534,7 @@ async def _get_ad_block_for_viewer(
         f"📍 <b>Адрес:</b> <a href=\"{link_url}\">ул. Алалыкина, 12/1</a>\n"
         "────────────────────\n\n"
     )
-    btn_url = telecon_ad_service.get_tracking_url("button", viewer_user_id, source=source, short=True)
-    ad_btn = ("👉 Подробнее ↗️", btn_url)
+    ad_btn = ("👉 Подробнее", "ad_telecon_info")
     return ad_text, ad_btn
 
 
@@ -3065,9 +3064,11 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
 
     popup_text = (
         "Decentrathon — крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
-        "30–31 октября он пройдёт в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
+        "30–31 октября в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
         "📍 Адрес: ул. Алалыкина, 12/1"
     )
+    if len(popup_text) > 200:
+        popup_text = popup_text[:197] + "..."
     try:
         await call.answer(text=popup_text, show_alert=True)
     except Exception as exc:
