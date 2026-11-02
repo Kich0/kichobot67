@@ -77,7 +77,7 @@ async def handle_start(message: Message) -> None:
 
 
 @commands_router.message(Command("help"))
-@commands_router.message(F.text.regexp(r"^(?:[💡❓⚠️\u26A0\uFE0F\s])*(?:Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)", flags=2))
+@commands_router.message(F.text.regexp(r"^(?:[💬💡❓⚠️\u26A0\uFE0F\s])*(?:Связаться|Байланысу|Помощь|Көмек|Возникла проблема|Қате|Мәселе|произошла ошибка)", flags=2))
 async def handle_help(message: Message) -> None:
     """Handles /help command and help text triggers."""
     text = (message.text or "").strip()

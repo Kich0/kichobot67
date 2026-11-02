@@ -1712,7 +1712,6 @@ async def build_student_day_schedule_view(
         clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕯️ <i><b>{elapsed} || {clock}</b></i>\n"
-            f"{t('for_help', ui_lang)}\n"
             f"{t('official_site_compare', ui_lang)}\n"
         )
     else:
@@ -1748,7 +1747,6 @@ async def build_student_day_schedule_view(
         clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
-            f"{t('for_help', ui_lang)}\n"
             f"{t('official_site_compare', ui_lang)}\n"
         )
 
@@ -2475,7 +2473,6 @@ async def build_teacher_day_text_view(
         clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕯️ <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
-            f"{t('for_help', ui_lang)}\n"
             f"{t('official_site_compare', ui_lang)}\n"
         )
     else:
@@ -2510,7 +2507,6 @@ async def build_teacher_day_text_view(
         clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
-            f"{t('for_help', ui_lang)}\n"
             f"{t('official_site_compare', ui_lang)}\n"
         )
 
