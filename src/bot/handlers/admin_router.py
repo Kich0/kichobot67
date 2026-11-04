@@ -6,7 +6,7 @@ Ports all administrative commands from Node.js (commits 81705b6 / 25601dc):
 - /users: total user counts in MongoDB
 - /get_user, /find_user, /user: user inspect cards with action history
 - /user_logs: detailed user action logs
-- /sms: single DM or non-blocking broadcast with 500ms pacing
+- /sms: single DM or non-blocking broadcast with 50ms pacing (~20 msg/sec)
 - /backup_logs: export and backup logs
 - /get_group: group JSON inspector
 - /get_users_by_group: list users belonging to a group
@@ -520,7 +520,7 @@ async def handle_sms(message: Message) -> None:
                         break
                 if not delivered:
                     failed += 1
-                await asyncio.sleep(0.5)  # 500ms pacing against Telegram rate limits
+                await asyncio.sleep(0.05)  # 50ms pacing (~20 msg/sec) within safe Telegram limits (<30 msg/sec)
 
             report = (
                 f"✅ <b>Разовое оповещение завершено:</b>\n"
