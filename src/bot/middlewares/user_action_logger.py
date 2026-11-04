@@ -831,6 +831,14 @@ class UserActionLoggingMiddleware(BaseMiddleware):
         user_id = user.id
         username = user.username
 
+        from src.services.user_service import user_service
+        user_service.touch_user_profile(
+            user_id=user_id,
+            username=username,
+            first_name=getattr(user, "first_name", None),
+            last_name=getattr(user, "last_name", None),
+        )
+
         if isinstance(event, Message):
             is_private = (event.chat.type == "private") if (hasattr(event, "chat") and event.chat) else True
             from src.bot.utils import is_message_for_bot

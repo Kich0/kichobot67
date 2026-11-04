@@ -58,6 +58,7 @@ class User(BaseMongoDoc):
         indexes = [
             IndexModel([("userId", ASCENDING)], unique=True),
             IndexModel([("username", ASCENDING)]),
+            IndexModel([("firstName", ASCENDING)]),
             IndexModel([("group", ASCENDING)]),
             IndexModel([("teacher", ASCENDING)]),
             IndexModel([("createdAt", DESCENDING)]),

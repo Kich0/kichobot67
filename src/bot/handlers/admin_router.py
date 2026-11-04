@@ -368,13 +368,32 @@ async def handle_get_user(message: Message) -> None:
     arg = match.group(1) or match.group(2) if match else None
 
     if not arg:
-        await message.answer("ℹ️ Использование: <code>/get_user [ID или @username]</code>", parse_mode="HTML")
+        await message.answer("ℹ️ Использование: <code>/get_user [ID, @username или имя/ник]</code>", parse_mode="HTML")
         return
 
-    target_user = await user_service.find_user(arg.strip())
-    if not target_user:
+    users = await user_service.search_users(arg.strip(), limit=10)
+    if not users:
         await message.answer(f"❌ Пользователь <b>{escape_html(arg)}</b> не найден в базе данных.", parse_mode="HTML")
         return
+
+    if len(users) > 1:
+        lines = [f"👥 <b>Найдено пользователей ({len(users)}) по запросу «{escape_html(arg)}»:</b>\n"]
+        for u in users:
+            raw_name = " ".join(f"{u.first_name or ''} {u.last_name or ''}".split())
+            name_display = escape_html(raw_name) if raw_name else f"ID: {u.user_id}"
+            user_link = f'<a href="tg://user?id={u.user_id}">{name_display}</a>'
+            clean_u = (u.username or "").strip().lstrip("@")
+            u_name = f"@{escape_html(clean_u)}" if clean_u else "<i>без ника</i>"
+            group_display = await _resolve_user_group_name(u.group)
+            lines.append(
+                f"• {user_link} — <code>{u.user_id}</code> ({u_name}) | Гр: {escape_html(group_display)}\n"
+                f"  └ Карточка: <code>/get_user {u.user_id}</code>"
+            )
+        lines.append("\nℹ️ <i>Нажмите на команду с ID, чтобы открыть подробную карточку.</i>")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+        return
+
+    target_user = users[0]
 
     from src.database.models.user_action import UserAction
 
@@ -1359,9 +1378,9 @@ async def handle_ahelp(message: Message) -> None:
         "/unpaywall [ID/@ник] — <i>выключить платный режим для пользователя</i>\n"
         "/paywalls — <i>список пользователей на платном тарифе</i>\n\n"
         "📊 <b>Статистика и пользователи:</b>\n"
-        "/get_user [ID/@ник] — <i>карточка пользователя с историей логов на русском!</i>\n"
+        "/get_user [ID/@ник/имя] — <i>карточка пользователя с историей логов на русском!</i>\n"
         "/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n"
-        "/find_user [@ник] — <i>быстрый поиск юзера по Telegram-нику</i>\n"
+        "/find_user [ID/@ник/имя] — <i>умный поиск юзера по ID, логину или имени</i>\n"
         "/stat — статистика онлайна и регистраций\n"
         "/boost — аналитика рекламы и кликов «Terricon Valley» (показы, кнопки, ссылки, CTR)\n"
         "/users — общее количество пользователей бота\n"

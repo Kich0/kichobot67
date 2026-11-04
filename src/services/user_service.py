@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from cachetools import TTLCache
@@ -18,10 +19,63 @@ class UserService:
 
     def __init__(self) -> None:
         self._lang_cache: TTLCache[tuple[int, int], str] = TTLCache(maxsize=5000, ttl=1800.0)
+        self._profile_cache: TTLCache[int, tuple[str | None, str | None, str | None]] = TTLCache(maxsize=10000, ttl=3600.0)
 
     def clear_cache(self) -> None:
-        """Clears the in-memory language cache."""
+        """Clears the in-memory language and profile caches."""
         self._lang_cache.clear()
+        self._profile_cache.clear()
+
+    def touch_user_profile(
+        self,
+        user_id: int,
+        username: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+    ) -> None:
+        """Lightweight non-blocking in-memory check to sync changed profile data into MongoDB in background."""
+        if not user_id:
+            return
+        clean_username = username.lstrip("@") if username else None
+        current_profile = (clean_username, first_name, last_name)
+        cached = self._profile_cache.get(user_id)
+        if cached == current_profile:
+            return
+        self._profile_cache[user_id] = current_profile
+
+        try:
+            asyncio.create_task(self._sync_profile_to_db(user_id, clean_username, first_name, last_name))
+        except Exception as e:
+            logger.debug(f"Could not launch profile sync task for {user_id}: {e}")
+
+    async def _sync_profile_to_db(
+        self,
+        user_id: int,
+        clean_username: str | None,
+        first_name: str | None,
+        last_name: str | None,
+    ) -> None:
+        """Synchronizes updated user profile attributes into MongoDB."""
+        try:
+            from datetime import datetime, timezone
+            from src.database.models.user import User
+
+            res = await User.find({"userId": user_id}).update({"$set": {
+                "username": clean_username,
+                "firstName": first_name,
+                "lastName": last_name,
+                "updatedAt": datetime.now(timezone.utc),
+            }})
+            # If user document does not exist in DB yet, create it
+            if getattr(res, "matched_count", 0) == 0:
+                await self.get_or_create_user(
+                    user_id=user_id,
+                    username=clean_username,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+        except Exception as e:
+            logger.debug(f"Failed to sync user profile in background for {user_id}: {e}")
 
     async def get_or_create_user(
         self,
@@ -35,12 +89,12 @@ class UserService:
             from pymongo.errors import DuplicateKeyError
             from src.database.models.user import User
 
+            clean_username = username.lstrip("@") if username else None
             client_id = id(get_client())
             user = await User.find_one({"userId": user_id})
             if user:
                 # Update username or names if changed
                 changed = False
-                clean_username = username.lstrip("@") if username else None
                 if clean_username and user.username != clean_username:
                     user.username = clean_username
                     changed = True
@@ -52,11 +106,11 @@ class UserService:
                     changed = True
                 if changed:
                     await user.save()
+                self._profile_cache[user_id] = (clean_username, first_name, last_name)
                 if user.language:
                     self._lang_cache[(client_id, user_id)] = I18n.normalize_lang(user.language)
                 return user
 
-            clean_username = username.lstrip("@") if username else None
             new_user = User(
                 userId=user_id,
                 username=clean_username,
@@ -67,13 +121,13 @@ class UserService:
             )
             try:
                 await new_user.insert()
+                self._profile_cache[user_id] = (clean_username, first_name, last_name)
                 self._lang_cache[(client_id, user_id)] = "ru"
                 return new_user
             except DuplicateKeyError:
                 existing = await User.find_one({"userId": user_id})
                 if existing:
                     changed = False
-                    clean_username = username.lstrip("@") if username else None
                     if clean_username and existing.username != clean_username:
                         existing.username = clean_username
                         changed = True
@@ -85,6 +139,7 @@ class UserService:
                         changed = True
                     if changed:
                         await existing.save()
+                    self._profile_cache[user_id] = (clean_username, first_name, last_name)
                     if existing.language:
                         self._lang_cache[(client_id, user_id)] = I18n.normalize_lang(existing.language)
                     return existing
@@ -212,40 +267,92 @@ class UserService:
         return False
 
     async def find_user(self, query: str | int | None) -> Any:
-        """Finds user by Telegram ID or @username (case-insensitive)."""
+        """Finds a single user by Telegram ID, @username (current or historical), or name."""
         if query is None:
             return None
+        users = await self.search_users(query, limit=1)
+        return users[0] if users else None
+
+    async def search_users(self, query: str | int | None, limit: int = 10) -> list[Any]:
+        """Searches users by Telegram ID, @username (current or historical), or firstName/lastName."""
+        if query is None:
+            return []
         try:
+            import re
+            from beanie.operators import RegEx
             from src.database.models.user import User
+            from src.database.models.user_action import UserAction
 
             if isinstance(query, int):
-                return await User.find_one({"userId": int(query)})
+                u = await User.find_one({"userId": int(query)})
+                return [u] if u else []
 
             query_str = str(query).strip()
             if not query_str:
-                return None
+                return []
 
-            # Numeric Telegram ID (supports both positive user IDs and negative supergroup IDs)
+            # 1. Numeric Telegram ID (supports both positive user IDs and negative supergroup IDs)
             if query_str.isdigit() or (query_str.startswith("-") and query_str[1:].isdigit()):
-                return await User.find_one({"userId": int(query_str)})
+                u = await User.find_one({"userId": int(query_str)})
+                if u:
+                    return [u]
 
             clean_q = query_str.lstrip("@").strip()
             if not clean_q:
-                return None
-
-            # Fast path: exact match on username (both bare and with leading @)
-            user = await User.find_one({"username": clean_q}) or await User.find_one({"username": f"@{clean_q}"})
-            if user:
-                return user
-
-            # Case-insensitive match via Beanie RegEx
-            import re
-            from beanie.operators import RegEx
+                return []
 
             escaped = re.escape(clean_q)
-            return await User.find_one(RegEx("username", f"^@?{escaped}$", "i"))
-        except Exception:
-            return None
+
+            # 2. Exact match on username (both bare and with leading @)
+            user = await User.find_one({"username": clean_q}) or await User.find_one({"username": f"@{clean_q}"})
+            if user:
+                return [user]
+
+            # 3. Case-insensitive exact match on username
+            user = await User.find_one(RegEx("username", f"^@?{escaped}$", "i"))
+            if user:
+                return [user]
+
+            # 4. Search in UserAction logs for historical username (e.g. user changed username)
+            if query_str.startswith("@") or " " not in clean_q:
+                hist_action = await UserAction.find_one(RegEx("username", f"^@?{escaped}$", "i"))
+                if hist_action and hist_action.user_id:
+                    u = await User.find_one({"userId": hist_action.user_id})
+                    if u:
+                        return [u]
+
+            # 5. Search by First Name or Last Name
+            words = clean_q.split()
+            if len(words) == 1:
+                w_escaped = re.escape(words[0])
+                name_filter = {
+                    "$or": [
+                        {"firstName": {"$regex": w_escaped, "$options": "i"}},
+                        {"lastName": {"$regex": w_escaped, "$options": "i"}},
+                        {"username": {"$regex": w_escaped, "$options": "i"}},
+                    ]
+                }
+            else:
+                w1 = re.escape(words[0])
+                w2 = re.escape(" ".join(words[1:]))
+                name_filter = {
+                    "$or": [
+                        {"firstName": {"$regex": escaped, "$options": "i"}},
+                        {"lastName": {"$regex": escaped, "$options": "i"}},
+                        {
+                            "$and": [
+                                {"firstName": {"$regex": w1, "$options": "i"}},
+                                {"lastName": {"$regex": w2, "$options": "i"}},
+                            ]
+                        },
+                    ]
+                }
+
+            matched_users = await User.find(name_filter).limit(limit).to_list()
+            return matched_users
+        except Exception as e:
+            logger.debug(f"Failed to search users for '{query}': {e}")
+            return []
 
 
 user_service = UserService()
