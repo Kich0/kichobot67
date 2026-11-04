@@ -5,7 +5,7 @@ Implements:
 2. Anti-spam detection (8 requests within 10s -> 60s temporary mute).
 3. Administrator bans and mutes check via BlackList collection.
 4. Non-text message rejection in private chats.
-5. Message length constraint (250 chars max for plain text queries).
+5. Message length constraint (750 chars max for plain text queries).
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ class MessageGateMiddleware(BaseMiddleware):
         repeat_window: float = ANTI_SPAM_REPEAT_WINDOW,
         repeat_ban_duration: float = ANTI_SPAM_REPEAT_BAN_DURATION,
         ban_duration: float | None = None,
-        max_text_length: int = 250,
+        max_text_length: int = 750,
     ) -> None:
         super().__init__()
         self.throttle_interval = throttle_interval

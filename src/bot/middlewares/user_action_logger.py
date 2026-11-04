@@ -22,17 +22,17 @@ logger = get_logger("user_action_logger")
 
 
 def format_capped_text(raw_text: Any) -> str:
-    """Formats and caps log text to max 50 words and 250 characters."""
+    """Formats and caps log text to max 150 words and 750 characters."""
     if not raw_text:
         return ""
     text = str(raw_text).strip()
     if not text:
         return ""
     words = re.split(r"\s+", text)
-    if len(words) > 50:
-        text = " ".join(words[:50])
-    if len(text) > 250:
-        text = text[:250]
+    if len(words) > 150:
+        text = " ".join(words[:150])
+    if len(text) > 750:
+        text = text[:750]
     return text
 
 

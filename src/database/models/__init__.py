@@ -22,6 +22,8 @@ from src.database.models.user_activity import UserActivity
 from src.database.models.user_toll import UserToll
 from src.database.models.catalog_discovery import CatalogDiscovery
 from src.database.models.telecon_ad_event import TeleconAdEvent
+from src.database.models.system_setting import SystemSetting
+from src.database.models.broadcast_message import BroadcastMessage
 
 ALL_DOCUMENT_MODELS = [
     User,
@@ -43,6 +45,8 @@ ALL_DOCUMENT_MODELS = [
     UserToll,
     CatalogDiscovery,
     TeleconAdEvent,
+    SystemSetting,
+    BroadcastMessage,
 ]
 
 __all__ = [
@@ -69,5 +73,7 @@ __all__ = [
     "UserToll",
     "CatalogDiscovery",
     "TeleconAdEvent",
+    "SystemSetting",
+    "BroadcastMessage",
     "ALL_DOCUMENT_MODELS",
 ]

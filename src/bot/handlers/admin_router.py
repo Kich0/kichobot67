@@ -44,6 +44,12 @@ from src.services.schedule_adapter import schedule_api_adapter
 from src.services.user_activity_service import user_activity_service
 from src.services.user_service import user_service
 from src.services.user_toll_service import user_toll_service
+from src.services.site_banner_service import site_banner_service
+from src.services.broadcast_service import (
+    broadcast_service,
+    parse_broadcast_duration,
+    format_broadcast_duration,
+)
 
 logger = get_logger("admin_router")
 admin_router = Router(name="admin_router")
@@ -460,31 +466,95 @@ async def handle_user_logs(message: Message) -> None:
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
+@admin_router.message(Command(commands=["banner", "warning", "site_banner", "revert"]))
+async def handle_banner_toggle(message: Message) -> None:
+    """Toggles or reverts the schedule outdated disclaimer banner."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    cmd = text.split()[0].lower().lstrip("/")
+    parts = text.split(maxsplit=1)
+    arg = parts[1].lower().strip() if len(parts) > 1 else ""
+
+    if cmd == "revert":
+        arg = "off"
+
+    if arg in ("off", "revert", "old", "orig", "original", "0", "false"):
+        await site_banner_service.set_warning_active(False)
+        await message.answer(
+            "✅ <b>Старый оригинальный дизайн возвращен!</b>\n\n"
+            "Предупреждение убрано. Теперь отображается:\n"
+            "<i>(официальный сайт - schedule.karnu-buketov.edu.kz)</i>",
+            parse_mode="HTML",
+        )
+    elif arg in ("on", "warn", "warning", "new", "1", "true"):
+        await site_banner_service.set_warning_active(True)
+        await message.answer(
+            "✅ <b>Предупреждающий баннер включен!</b>\n\n"
+            "Теперь отображается:\n"
+            "🔴 <i>Сейчас расписания могут быть неактуальными: официальный сайт - schedule.karnu-buketov.edu.kz</i> 🔴",
+            parse_mode="HTML",
+        )
+    else:
+        status_emoji = (
+            "🔴 Включен (предупреждение)"
+            if site_banner_service.is_warning_active
+            else "⚪ Выключен (оригинал)"
+        )
+        await message.answer(
+            f"ℹ️ <b>Баннер неактуальности расписания:</b> {status_emoji}\n\n"
+            "• <code>/banner off</code> (или <code>/revert</code>) — вернуть старый оригинальный текст\n"
+            "• <code>/banner on</code> — включить предупреждение с красными кружками\n"
+            "• <code>/banner</code> — проверить текущий статус",
+            parse_mode="HTML",
+        )
+
+
 @admin_router.message(Command("sms"))
 async def handle_sms(message: Message) -> None:
-    """Sends a single direct message or non-blocking broadcast."""
+    """Sends a single direct message or non-blocking broadcast with optional auto-delete."""
     if not await _check_admin(message):
         return
 
     raw_text = (message.text or "").replace("/sms", "", 1).strip()
-    parts = raw_text.split(maxsplit=1)
-    if len(parts) < 2:
+    tokens = raw_text.split()
+    if len(tokens) < 2:
         await message.answer(
-            "ℹ️ <b>Формат команды:</b>\n"
+            "ℹ️ <b>Формат команды /sms:</b>\n"
+            "• <code>/sms all [текст]</code> — разовое оповещение всем пользователям (по умолчанию автоудаление через 4ч)\n"
+            "• <code>/sms 2h all [текст]</code> — автоудаление через 2 часа (или 30m, 1h, 12h)\n"
+            "• <code>/sms 0 all [текст]</code> — без автоудаления (навсегда)\n"
             "• <code>/sms [userId или @username] [текст]</code> — отправить одно личное сообщение\n"
-            "• <code>/sms all [текст]</code> — разовое оповещение всем пользователям",
+            "• <code>/sms 1h [userId или @username] [текст]</code> — личное сообщение с автоудалением",
             parse_mode="HTML",
         )
         return
 
-    target = parts[0]
-    sms_text = parts[1].strip()
+    # Check if first token is an explicit duration (e.g. 4h, 2h, 30m, 0)
+    dur_sec, is_dur = parse_broadcast_duration(tokens[0])
+    if is_dur and len(tokens) >= 3:
+        target = tokens[1]
+        sms_text = raw_text.split(maxsplit=2)[2].strip()
+        delete_after = dur_sec
+    else:
+        target = tokens[0]
+        sms_text = raw_text.split(maxsplit=1)[1].strip()
+        # Default 4 hours for broadcasts; 0 (permanent) for single user DMs
+        delete_after = (
+            broadcast_service.DEFAULT_BROADCAST_DELETE_SECONDS
+            if target.lower() == "all"
+            else 0
+        )
+
     bot = message.bot
     if not bot:
         return
 
     # Broadcast to all users in background
     if target.lower() == "all":
+        dur_desc = format_broadcast_duration(delete_after)
+
         async def _run_broadcast_task() -> None:
             from src.database.models.user import User
 
@@ -492,15 +562,21 @@ async def handle_sms(message: Message) -> None:
             sent = 0
             failed = 0
             blocked = 0
+            delivered_records: list[tuple[int, int]] = []
+
             for u in users:
                 if not getattr(u, "user_id", None):
                     continue
                 delivered = False
                 for attempt in range(3):
                     try:
-                        await bot.send_message(u.user_id, sms_text, disable_web_page_preview=True)
+                        sent_msg = await bot.send_message(
+                            u.user_id, sms_text, disable_web_page_preview=True
+                        )
                         sent += 1
                         delivered = True
+                        if delete_after > 0:
+                            delivered_records.append((sent_msg.chat.id, sent_msg.message_id))
                         break
                     except TelegramRetryAfter as e:
                         wait_sec = max(1, int(e.retry_after) + 1)
@@ -522,6 +598,18 @@ async def handle_sms(message: Message) -> None:
                     failed += 1
                 await asyncio.sleep(0.05)  # 50ms pacing (~20 msg/sec) within safe Telegram limits (<30 msg/sec)
 
+            # Persist delivered batch in MongoDB and schedule auto-delete worker
+            if delete_after > 0 and delivered_records:
+                await broadcast_service.record_delivery_batch(delivered_records, delete_after)
+                _create_admin_task(
+                    broadcast_service.run_auto_delete_worker(
+                        bot=bot,
+                        delivered=delivered_records,
+                        delay_seconds=delete_after,
+                        admin_chat_id=message.chat.id,
+                    )
+                )
+
             report = (
                 f"✅ <b>Разовое оповещение завершено:</b>\n"
                 f"• Доставлено: {sent}\n"
@@ -529,13 +617,22 @@ async def handle_sms(message: Message) -> None:
             )
             if blocked > 0:
                 report += f"\n• Заблокировали бота: {blocked}"
+            if delete_after > 0:
+                report += f"\n• ⏳ <b>Автоудаление:</b> через {dur_desc}"
+            else:
+                report += "\n• 📌 <b>Автоудаление:</b> выключено (навсегда)"
+
             try:
                 await message.answer(report, parse_mode="HTML")
             except Exception as e:
                 logger.error(f"Failed to send broadcast completion report: {e}")
 
         _create_admin_task(_run_broadcast_task())
-        await message.answer("📢 <b>Разовое оповещение запущено в фоновом режиме...</b>", parse_mode="HTML")
+        await message.answer(
+            f"📢 <b>Разовое оповещение запущено в фоновом режиме...</b>\n"
+            f"⏳ <b>Автоудаление:</b> {dur_desc}",
+            parse_mode="HTML",
+        )
         return
 
     # Single user direct message
@@ -545,11 +642,26 @@ async def handle_sms(message: Message) -> None:
         return
 
     try:
-        await bot.send_message(target_user.user_id, sms_text)
+        sent_msg = await bot.send_message(target_user.user_id, sms_text)
+        if delete_after > 0:
+            _create_admin_task(
+                broadcast_service.run_auto_delete_worker(
+                    bot=bot,
+                    delivered=[(sent_msg.chat.id, sent_msg.message_id)],
+                    delay_seconds=delete_after,
+                    admin_chat_id=message.chat.id,
+                )
+            )
+
+        dur_info = (
+            f"\n• ⏳ <b>Автоудаление:</b> через {format_broadcast_duration(delete_after)}"
+            if delete_after > 0
+            else ""
+        )
         await message.answer(
             f"✅ <b>Сообщение успешно отправлено:</b>\n"
             f"• <b>Получатель:</b> <code>{target_user.user_id}</code> (@{escape_html(target_user.username or '—')})\n"
-            f"• <b>Текст:</b> {escape_html(sms_text)}",
+            f"• <b>Текст:</b> {escape_html(sms_text)}{dur_info}",
             parse_mode="HTML",
         )
     except TelegramForbiddenError:
@@ -1259,8 +1371,9 @@ async def handle_ahelp(message: Message) -> None:
         "/get_schedule [groupId] — расписание группы\n"
         "/get_reserved_schedule [groupId] — резервное расписание\n\n"
         "📢 <b>Связь и оповещения:</b>\n"
+        "/sms [время: 4h/2h/30m/0] all [текст] — <i>разовое оповещение всем пользователям (по умолч. автоудаление через 4ч)</i>\n"
         "/sms [ID/@ник] [текст] — <i>отправить личное сообщение пользователю</i>\n"
-        "/sms all [текст] — <i>разовое оповещение всем пользователям (1 раз)</i>\n\n"
+        "/banner [on/off] (или /revert) — <i>переключить предупреждающий баннер / вернуть старый оригинальный дизайн</i>\n\n"
         "🛠 <b>Сервисные команды:</b>\n"
         "/backup_logs — архивировать и выгрузить логи на Google Диск / Telegram\n"
         "/get_logs — скачать текущий лог-файл бота\n"

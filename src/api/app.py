@@ -98,6 +98,12 @@ async def lifespan(app: FastAPI):
         await black_list_service.ensure_loaded()
         await user_toll_service.ensure_loaded()
         await smart_search_service.warmup()
+
+        from src.services.site_banner_service import site_banner_service
+        from src.services.broadcast_service import broadcast_service
+
+        await site_banner_service.init_from_db()
+        await broadcast_service.cleanup_expired_broadcasts(bot)
     except Exception as e:
         logger.error(f"Database initialization error during startup: {e}")
 
@@ -138,6 +144,14 @@ async def lifespan(app: FastAPI):
     try:
         scheduler = get_scheduler()
         setup_all_crons(scheduler)
+        scheduler.add_job(
+            broadcast_service.cleanup_expired_broadcasts,
+            "interval",
+            minutes=10,
+            args=[bot],
+            id="cleanup_expired_broadcasts",
+            replace_existing=True,
+        )
         start_scheduler()
     except Exception as e:
         logger.error(f"Error starting APScheduler: {e}")
