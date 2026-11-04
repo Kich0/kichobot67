@@ -60,14 +60,21 @@ class UserService:
             from datetime import datetime, timezone
             from src.database.models.user import User
 
-            res = await User.find({"userId": user_id}).update({"$set": {
-                "username": clean_username,
-                "firstName": first_name,
-                "lastName": last_name,
-                "updatedAt": datetime.now(timezone.utc),
-            }})
-            # If user document does not exist in DB yet, create it
-            if getattr(res, "matched_count", 0) == 0:
+            user = await User.find_one({"userId": user_id})
+            if user:
+                changed = False
+                if user.username != clean_username:
+                    user.username = clean_username
+                    changed = True
+                if user.first_name != first_name:
+                    user.first_name = first_name
+                    changed = True
+                if user.last_name != last_name:
+                    user.last_name = last_name
+                    changed = True
+                if changed:
+                    await user.save()
+            else:
                 await self.get_or_create_user(
                     user_id=user_id,
                     username=clean_username,

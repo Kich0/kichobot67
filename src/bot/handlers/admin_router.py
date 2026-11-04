@@ -395,6 +395,28 @@ async def handle_get_user(message: Message) -> None:
 
     target_user = users[0]
 
+    # Real-time Telegram sync: ensures username and name match current live Telegram state (not a stranger)
+    bot = getattr(message, "bot", None)
+    if bot and target_user.user_id:
+        try:
+            live_chat = await bot.get_chat(target_user.user_id)
+            if live_chat:
+                live_uname = live_chat.username.lstrip("@") if live_chat.username else None
+                live_first = live_chat.first_name
+                live_last = live_chat.last_name
+                if (
+                    target_user.username != live_uname
+                    or target_user.first_name != live_first
+                    or target_user.last_name != live_last
+                ):
+                    target_user.username = live_uname
+                    target_user.first_name = live_first
+                    target_user.last_name = live_last
+                    await target_user.save()
+                    user_service._profile_cache[target_user.user_id] = (live_uname, live_first, live_last)
+        except Exception as e:
+            logger.debug(f"Could not refresh live Telegram chat for {target_user.user_id}: {e}")
+
     from src.database.models.user_action import UserAction
 
     recent_actions = (
@@ -414,8 +436,17 @@ async def handle_get_user(message: Message) -> None:
     raw_name = " ".join(f"{target_user.first_name or ''} {target_user.last_name or ''}".split())
     name_display = escape_html(raw_name) if raw_name else f"ID: {target_user.user_id}"
     user_link = f'<a href="tg://user?id={target_user.user_id}">{name_display}</a>'
+    searched_arg = arg.strip().lstrip("@")
     clean_username = (target_user.username or "").strip().lstrip("@")
-    username_display = f"@{escape_html(clean_username)}" if clean_username else "отсутствует"
+    if clean_username:
+        if searched_arg and clean_username.lower() != searched_arg.lower() and not arg.strip().isdigit():
+            username_display = f"@{escape_html(clean_username)} <i>(найден по старому @{escape_html(searched_arg)})</i>"
+        else:
+            username_display = f"@{escape_html(clean_username)}"
+    else:
+        username_display = "отсутствует"
+        if searched_arg and not arg.strip().isdigit():
+            username_display += f" <i>(ранее был @{escape_html(searched_arg)})</i>"
 
     group_display = await _resolve_user_group_name(target_user.group)
     teacher_display = await _resolve_user_teacher_name(target_user.teacher)

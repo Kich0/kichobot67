@@ -165,3 +165,35 @@ async def test_handle_get_user_multiple_candidates(mock_db):
     assert "Найдено пользователей (2)" in reply_text
     assert "/get_user 11101" in reply_text
     assert "/get_user 11102" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_handle_get_user_live_telegram_refresh(mock_db):
+    """When /get_user displays user, it live-refreshes username via bot.get_chat to prevent pointing to a stranger."""
+    u = User(userId=44401, username="very_old_nick", firstName="Old Name")
+    await u.insert()
+
+    msg = MagicMock()
+    msg.from_user.id = 1516988645  # Admin
+    msg.text = "/get_user 44401"
+    msg.answer = AsyncMock()
+
+    mock_chat = MagicMock()
+    mock_chat.username = "real_new_nick"
+    mock_chat.first_name = "New Live Name"
+    mock_chat.last_name = None
+    msg.bot.get_chat = AsyncMock(return_value=mock_chat)
+
+    with patch("src.bot.handlers.admin_router._check_admin", new_callable=AsyncMock, return_value=True):
+        await handle_get_user(msg)
+
+    assert msg.answer.called
+    reply_text = msg.answer.call_args[0][0]
+    assert "@real_new_nick" in reply_text
+    assert "very_old_nick" not in reply_text
+
+    # Verify DB was updated
+    db_u = await User.find_one({"userId": 44401})
+    assert db_u.username == "real_new_nick"
+    assert db_u.first_name == "New Live Name"
+
