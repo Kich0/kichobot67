@@ -22,6 +22,7 @@ logger = get_logger("telecon_ad_service")
 
 TELECON_FIRM_ID = "70000001083364853"
 TELECON_2GIS_URL = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
+TELECON_EVENT_REG_URL = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
 TELECON_SHORT_URL = "https://is.gd/terricon_btn"
 TELECON_SHORT_URL_BUTTON = "https://is.gd/terricon_btn"
 TELECON_SHORT_URL_LINK = "https://is.gd/terricon_addr"
@@ -44,6 +45,10 @@ class TeleconAdService:
         task.add_done_callback(self._bg_tasks.discard)
         return task
 
+    def get_destination_url(self) -> str:
+        """Returns the current target landing URL for the active Terricon Valley campaign."""
+        return TERRICON_EVENT_REG_URL
+
     def get_tracking_url(
         self,
         target: str = "button",
@@ -52,7 +57,7 @@ class TeleconAdService:
         base_url: str | None = None,
         short: bool = False,
     ) -> str:
-        """Returns tracking redirect URL if domain is configured, otherwise fallback to direct 2GIS URL.
+        """Returns tracking redirect URL if domain is configured, otherwise fallback to destination URL.
 
         Args:
             target: 'button' or 'link'
@@ -61,11 +66,6 @@ class TeleconAdService:
             base_url: Optional explicit base URL override
             short: If True, produces clean compact URL (/r/telecon?t=btn&u=...)
         """
-        if short:
-            if target in ("link", "text_link", "address", "addr"):
-                return TELECON_SHORT_URL_LINK
-            return TELECON_SHORT_URL_BUTTON
-
         domain = base_url or settings.WEBHOOK_DOMAIN
         if domain:
             clean_domain = str(domain).rstrip("/")
@@ -80,7 +80,12 @@ class TeleconAdService:
                 url += f"&s={quote_plus(src_code)}"
             return url
 
-        return TELECON_2GIS_URL
+        if short:
+            if target in ("link", "text_link", "address", "addr"):
+                return TELECON_SHORT_URL_LINK
+            return TELECON_SHORT_URL_BUTTON
+
+        return TERRICON_EVENT_REG_URL
 
     def get_short_tracking_url(
         self,

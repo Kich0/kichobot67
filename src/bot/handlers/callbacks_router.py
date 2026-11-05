@@ -1528,14 +1528,14 @@ async def _get_ad_block_for_viewer(
 
     from src.services.telecon_ad_service import telecon_ad_service
 
-    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
+    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source)
     await telecon_ad_service.record_impression(viewer_user_id, source=source)
 
     ad_text = (
         "────────────────────\n"
-        "🚀 <b>Хакатон в Terricon Valley: Decentrathon!</b>\n"
-        "Призовой фонд, полезные знакомства в портфолио и бесплатная пицца. Нужны не только кодеры, но и дизайнеры/презентаторы.\n"
-        f"📍 <b>Адрес:</b> <a href=\"{link_url}\">ул. Алалыкина, 12/1</a>\n"
+        "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b>\n"
+        "С 9 по 27 ноября (13:00, онлайн). 15 занятий по SMM, рекламе и ИИ. Участие бесплатное.\n"
+        f'🔗 <b>Ссылка:</b> <a href="{link_url}">terricon.kz/digital-marketing</a>\n'
         "────────────────────\n\n"
     )
     ad_btn = ("👉 Подробнее", "ad_telecon_info")
@@ -3129,17 +3129,40 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
     except Exception as exc:
         logger.debug(f"Error recording ad click from callback: {exc}")
 
-    popup_text = (
-        "Decentrathon - крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
-        "30-31 октября в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
-        "📍 Адрес: ул. Алалыкина, 12/1"
-    )
-    if len(popup_text) > 200:
-        popup_text = popup_text[:197] + "..."
-    try:
-        await call.answer(text=popup_text, show_alert=True)
-    except Exception as exc:
-        logger.debug(f"Error answering ad callback: {exc}")
+    await call.answer()
+    if call.message:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        reg_url = telecon_ad_service.get_tracking_url("button", user_id, source="details_button")
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔗 Зарегистрироваться", url=reg_url)]
+            ]
+        )
+        event_text = (
+            "Начните разбираться в digital-маркетинге с нуля 📲\n\n"
+            "С 9 по 27 ноября в Terricon Valley пройдет онлайн-курс «Digital marketing для начинающих». "
+            "За 15 занятий разберём основные инструменты продвижения товаров, услуг и небольших бизнес-проектов.   "
+            "Спикером выступит Арай Аимбетова, преподаватель в Astana International University. Обучение пройдет на казахском языке.\n\n"
+            "На курсе вы:\n"
+            "☑️ определите целевую аудиторию и ценность продукта\n"
+            "☑️ составите контент-план, подготовите тексты и визуалы с помощью ИИ\n"
+            "☑️ разберёте основы SMM, интернет-рекламы и аналитики\n"
+            "☑️ разработаете и представите маркетинговую концепцию \n"
+            "Курс подойдет начинающим маркетологам, предпринимателям и сотрудникам, которые занимаются продвижением бизнеса. "
+            "Участие бесплатное, регистрация по ссылке в описании 👆\n\n"
+            "Мероприятие проводится при поддержке Управления цифровых технологий Карагандинской области.\n\n"
+            "Когда: 9–27 ноября, 13:00\n"
+            "Формат: онлайн"
+        )
+        try:
+            await call.message.answer(
+                text=event_text,
+                reply_markup=keyboard,
+                parse_mode=None,
+            )
+        except Exception as exc:
+            logger.debug(f"Error sending ad details message: {exc}")
 
 
 @callbacks_router.callback_query()

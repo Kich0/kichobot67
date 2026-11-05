@@ -618,33 +618,17 @@ def create_app() -> FastAPI:
         else:
             clean_source = "button" if clean_target == "button" else "text_link"
 
+        dest_url = telecon_ad_service.get_destination_url()
         await telecon_ad_service.record_click(
             user_id=resolved_uid,
             event_type=ev_type,
             source=clean_source,
-            target_url=TELECON_2GIS_URL,
+            target_url=dest_url,
             ip=client_ip,
             user_agent=user_agent,
         )
 
-        accept_header = request.headers.get("accept", "").lower()
-        ua_header = (user_agent or "").lower()
-
-        is_browser = (
-            "text/html" in accept_header
-            or "mozilla" in ua_header
-            or "telegram" in ua_header
-            or "mobile" in ua_header
-            or "android" in ua_header
-            or "iphone" in ua_header
-            or mode in ("bridge", "html")
-        )
-
-        if is_browser and mode not in ("302", "redirect", "raw") and request.query_params.get("raw") != "1":
-            html_content = telecon_ad_service.generate_bridge_html()
-            return HTMLResponse(content=html_content, status_code=200)
-
-        return RedirectResponse(url=TELECON_2GIS_URL, status_code=302)
+        return RedirectResponse(url=dest_url, status_code=302)
 
     @app.get("/api/ad/telecon/stats")
     async def get_telecon_stats_api() -> ORJSONResponse:
