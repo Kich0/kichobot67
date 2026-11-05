@@ -1530,16 +1530,19 @@ async def _get_ad_block_for_viewer(
             except Exception:
                 return "", None
 
-    from src.services.telecon_ad_service import telecon_ad_service
-
-    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
-    await telecon_ad_service.record_impression(viewer_user_id, source=source)
+    target_url = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
+    if viewer_user_id:
+        try:
+            from src.services.telecon_ad_service import telecon_ad_service
+            await telecon_ad_service.record_impression(viewer_user_id, source=source)
+        except Exception:
+            pass
 
     ad_text = (
         "────────────────────\n"
         "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b>\n"
         "С 9 по 27 ноября (13:00, онлайн). 15 занятий по SMM, рекламе и ИИ. Участие бесплатное.\n"
-        f'🔗 <b>Ссылка:</b> <a href="{link_url}">is.gd/terricon_addr</a>\n'
+        f'🔗 <b>Ссылка:</b> <a href="{target_url}">terricon.kz/digital-marketing</a>\n'
         "────────────────────\n\n"
     )
     ad_btn = ("👉 Подробнее", "ad_telecon_info")
@@ -3137,7 +3140,7 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
     if call.message:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        reg_url = telecon_ad_service.get_tracking_url("button", user_id, source="details_button")
+        reg_url = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔗 Зарегистрироваться", url=reg_url)]
