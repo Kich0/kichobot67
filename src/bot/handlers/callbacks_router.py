@@ -65,6 +65,8 @@ from src.services.table_image import table_image_service
 from src.services.teacher_directory import clean_titles, teacher_directory_service
 from src.database.connection import get_client
 from src.services.user_service import user_service
+from src.services.schedule_theme_service import schedule_theme_service
+from src.services.site_banner_service import site_banner_service
 
 logger = get_logger("callbacks_router")
 callbacks_router = Router(name="callbacks_router")
@@ -430,6 +432,8 @@ def clear_schedule_caches() -> None:
     if hasattr(table_image_service, "_file_id_cache"):
         table_image_service._file_id_cache.clear()
     user_service.clear_cache()
+    schedule_theme_service.reset()
+    site_banner_service.reset()
 
 
 def get_current_day_number() -> int:
@@ -1568,6 +1572,19 @@ def is_halloween_preview_user(user_id: int | str | None = None) -> bool:
     return bool(user_id)
 
 
+def get_viewer_schedule_theme(user_id: int | str | None = None) -> str:
+    """Resolves active visual theme for the viewer ('basic', 'halloween', 'newyear')."""
+    if schedule_theme_service.admin_theme and schedule_theme_service._is_admin_viewer(user_id):
+        return schedule_theme_service.admin_theme
+
+    if getattr(schedule_theme_service, "_has_explicit_global", False):
+        return schedule_theme_service.global_theme
+
+    if is_halloween_preview_user(user_id):
+        return "halloween"
+    return "basic"
+
+
 
 async def build_student_day_schedule_view(
     cached: dict[str, Any],
@@ -1669,9 +1686,20 @@ async def build_student_day_schedule_view(
         except Exception:
             pass
 
-    is_halloween = is_halloween_preview_user(viewer_user_id)
+    active_theme = get_viewer_schedule_theme(viewer_user_id)
+    is_halloween = (active_theme == "halloween")
+    banner_footer = site_banner_service.get_banner_text(ui_lang, viewer_user_id=viewer_user_id)
 
-    if is_halloween:
+    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+    elapsed = format_elapsed_time(
+        cached["timestamp"],
+        ui_lang,
+        is_from_db=cached.get("is_from_db", False),
+        is_from_cache=from_cache,
+    )
+    clock = format_timestamp_clock(cached["timestamp"])
+
+    if active_theme == "halloween":
         if group_age:
             group_header = (
                 f"🎃 Группа: {grp_name} | 🕯️ Курс: {group_age}\n"
@@ -1702,18 +1730,39 @@ async def build_student_day_schedule_view(
                 items.append(f"🦇 {s_time}\n{clean_s}")
             body = "\n\n".join(items) + "\n\n"
 
-        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-        elapsed = format_elapsed_time(
-            cached["timestamp"],
-            ui_lang,
-            is_from_db=cached.get("is_from_db", False),
-            is_from_cache=from_cache,
-        )
-        clock = format_timestamp_clock(cached["timestamp"])
-        footer = (
-            f"🕯️ <i><b>{elapsed} || {clock}</b></i>\n"
-            f"{t('official_site_compare', ui_lang)}\n"
-        )
+        footer = f"🕯️ <i><b>{elapsed} || {clock}</b></i>\n{banner_footer}\n"
+
+    elif active_theme == "newyear":
+        if group_age:
+            group_header = (
+                f"🎄 Группа: {grp_name} | ❄️ Курс: {group_age}\n"
+                if ui_lang not in ("kz", "каз")
+                else f"🎄 Топ: {grp_name} | ❄️ Курс: {group_age}\n"
+            )
+            group_header += f"✨ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+        else:
+            group_header = (
+                f"🎄 <b>{grp_name}</b>\n"
+                f"✨ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+            )
+
+        if not active_subjects:
+            body = f"🎅 <b>{t('vacation', ui_lang)} 🎁</b>\n\n"
+        else:
+            items = []
+            for s in active_subjects:
+                s_name = s.get("subject", "").strip() if isinstance(s, dict) else getattr(s, "subject", "").strip()
+                s_time = s.get("time", "") if isinstance(s, dict) else getattr(s, "time", "")
+                if s_name.startswith("📚"):
+                    clean_s = s_name.replace("📚", "🎁", 1)
+                else:
+                    clean_s = f"🎁 {s_name}"
+                clean_s = clean_s.replace("\n📚 ", "\n🎁 ")
+                items.append(f"❄️ {s_time}\n{clean_s}")
+            body = "\n\n".join(items) + "\n\n"
+
+        footer = f"❄️ <i><b>{elapsed} || {clock}</b></i>\n{banner_footer}\n"
+
     else:
         if group_age:
             group_header = (
@@ -1737,25 +1786,20 @@ async def build_student_day_schedule_view(
                 items.append(f"⌚️ {s_time}\n{clean_s}")
             body = "\n\n".join(items) + "\n\n"
 
-        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-        elapsed = format_elapsed_time(
-            cached["timestamp"],
-            ui_lang,
-            is_from_db=cached.get("is_from_db", False),
-            is_from_cache=from_cache,
-        )
-        clock = format_timestamp_clock(cached["timestamp"])
-        footer = (
-            f"🕒 <i><b>{elapsed} || {clock}</b></i>\n"
-            f"{t('official_site_compare', ui_lang)}\n"
-        )
+        footer = f"🕒 <i><b>{elapsed} || {clock}</b></i>\n{banner_footer}\n"
 
     ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id, source="student_schedule")
     full_text = group_header + body + ad_text + footer
 
     pre_callback = f"schedule|{sch_lang}|{group_id}"
     markup = get_schedule_pagination_keyboard(
-        pre_callback, day_num, back_callback, ui_lang, ad_button=ad_btn, is_halloween=is_halloween
+        pre_callback,
+        day_num,
+        back_callback,
+        ui_lang,
+        ad_button=ad_btn,
+        is_halloween=is_halloween,
+        theme=active_theme,
     )
     return full_text, markup
 
@@ -2437,9 +2481,20 @@ async def build_teacher_day_text_view(
         register_teacher_name(teacher_id, tch_name)
 
     title_part = f" ({job_title})" if job_title else ""
-    is_halloween = is_halloween_preview_user(viewer_user_id)
+    active_theme = get_viewer_schedule_theme(viewer_user_id)
+    is_halloween = (active_theme == "halloween")
+    banner_footer = site_banner_service.get_banner_text(ui_lang, viewer_user_id=viewer_user_id)
 
-    if is_halloween:
+    from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
+    elapsed = format_elapsed_time(
+        cached["timestamp"],
+        ui_lang,
+        is_from_db=cached.get("is_from_db", False),
+        is_from_cache=from_cache,
+    )
+    clock = format_timestamp_clock(cached["timestamp"])
+
+    if active_theme == "halloween":
         header = f"🎃 <b>{tch_name}</b>{title_part}\n🕸️ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
 
         if not deduplicated:
@@ -2463,17 +2518,35 @@ async def build_teacher_day_text_view(
                 formatted_items.append(text.rstrip())
             body = "\n\n".join(formatted_items) + "\n\n"
 
-        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-        elapsed = format_elapsed_time(
-            cached["timestamp"],
-            ui_lang,
-            is_from_db=cached.get("is_from_db", False),
-            is_from_cache=from_cache,
-        )
-        clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕯️ <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
-            f"{t('official_site_compare', ui_lang)}\n"
+            f"{banner_footer}\n"
+        )
+    elif active_theme == "newyear":
+        header = f"🎅 <b>{tch_name}</b>{title_part}\n✨ {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
+
+        if not deduplicated:
+            body = f"🎅 <b>{t('vacation', ui_lang)} 🎁</b>\n\n"
+        else:
+            formatted_items = []
+            for item in deduplicated:
+                slot_time = item.get("time", "")
+                grp_name = item.get("group", "")
+                subj_name = item.get("subject", "")
+                l_type = item.get("lessonType", "")
+
+                text = f"❄️ {slot_time}\n"
+                formatted_group = transform_group_string(grp_name)
+                text += add_symbol_to_each_line(formatted_group, "🎄") + "\n"
+                if subj_name:
+                    formatted_subj = format_subject_with_lesson_type(subj_name, l_type)
+                    text += f"🎁 <i>{formatted_subj}</i>\n"
+                formatted_items.append(text.rstrip())
+            body = "\n\n".join(formatted_items) + "\n\n"
+
+        footer = (
+            f"❄️ <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
+            f"{banner_footer}\n"
         )
     else:
         header = f"👥 <b>{tch_name}</b>{title_part}\n📆 {t('schedule_by_day', ui_lang, dayName=day_name)}\n"
@@ -2497,23 +2570,21 @@ async def build_teacher_day_text_view(
                 formatted_items.append(text.rstrip())
             body = "\n\n".join(formatted_items) + "\n\n"
 
-        from_cache = is_from_cache if is_from_cache is not None else cached.get("is_from_cache", False)
-        elapsed = format_elapsed_time(
-            cached["timestamp"],
-            ui_lang,
-            is_from_db=cached.get("is_from_db", False),
-            is_from_cache=from_cache,
-        )
-        clock = format_timestamp_clock(cached["timestamp"])
         footer = (
             f"🕰 <i><b>{t('schedule_downloaded', ui_lang, timeAgo=elapsed)} || {clock}</b></i>\n"
-            f"{t('official_site_compare', ui_lang)}\n"
+            f"{banner_footer}\n"
         )
 
     ad_text, ad_btn = await _get_ad_block_for_viewer(viewer_user_id, source="teacher_schedule")
     full_text = header + body + ad_text + footer
     markup = get_teacher_text_keyboard(
-        canonical_id, day_num, department_id=dept_id, lang=ui_lang, ad_button=ad_btn, is_halloween=is_halloween
+        canonical_id,
+        day_num,
+        department_id=dept_id,
+        lang=ui_lang,
+        ad_button=ad_btn,
+        is_halloween=is_halloween,
+        theme=active_theme,
     )
     return full_text, markup
 
@@ -3060,7 +3131,7 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
 
     popup_text = (
         "Decentrathon - крупнейший мультилокационный хакатон в Казахстане (Terricon Valley). "
-        "30–31 октября в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
+        "30-31 октября в 19 городах для создания инноваций и развития AI-экосистемы.\n\n"
         "📍 Адрес: ул. Алалыкина, 12/1"
     )
     if len(popup_text) > 200:

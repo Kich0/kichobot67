@@ -380,16 +380,24 @@ def get_schedule_pagination_keyboard(
     lang: str = "ru",
     ad_button: tuple[str, str] | None = None,
     is_halloween: bool = False,
+    theme: str = "basic",
 ) -> InlineKeyboardMarkup:
     """Day-by-day navigation keyboard: ◀️, 🔄, ▶️, optional ad button, and 🔙."""
     prev_day = day_number - 1 if day_number > 0 else 5
     next_day = day_number + 1 if day_number < 5 else 0
 
-    if is_halloween:
+    active_theme = "halloween" if is_halloween else theme
+
+    if active_theme == "halloween":
         back_text = f"🦇 {t('go_back', lang)}"
         refresh_text = "🎃"
         fwd_text = f"{t('go_forward', lang)} 🦇"
         prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
+    elif active_theme == "newyear":
+        back_text = f"❄️ {t('go_back', lang)}"
+        refresh_text = "🎄"
+        fwd_text = f"{t('go_forward', lang)} ❄️"
+        prev_menu_text = f"⛄ {t('go_prev_menu', lang).replace('◀️ ', '')}"
     else:
         back_text = f"◀️ {t('go_back', lang)}"
         refresh_text = "🔄"
@@ -485,6 +493,7 @@ def get_teacher_text_keyboard(
     lang: str = "ru",
     ad_button: tuple[str, str] | None = None,
     is_halloween: bool = False,
+    theme: str = "basic",
 ) -> InlineKeyboardMarkup:
     """Controls for teacher daily text view: switch to table image, ◀️, 🔄, ▶️, optional ad button, back."""
     cb_tid = _safe_teacher_cb_id(teacher_id)
@@ -492,12 +501,20 @@ def get_teacher_text_keyboard(
     next_day = day_number + 1 if day_number < 5 else 0
     back_cb = f"teacher|{department_id}|0" if department_id and str(department_id) != "0" else "department|0"
 
-    if is_halloween:
+    active_theme = "halloween" if is_halloween else theme
+
+    if active_theme == "halloween":
         back_text = f"🦇 {t('go_back', lang)}"
         refresh_text = "🎃"
         fwd_text = f"{t('go_forward', lang)} 🦇"
         img_view_text = f"🖼 🎃 {t('teacher_img_view', lang, default='Таблица недели')}"
         prev_menu_text = f"🕸️ {t('go_prev_menu', lang).replace('◀️ ', '')}"
+    elif active_theme == "newyear":
+        back_text = f"❄️ {t('go_back', lang)}"
+        refresh_text = "🎄"
+        fwd_text = f"{t('go_forward', lang)} ❄️"
+        img_view_text = f"🖼 🎄 {t('teacher_img_view', lang, default='Таблица недели')}"
+        prev_menu_text = f"⛄ {t('go_prev_menu', lang).replace('◀️ ', '')}"
     else:
         back_text = f"◀️ {t('go_back', lang)}"
         refresh_text = "🔄"

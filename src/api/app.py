@@ -100,9 +100,11 @@ async def lifespan(app: FastAPI):
         await smart_search_service.warmup()
 
         from src.services.site_banner_service import site_banner_service
+        from src.services.schedule_theme_service import schedule_theme_service
         from src.services.broadcast_service import broadcast_service
 
         await site_banner_service.init_from_db()
+        await schedule_theme_service.init_from_db()
         await broadcast_service.cleanup_expired_broadcasts(bot)
     except Exception as e:
         logger.error(f"Database initialization error during startup: {e}")
@@ -115,8 +117,8 @@ async def lifespan(app: FastAPI):
         await bot.set_my_commands([
             BotCommand(command="start", description="Меню / Мәзір")
         ])
-        await bot.set_my_description(description="Kicho — КарУ (Букетов) кестесі 📚")
-        await bot.set_my_short_description(short_description="Kicho — КарУ (Букетов) кестесі 📚")
+        await bot.set_my_description(description="Kicho - КарУ (Букетов) кестесі 📚")
+        await bot.set_my_short_description(short_description="Kicho - КарУ (Букетов) кестесі 📚")
         logger.info("Bot commands and descriptions registered.")
     except Exception as e:
         logger.warning(f"Failed to set bot commands/description: {e}")

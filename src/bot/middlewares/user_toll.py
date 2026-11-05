@@ -77,7 +77,7 @@ class UserTollMiddleware(BaseMiddleware):
                             user_id,
                             user.username,
                             "toll_button_blocked",
-                            f"Клик «{event.data}» — выставлен счёт на {star_price} ⭐",
+                            f"Клик «{event.data}» - выставлен счёт на {star_price} ⭐",
                         )
                         return None
 

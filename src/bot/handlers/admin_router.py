@@ -45,6 +45,7 @@ from src.services.user_activity_service import user_activity_service
 from src.services.user_service import user_service
 from src.services.user_toll_service import user_toll_service
 from src.services.site_banner_service import site_banner_service
+from src.services.schedule_theme_service import schedule_theme_service
 from src.services.broadcast_service import (
     broadcast_service,
     parse_broadcast_duration,
@@ -76,19 +77,19 @@ def escape_html(text: Any) -> str:
 def _format_action_time(dt: datetime | None, fmt: str) -> str:
     """Formats datetime in Asia/Almaty (UTC+5) timezone."""
     if not isinstance(dt, datetime):
-        return "—"
+        return "-"
     try:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(TIMEZONE).strftime(fmt)
     except Exception:
-        return "—"
+        return "-"
 
 
 async def _resolve_user_group_name(group_val: Any) -> str:
     """Resolves group name by ID or name string."""
     if not group_val or str(group_val).strip() in ("", "0", "None"):
-        return "—"
+        return "-"
     try:
         from src.database.models.group import Group
 
@@ -109,7 +110,7 @@ async def _resolve_user_group_name(group_val: Any) -> str:
 async def _resolve_user_teacher_name(teacher_val: Any) -> str:
     """Resolves teacher display name by ID or name string."""
     if not teacher_val or str(teacher_val).strip() in ("", "0", "None"):
-        return "—"
+        return "-"
     try:
         from src.database.models.teacher import Teacher
         from src.services.teacher_directory import teacher_directory_service
@@ -313,7 +314,7 @@ def _format_telecon_boost_message(summary: dict[str, Any]) -> str:
                 user_disp = f"ID {user_id}"
 
             user_link = f'<a href="tg://user?id={user_id}">{escape_html(user_disp)}</a>' if user_id else "Аноним"
-            lines.append(f"• <code>{ev_time}</code>: {user_link} — {ev_label}{src_tag}")
+            lines.append(f"• <code>{ev_time}</code>: {user_link} - {ev_label}{src_tag}")
     else:
         lines.append("\nℹ️ <i>Кликов пока не зафиксировано.</i>")
 
@@ -386,7 +387,7 @@ async def handle_get_user(message: Message) -> None:
             u_name = f"@{escape_html(clean_u)}" if clean_u else "<i>без ника</i>"
             group_display = await _resolve_user_group_name(u.group)
             lines.append(
-                f"• {user_link} — <code>{u.user_id}</code> ({u_name}) | Гр: {escape_html(group_display)}\n"
+                f"• {user_link} - <code>{u.user_id}</code> ({u_name}) | Гр: {escape_html(group_display)}\n"
                 f"  └ Карточка: <code>/get_user {u.user_id}</code>"
             )
         lines.append("\nℹ️ <i>Нажмите на команду с ID, чтобы открыть подробную карточку.</i>")
@@ -400,20 +401,23 @@ async def handle_get_user(message: Message) -> None:
     if bot and target_user.user_id:
         try:
             live_chat = await bot.get_chat(target_user.user_id)
-            if live_chat:
-                live_uname = live_chat.username.lstrip("@") if live_chat.username else None
-                live_first = live_chat.first_name
-                live_last = live_chat.last_name
+            if live_chat and hasattr(live_chat, "username") and isinstance(getattr(live_chat, "username", None), (str, type(None))):
+                live_uname = live_chat.username.lstrip("@") if isinstance(live_chat.username, str) else None
+                live_first = live_chat.first_name if isinstance(getattr(live_chat, "first_name", None), str) else None
+                live_last = live_chat.last_name if isinstance(getattr(live_chat, "last_name", None), str) else None
                 if (
-                    target_user.username != live_uname
-                    or target_user.first_name != live_first
-                    or target_user.last_name != live_last
+                    (live_uname is not None and target_user.username != live_uname)
+                    or (live_first is not None and target_user.first_name != live_first)
+                    or (live_last is not None and target_user.last_name != live_last)
                 ):
-                    target_user.username = live_uname
-                    target_user.first_name = live_first
-                    target_user.last_name = live_last
+                    if live_uname is not None:
+                        target_user.username = live_uname
+                    if live_first is not None:
+                        target_user.first_name = live_first
+                    if live_last is not None:
+                        target_user.last_name = live_last
                     await target_user.save()
-                    user_service._profile_cache[target_user.user_id] = (live_uname, live_first, live_last)
+                    user_service._profile_cache[target_user.user_id] = (target_user.username, target_user.first_name, target_user.last_name)
         except Exception as e:
             logger.debug(f"Could not refresh live Telegram chat for {target_user.user_id}: {e}")
 
@@ -437,7 +441,8 @@ async def handle_get_user(message: Message) -> None:
     name_display = escape_html(raw_name) if raw_name else f"ID: {target_user.user_id}"
     user_link = f'<a href="tg://user?id={target_user.user_id}">{name_display}</a>'
     searched_arg = arg.strip().lstrip("@")
-    clean_username = (target_user.username or "").strip().lstrip("@")
+    raw_u = target_user.username if isinstance(getattr(target_user, "username", None), str) else ""
+    clean_username = raw_u.strip().lstrip("@")
     if clean_username:
         if searched_arg and clean_username.lower() != searched_arg.lower() and not arg.strip().isdigit():
             username_display = f"@{escape_html(clean_username)} <i>(найден по старому @{escape_html(searched_arg)})</i>"
@@ -518,45 +523,164 @@ async def handle_user_logs(message: Message) -> None:
 
 @admin_router.message(Command(commands=["banner", "warning", "site_banner", "revert"]))
 async def handle_banner_toggle(message: Message) -> None:
-    """Toggles or reverts the schedule outdated disclaimer banner."""
+    """Toggles or sets schedule status banner (basic, alert, good) for all or exclusively for admin preview (my)."""
     if not await _check_admin(message):
         return
 
     text = (message.text or "").strip()
     cmd = text.split()[0].lower().lstrip("/")
-    parts = text.split(maxsplit=1)
-    arg = parts[1].lower().strip() if len(parts) > 1 else ""
+    tokens = text.split()[1:]
+    tokens_lower = [t.lower() for t in tokens]
 
     if cmd == "revert":
-        arg = "off"
+        tokens_lower = ["basic", "all"]
 
-    if arg in ("off", "revert", "old", "orig", "original", "0", "false"):
-        await site_banner_service.set_warning_active(False)
-        await message.answer(
-            "✅ <b>Старый оригинальный дизайн возвращен!</b>\n\n"
-            "Предупреждение убрано. Теперь отображается:\n"
-            "<i>(официальный сайт - schedule.karnu-buketov.edu.kz)</i>",
-            parse_mode="HTML",
-        )
-    elif arg in ("on", "warn", "warning", "new", "1", "true"):
-        await site_banner_service.set_warning_active(True)
-        await message.answer(
-            "✅ <b>Предупреждающий баннер включен!</b>\n\n"
-            "Теперь отображается:\n"
-            "🔴 <i>Сейчас расписания могут быть неактуальными: официальный сайт - schedule.karnu-buketov.edu.kz</i> 🔴",
-            parse_mode="HTML",
-        )
+    # 1. Determine scope: "my" or "all"
+    scope = "all"
+    if any(k in tokens_lower for k in ("my", "мне", "админ", "me")):
+        scope = "my"
+        tokens_lower = [t for t in tokens_lower if t not in ("my", "мне", "админ", "me")]
+    elif any(k in tokens_lower for k in ("all", "все", "всем")):
+        scope = "all"
+        tokens_lower = [t for t in tokens_lower if t not in ("all", "все", "всем")]
+
+    # 2. Determine mode
+    mode = None
+    for tok in tokens_lower:
+        if tok in ("basic", "базовый", "стандарт", "обычный", "off", "0", "revert", "old", "orig", "original"):
+            mode = "basic"
+            break
+        elif tok in ("alert", "красный", "ошибка", "warn", "warning", "on", "1", "неактуально"):
+            mode = "alert"
+            break
+        elif tok in ("good", "зеленый", "зелёный", "актуально", "штатно", "ок", "ok"):
+            mode = "good"
+            break
+        elif tok in ("reset", "сброс", "отмена", "cancel"):
+            mode = "reset"
+            break
+
+    if mode:
+        await site_banner_service.set_mode(mode, scope=scope)
+        target_label = "только для вас (тестирование)" if scope == "my" else "для всех пользователей"
+
+        if mode == "reset":
+            await message.answer(
+                f"✅ <b>Тестовый баннер сброшен!</b>\nТеперь вы видите глобальный баннер ({site_banner_service.global_mode}).",
+                parse_mode="HTML",
+            )
+        elif mode == "basic":
+            await message.answer(
+                f"✅ <b>Базовый баннер включен ({target_label})!</b>\n\n"
+                f"Текст в футере:\n"
+                f"<i>(официальный сайт - schedule.karnu-buketov.edu.kz)</i>",
+                parse_mode="HTML",
+            )
+        elif mode == "alert":
+            await message.answer(
+                f"✅ <b>Предупреждающий баннер включен ({target_label})!</b>\n\n"
+                f"Текст в футере:\n"
+                f"🔴 <i>Сейчас расписания могут быть неактуальными: официальный сайт - schedule.karnu-buketov.edu.kz</i> 🔴",
+                parse_mode="HTML",
+            )
+        elif mode == "good":
+            await message.answer(
+                f"✅ <b>Баннер штатной работы включен ({target_label})!</b>\n\n"
+                f"Текст в футере:\n"
+                f"🟢 <i>Все расписания сейчас актуальные, всё работает хорошо, бот работает штатно. Официальный сайт - schedule.karnu-buketov.edu.kz</i> 🟢",
+                parse_mode="HTML",
+            )
     else:
-        status_emoji = (
-            "🔴 Включен (предупреждение)"
-            if site_banner_service.is_warning_active
-            else "⚪ Выключен (оригинал)"
-        )
+        mode_labels = {
+            "basic": "⚪ Базовый (стандарт)",
+            "alert": "🔴 Предупреждение (неактуально)",
+            "good": "🟢 Штатно (все расписания актуальны)",
+        }
+        g_desc = mode_labels.get(site_banner_service.global_mode, site_banner_service.global_mode)
+        my_desc = mode_labels.get(site_banner_service.admin_mode, "Совпадает с общим") if site_banner_service.admin_mode else "Совпадает с общим"
+
         await message.answer(
-            f"ℹ️ <b>Баннер неактуальности расписания:</b> {status_emoji}\n\n"
-            "• <code>/banner off</code> (или <code>/revert</code>) — вернуть старый оригинальный текст\n"
-            "• <code>/banner on</code> — включить предупреждение с красными кружками\n"
-            "• <code>/banner</code> — проверить текущий статус",
+            f"ℹ️ <b>Статус баннеров расписания:</b>\n\n"
+            f"• <b>Для всех (all):</b> {g_desc}\n"
+            f"• <b>Только для вас (my):</b> {my_desc}\n\n"
+            f"<b>Команды переключения:</b>\n"
+            f"• <code>/banner basic all</code> (или <code>/banner basic</code>) - базовый баннер для всех\n"
+            f"• <code>/banner alert all</code> (или <code>/banner alert</code>) - красные кружки 🔴 для всех\n"
+            f"• <code>/banner good all</code> (или <code>/banner good</code>) - зеленые кружки 🟢 для всех\n"
+            f"• <code>/banner [basic|alert|good] my</code> - включить выбранный баннер только для себя\n"
+            f"• <code>/banner reset my</code> - сбросить свой баннер (видеть общий)",
+            parse_mode="HTML",
+        )
+
+
+@admin_router.message(Command("design"))
+async def handle_design_command(message: Message) -> None:
+    """Configures UI schedule theme (basic, halloween, happy new year) for all or admin preview (my)."""
+    if not await _check_admin(message):
+        return
+
+    text = (message.text or "").strip()
+    tokens = text.split()[1:]
+    tokens_lower = [t.lower() for t in tokens]
+
+    # Remove "schedule", "кесте", "расписание" prefix if present
+    if tokens_lower and tokens_lower[0] in ("schedule", "кесте", "расписание"):
+        tokens_lower = tokens_lower[1:]
+
+    # 1. Determine scope: "my" or "all"
+    scope = "all"
+    if any(k in tokens_lower for k in ("my", "мне", "админ", "me")):
+        scope = "my"
+        tokens_lower = [t for t in tokens_lower if t not in ("my", "мне", "админ", "me")]
+    elif any(k in tokens_lower for k in ("all", "все", "всем")):
+        scope = "all"
+        tokens_lower = [t for t in tokens_lower if t not in ("all", "все", "всем")]
+
+    # 2. Re-combine remainder to match multi-word themes like "happy new year"
+    remainder = " ".join(tokens_lower).strip()
+    norm_theme = schedule_theme_service.normalize_theme_name(remainder) if remainder else None
+    is_reset = remainder in ("reset", "сброс", "отмена", "cancel")
+
+    if norm_theme or is_reset:
+        applied = await schedule_theme_service.set_theme(remainder if is_reset else norm_theme, scope=scope)
+        target_label = "только для вас (тестирование)" if scope == "my" else "для всех пользователей"
+
+        theme_titles = {
+            "basic": "🏛️ Базовый академический дизайн",
+            "halloween": "🎃 Хэллоуин (🎃 🦇 🕯️ 🕸️ 👻)",
+            "newyear": "❄️ Новый Год (❄️ 🎄 🎅 🎁 ⛄)",
+        }
+
+        if is_reset:
+            await message.answer(
+                f"✅ <b>Тестовая тема сброшена!</b>\nТеперь вы видите глобальную тему ({theme_titles.get(schedule_theme_service.global_theme, schedule_theme_service.global_theme)}).",
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                f"✅ <b>Тема расписания успешно установлена ({target_label})!</b>\n\n"
+                f"Активно: <b>{theme_titles.get(applied, applied)}</b>",
+                parse_mode="HTML",
+            )
+    else:
+        theme_titles = {
+            "basic": "🏛️ Базовый академический",
+            "halloween": "🎃 Хэллоуин",
+            "newyear": "❄️ Новый Год",
+        }
+        g_desc = theme_titles.get(schedule_theme_service.global_theme, schedule_theme_service.global_theme)
+        my_desc = theme_titles.get(schedule_theme_service.admin_theme, "Совпадает с общим") if schedule_theme_service.admin_theme else "Совпадает с общим"
+
+        await message.answer(
+            f"🎨 <b>Статус тем оформления расписания:</b>\n\n"
+            f"• <b>Для всех (all):</b> {g_desc}\n"
+            f"• <b>Только для вас (my):</b> {my_desc}\n\n"
+            f"<b>Команды переключения:</b>\n"
+            f"• <code>/design schedule basic all</code> - базовый академический дизайн для всех\n"
+            f"• <code>/design schedule halloween all</code> - тема Хэллоуина для всех\n"
+            f"• <code>/design schedule happy new year all</code> - новогодняя тема для всех\n"
+            f"• <code>/design schedule [тема] my</code> - включить тему только для себя (тестирование)\n"
+            f"• <code>/design schedule reset my</code> - сбросить свою тему (видеть общую)",
             parse_mode="HTML",
         )
 
@@ -572,11 +696,11 @@ async def handle_sms(message: Message) -> None:
     if len(tokens) < 2:
         await message.answer(
             "ℹ️ <b>Формат команды /sms:</b>\n"
-            "• <code>/sms all [текст]</code> — разовое оповещение всем пользователям (по умолчанию автоудаление через 4ч)\n"
-            "• <code>/sms 2h all [текст]</code> — автоудаление через 2 часа (или 30m, 1h, 12h)\n"
-            "• <code>/sms 0 all [текст]</code> — без автоудаления (навсегда)\n"
-            "• <code>/sms [userId или @username] [текст]</code> — отправить одно личное сообщение\n"
-            "• <code>/sms 1h [userId или @username] [текст]</code> — личное сообщение с автоудалением",
+            "• <code>/sms all [текст]</code> - разовое оповещение всем пользователям (по умолчанию автоудаление через 4ч)\n"
+            "• <code>/sms 2h all [текст]</code> - автоудаление через 2 часа (или 30m, 1h, 12h)\n"
+            "• <code>/sms 0 all [текст]</code> - без автоудаления (навсегда)\n"
+            "• <code>/sms [userId или @username] [текст]</code> - отправить одно личное сообщение\n"
+            "• <code>/sms 1h [userId или @username] [текст]</code> - личное сообщение с автоудалением",
             parse_mode="HTML",
         )
         return
@@ -626,7 +750,10 @@ async def handle_sms(message: Message) -> None:
                         sent += 1
                         delivered = True
                         if delete_after > 0:
-                            delivered_records.append((sent_msg.chat.id, sent_msg.message_id))
+                            chat_id = getattr(getattr(sent_msg, "chat", None), "id", None) or getattr(sent_msg, "chat_id", None) or u.user_id
+                            msg_id = getattr(sent_msg, "message_id", None)
+                            if msg_id is not None:
+                                delivered_records.append((chat_id, msg_id))
                         break
                     except TelegramRetryAfter as e:
                         wait_sec = max(1, int(e.retry_after) + 1)
@@ -710,7 +837,7 @@ async def handle_sms(message: Message) -> None:
         )
         await message.answer(
             f"✅ <b>Сообщение успешно отправлено:</b>\n"
-            f"• <b>Получатель:</b> <code>{target_user.user_id}</code> (@{escape_html(target_user.username or '—')})\n"
+            f"• <b>Получатель:</b> <code>{target_user.user_id}</code> (@{escape_html(target_user.username or '-')})\n"
             f"• <b>Текст:</b> {escape_html(sms_text)}{dur_info}",
             parse_mode="HTML",
         )
@@ -919,8 +1046,8 @@ async def handle_get_reserved_schedule(message: Message) -> None:
         await message.answer(f"❌ Резервное расписание для группы {group_id} не найдено в MongoDB.")
         return
 
-    upd_str = doc.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC") if doc.updated_at else "—"
-    hash_str = doc.hash[:16] if doc.hash else "—"
+    upd_str = doc.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC") if doc.updated_at else "-"
+    hash_str = doc.hash[:16] if doc.hash else "-"
     preview = (
         f"💾 <b>Резервное расписание группы {group_id}:</b>\n"
         f"• Обновлено: {upd_str}\n"
@@ -1227,7 +1354,7 @@ async def handle_bans_list(message: Message) -> None:
         else:
             exp_str = " (бессрочно)"
         lines.append(
-            f"• ID: <code>{r.user_id}</code> (@{escape_html(r.username or '—')}) — [{r.type}]{exp_str} Причина: {escape_html(r.reason or 'не указана')}"
+            f"• ID: <code>{r.user_id}</code> (@{escape_html(r.username or '-')}) - [{r.type}]{exp_str} Причина: {escape_html(r.reason or 'не указана')}"
         )
 
     await message.answer("\n".join(lines), parse_mode="HTML")
@@ -1273,9 +1400,9 @@ async def handle_paywall_command(message: Message) -> None:
     if not parts:
         await message.answer(
             "⭐ <b>Управление платным режимом (9 000 ⭐ звёзд за кнопку):</b>\n\n"
-            "• <code>/paywall [ID|@ник]</code> — включить платные кнопки для пользователя (9 000 ⭐ за кнопку)\n"
-            "• <code>/paywall [ID|@ник] off</code> (или <code>/unpaywall [ID|@ник]</code>) — выключить платный режим\n"
-            "• <code>/paywalls</code> — список всех пользователей на платном режиме\n\n"
+            "• <code>/paywall [ID|@ник]</code> - включить платные кнопки для пользователя (9 000 ⭐ за кнопку)\n"
+            "• <code>/paywall [ID|@ник] off</code> (или <code>/unpaywall [ID|@ник]</code>) - выключить платный режим\n"
+            "• <code>/paywalls</code> - список всех пользователей на платном режиме\n\n"
             "<i>Примеры:</i>\n"
             "• <code>/paywall @username</code>\n"
             "• <code>/paywall 123456789</code>\n"
@@ -1376,7 +1503,7 @@ async def handle_paywalls_list_command(message: Message) -> None:
     for i, item in enumerate(tolled_list, 1):
         user_str = f"@{escape_html(item.username)}" if item.username else f"ID: <code>{item.user_id}</code>"
         lines.append(
-            f"{i}. {user_str} — <b>{item.star_price:,} ⭐</b> за кнопку\n"
+            f"{i}. {user_str} - <b>{item.star_price:,} ⭐</b> за кнопку\n"
             f"   Отключить: <code>/paywall {item.user_id} off</code>\n"
         )
 
@@ -1385,53 +1512,43 @@ async def handle_paywalls_list_command(message: Message) -> None:
 
 @admin_router.message(Command("ahelp"))
 async def handle_ahelp(message: Message) -> None:
-    """Displays comprehensive administrator commands help reference matching Node.js commit 81705b6."""
+    """Displays comprehensive administrator commands help reference."""
     if not await _check_admin(message):
         return
 
     ahelp_text = (
         "⚡ <b>КОМАНДЫ АДМИНИСТРАТОРА КИЧО:</b>\n\n"
-        "🔄 <b>Синхронизация данных:</b>\n"
-        "/sync (или /pull_new) — <i>Умный сбор новых данных: проверяет сайт КарУ и добавляет ТОЛЬКО новые группы, преподавателей, кафедры и программы БЕЗ дубликатов!</i>\n"
-        "/updateFaculties [hard] — обновить факультеты\n"
-        "/updatePrograms [hard] — обновить программы\n"
-        "/updateGroups [hard] — обновить группы (быстрый)\n"
-        "/updateDepartments [hard] — обновить кафедры\n"
-        "/updateTeachers [hard] — обновить преподавателей\n"
-        "/updateProfiles [hard] — обновить профили\n\n"
+        "🎨 <b>Оформление и Баннеры:</b>\n"
+        "• <code>/banner [basic|alert|good] [all|my]</code> - <i>управление баннером внизу расписания (стандарт / 🔴 предупреждение / 🟢 всё штатно). Флаг 'my' включает только для вас!</i>\n"
+        "• <code>/design schedule [basic|halloween|happy new year] [all|my]</code> - <i>глобальная смена темы расписания (базовая / 🎃 Хэллоуин / ❄️ Новый год). Флаг 'my' включает только для вас!</i>\n\n"
+        "📢 <b>Рассылка и Связь:</b>\n"
+        "• <code>/sms [время: 4h/2h/30m/0] all [текст]</code> - <i>разовое оповещение всем пользователям с автоудалением</i>\n"
+        "• <code>/sms [ID/@ник] [текст]</code> - <i>отправить личное сообщение пользователю от имени бота</i>\n\n"
+        "📊 <b>Пользователи и Статистика:</b>\n"
+        "• <code>/get_user [ID/@ник/имя]</code> - <i>карточка пользователя с реальным TG-профилем и историей логов</i>\n"
+        "• <code>/find_user [запрос]</code> - <i>умный поиск пользователя по ID, логину или имени</i>\n"
+        "• <code>/user_logs [ID/@ник] [кол-во]</code> - <i>детальные логи действий пользователя</i>\n"
+        "• <code>/stat</code> - <i>статистика онлайна и регистраций за 7 дней</i>\n"
+        "• <code>/boost</code> - <i>аналитика рекламы и кликов «Terricon Valley» (показы, кнопки, ссылки, CTR)</i>\n"
+        "• <code>/users</code> - <i>общее количество пользователей бота</i>\n"
+        "• <code>/group_stat</code> - <i>покрытие по группам (+ выгрузка JSON)</i>\n"
+        "• <code>/get_group [groupId]</code> - <i>информация о группе</i>\n"
+        "• <code>/get_users_by_group [groupId]</code> - <i>пользователи группы</i>\n"
+        "• <code>/get_schedule [groupId]</code> - <i>расписание группы из API</i>\n\n"
+        "🔄 <b>Сервер и База данных:</b>\n"
+        "• <code>/sync</code> (или <code>/pull_new</code>) - <i>умный сбор новых данных с сайта КарУ без дубликатов</i>\n"
+        "• <code>/info</code> - <i>диагностика: аптайм, память RAM процесса и состояние кэшей</i>\n"
+        "• <code>/test</code> - <i>проверка связи с официальным API КарУ</i>\n"
+        "• <code>/backup_logs</code> - <i>архивировать и выгрузить логи</i>\n\n"
         "⛔ <b>Модерация (бан и мут):</b>\n"
-        "/ban [ID/@ник] [время/mute] [причина] — <i>бан или мут (напр. /ban @user 2h или /ban @user mute 30m)</i>\n"
-        "/mute [ID/@ник] [время] [причина] — <i>быстрый мут пользователя (напр. /mute @user 1h)</i>\n"
-        "/unban [ID/@ник] — <i>снять бан или мут</i>\n"
-        "/bans — <i>список активных блокировок и мутов</i>\n\n"
-        "⭐ <b>Платный режим (9 000 ⭐ звёзд за кнопку):</b>\n"
-        "/paywall [ID/@ник] [on/off] — <i>сделать ВСЕ кнопки платными персонально для пользователя</i>\n"
-        "/unpaywall [ID/@ник] — <i>выключить платный режим для пользователя</i>\n"
-        "/paywalls — <i>список пользователей на платном тарифе</i>\n\n"
-        "📊 <b>Статистика и пользователи:</b>\n"
-        "/get_user [ID/@ник/имя] — <i>карточка пользователя с историей логов на русском!</i>\n"
-        "/user_logs [ID/@ник] [кол-во] — <i>подробные логи действий пользователя</i>\n"
-        "/find_user [ID/@ник/имя] — <i>умный поиск юзера по ID, логину или имени</i>\n"
-        "/stat — статистика онлайна и регистраций\n"
-        "/boost — аналитика рекламы и кликов «Terricon Valley» (показы, кнопки, ссылки, CTR)\n"
-        "/users — общее количество пользователей бота\n"
-        "/group_stat — покрытие по группам (+ выгрузка JSON)\n"
-        "/get_group [groupId] — инфо о группе\n"
-        "/get_users_by_group [groupId] — пользователи группы\n"
-        "/get_schedule [groupId] — расписание группы\n"
-        "/get_reserved_schedule [groupId] — резервное расписание\n\n"
-        "📢 <b>Связь и оповещения:</b>\n"
-        "/sms [время: 4h/2h/30m/0] all [текст] — <i>разовое оповещение всем пользователям (по умолч. автоудаление через 4ч)</i>\n"
-        "/sms [ID/@ник] [текст] — <i>отправить личное сообщение пользователю</i>\n"
-        "/banner [on/off] (или /revert) — <i>переключить предупреждающий баннер / вернуть старый оригинальный дизайн</i>\n\n"
-        "🛠 <b>Сервисные команды:</b>\n"
-        "/backup_logs — архивировать и выгрузить логи на Google Диск / Telegram\n"
-        "/get_logs — скачать текущий лог-файл бота\n"
-        "/ignoreLogs [userId] — добавить в игнор логов\n"
-        "/restart — перезапуск сессии браузера\n"
-        "/info — отладочная информация\n"
-        "/test — тест подключения к КарУ\n"
-        "/get_callback [callbackName] — тест кнопки"
+        "• <code>/ban [ID/@ник] [время] [причина]</code> - <i>бан пользователя (напр. /ban @user 2h)</i>\n"
+        "• <code>/mute [ID/@ник] [время] [причина]</code> - <i>мут пользователя (напр. /mute @user 1h)</i>\n"
+        "• <code>/unban [ID/@ник]</code> - <i>снять бан или мут</i>\n"
+        "• <code>/bans</code> - <i>список активных блокировок и мутов</i>\n\n"
+        "⭐ <b>Платный режим (Telegram Stars):</b>\n"
+        "• <code>/paywall [ID/@ник] [on/off]</code> - <i>сделать кнопки платными для пользователя</i>\n"
+        "• <code>/unpaywall [ID/@ник]</code> - <i>выключить платный режим для пользователя</i>\n"
+        "• <code>/paywalls</code> - <i>список пользователей на платном тарифе</i>"
     )
 
     await message.answer(ahelp_text, parse_mode="HTML")
@@ -1442,6 +1559,8 @@ __all__ = [
     "handle_ahelp",
     "handle_backup_logs",
     "handle_ban_command",
+    "handle_banner_toggle",
+    "handle_design_command",
     "handle_bans_list",
     "handle_boost",
     "handle_get_callback",

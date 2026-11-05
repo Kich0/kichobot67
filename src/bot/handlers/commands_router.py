@@ -89,6 +89,12 @@ async def handle_help(message: Message) -> None:
     except Exception:
         pass
     user_id = message.from_user.id if message.from_user else 0
+    if text.startswith("/help") and (user_id == 1516988645 or await user_service.is_admin(user_id)):
+        from src.bot.handlers.admin_router import handle_ahelp
+
+        await handle_ahelp(message)
+        return
+
     lang = await user_service.get_user_language(user_id)
     await message.answer(
         t("help_command_content", lang),
@@ -145,7 +151,7 @@ async def handle_profile(message: Message) -> None:
             teacher_name = str(user_doc.teacher)
 
     lang_display = "🇷🇺 Русский" if lang == "ru" else "🇰🇿 Қазақша"
-    user_name = escape_html(message.from_user.full_name) if message.from_user else "—"
+    user_name = escape_html(message.from_user.full_name) if message.from_user else "-"
     profile_text = t(
         "user_profile_card",
         lang,

@@ -42,8 +42,15 @@ from src.services.teacher_directory import (
     teacher_directory_service,
 )
 
+from src.services.site_banner_service import (
+    SiteBannerService,
+    site_banner_service,
+)
+from src.services.schedule_theme_service import (
+    ScheduleThemeService,
+    schedule_theme_service,
+)
 from src.services.table_image import (
-    COLORS,
     DAYS_KZ,
     DAYS_RU,
     STANDARD_TIMES,
