@@ -55,7 +55,7 @@ class TeleconAdService:
         user_id: int | str | None = None,
         source: str | None = None,
         base_url: str | None = None,
-        short: bool = False,
+        short: bool = True,
     ) -> str:
         """Returns tracking redirect URL if domain is configured, otherwise fallback to destination URL.
 
@@ -64,8 +64,13 @@ class TeleconAdService:
             user_id: Optional Telegram viewer user ID
             source: Placement source ('student_schedule', 'teacher_schedule', etc.)
             base_url: Optional explicit base URL override
-            short: If True, produces clean compact URL (/r/telecon?t=btn&u=...)
+            short: If True (default), produces clean compact URL (https://is.gd/terricon_addr / terricon_btn)
         """
+        if short:
+            if target in ("link", "text_link", "address", "addr"):
+                return TELECON_SHORT_URL_LINK
+            return TELECON_SHORT_URL_BUTTON
+
         domain = base_url or settings.WEBHOOK_DOMAIN
         if domain:
             clean_domain = str(domain).rstrip("/")
@@ -79,11 +84,6 @@ class TeleconAdService:
                 src_code = "std" if "student" in str(source) else ("tch" if "teacher" in str(source) else str(source))
                 url += f"&s={quote_plus(src_code)}"
             return url
-
-        if short:
-            if target in ("link", "text_link", "address", "addr"):
-                return TELECON_SHORT_URL_LINK
-            return TELECON_SHORT_URL_BUTTON
 
         return TERRICON_EVENT_REG_URL
 
@@ -103,42 +103,23 @@ class TeleconAdService:
             short=True,
         )
 
-    def generate_bridge_html(self, firm_id: str = TELECON_FIRM_ID) -> str:
-        """Generates an ultra-fast, pitch-black deep-link bridge HTML page for 2GIS app launch.
+    def generate_bridge_html(self, target_url: str | None = None, firm_id: str = TELECON_FIRM_ID) -> str:
+        """Generates an ultra-fast, pitch-black deep-link bridge HTML page.
 
         Zero visible DOM elements, pure #000000 black screen (no cards, buttons, spinners or text),
-        and immediate location.replace launch of 2GIS mobile app via Android intent / iOS scheme.
+        and immediate location.replace launch of the target landing URL or 2GIS app.
         """
-        web_fallback = f"https://2gis.kz/karaganda/firm/{firm_id}"
-        dgis_scheme = f"dgis://2gis.ru/firm/{firm_id}"
-        android_intent = (
-            f"intent://2gis.ru/firm/{firm_id}#Intent;scheme=dgis;"
-            f"package=ru.dublgis.dgismobile;S.browser_fallback_url={quote_plus(web_fallback)};end;"
-        )
-
-        return f"""<!DOCTYPE html>
-<html lang="ru" style="background:#000;background-color:#000;">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-    <title>2GIS</title>
-    <style>
-        html, body {{
-            background: #000000 !important;
-            background-color: #000000 !important;
-            color: #000000 !important;
-            margin: 0;
-            padding: 0;
-            width: 100vw;
-            height: 100vh;
-            overflow: hidden;
-            border: none;
-            outline: none;
-        }}
-    </style>
-    <script>
-        (function() {{
-            var web = "{web_fallback}";
+        dest = target_url
+        if dest and "2gis" not in dest:
+            redirect_js = f'window.location.replace("{dest}");'
+        else:
+            web_fallback = f"https://2gis.kz/karaganda/firm/{firm_id}"
+            dgis_scheme = f"dgis://2gis.ru/firm/{firm_id}"
+            android_intent = (
+                f"intent://2gis.ru/firm/{firm_id}#Intent;scheme=dgis;"
+                f"package=ru.dublgis.dgismobile;S.browser_fallback_url={quote_plus(web_fallback)};end;"
+            )
+            redirect_js = f"""var web = "{web_fallback}";
             var dgis = "{dgis_scheme}";
             var intent = "{android_intent}";
             var ua = navigator.userAgent || "";
@@ -155,7 +136,31 @@ class TeleconAdService:
 
             setTimeout(function() {{
                 window.location.replace(web);
-            }}, 1200);
+            }}, 1200);"""
+
+        return f"""<!DOCTYPE html>
+<html lang="ru" style="background:#000;background-color:#000;">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+    <title>Terricon Valley</title>
+    <style>
+        html, body {{
+            background: #000000 !important;
+            background-color: #000000 !important;
+            color: #000000 !important;
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            border: none;
+            outline: none;
+        }}
+    </style>
+    <script>
+        (function() {{
+            {redirect_js}
         }})();
     </script>
 </head>

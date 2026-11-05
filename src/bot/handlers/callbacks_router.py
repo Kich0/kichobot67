@@ -1498,44 +1498,48 @@ async def get_or_fetch_student_schedule(
     return cached
 
 
-# Advertisement banner toggle: enabled strictly for admin/owner (1516988645).
-# When enabled (_AD_ENABLED = True), the ad preview is shown strictly to admin/owner (1516988645).
+# Advertisement banner configuration:
+# _AD_ENABLED: global switch for advertisements (True = active).
+# _AD_ADMIN_ONLY: if True, ads are isolated strictly to admin/owner; if False, active globally for all users.
 _AD_ENABLED: bool = True
+_AD_ADMIN_ONLY: bool = False
 
 
 async def _get_ad_block_for_viewer(
     viewer_user_id: int | str | None,
     source: str = "student_schedule",
 ) -> tuple[str, tuple[str, str] | None]:
-    """Returns (ad_text, ad_button_tuple) ONLY if viewer is admin and ads are enabled, else ('', None)."""
+    """Returns (ad_text, ad_button_tuple) if ads are active for viewer, else ('', None)."""
     if not _AD_ENABLED:
         return "", None
-    if not viewer_user_id:
-        return "", None
-    try:
-        from src.services.user_service import user_service
 
-        uid = int(viewer_user_id)
-        is_adm = (uid == 1516988645) or await user_service.is_admin(uid)
-        if not is_adm:
+    if _AD_ADMIN_ONLY:
+        if not viewer_user_id:
             return "", None
-    except Exception:
         try:
-            if int(viewer_user_id) != 1516988645:
+            from src.services.user_service import user_service
+
+            uid = int(viewer_user_id)
+            is_adm = (uid == 1516988645) or await user_service.is_admin(uid)
+            if not is_adm:
                 return "", None
         except Exception:
-            return "", None
+            try:
+                if int(viewer_user_id) != 1516988645:
+                    return "", None
+            except Exception:
+                return "", None
 
     from src.services.telecon_ad_service import telecon_ad_service
 
-    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source)
+    link_url = telecon_ad_service.get_tracking_url("link", viewer_user_id, source=source, short=True)
     await telecon_ad_service.record_impression(viewer_user_id, source=source)
 
     ad_text = (
         "────────────────────\n"
         "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b>\n"
         "С 9 по 27 ноября (13:00, онлайн). 15 занятий по SMM, рекламе и ИИ. Участие бесплатное.\n"
-        f'🔗 <b>Ссылка:</b> <a href="{link_url}">terricon.kz/digital-marketing</a>\n'
+        f'🔗 <b>Ссылка:</b> <a href="{link_url}">is.gd/terricon_addr</a>\n'
         "────────────────────\n\n"
     )
     ad_btn = ("👉 Подробнее", "ad_telecon_info")
@@ -3175,6 +3179,7 @@ async def handle_unknown_callback(call: CallbackQuery) -> None:
 
 
 __all__ = [
+    "_AD_ADMIN_ONLY",
     "_AD_ENABLED",
     "_bg_persist_empty_student_schedule",
     "_bg_persist_student_schedule",
