@@ -1549,19 +1549,16 @@ async def _get_ad_block_for_viewer(
     return ad_text, ad_btn
 
 
-# Halloween theme configuration: active until November 7, 2026 04:00 AM (Asia/Almaty, UTC+5).
-# After this exact moment, the bot automatically and seamlessly reverts to the standard academic design.
-HALLOWEEN_EXPIRATION_DATETIME = datetime(2026, 11, 7, 4, 0, 0, tzinfo=TIMEZONE)
+# Schedule theme configuration: visual theme is controlled manually by administrator via /design command.
+# Automatic expiration timer has been removed per administrator request (HALLOWEEN_EXPIRATION_DATETIME is None).
+HALLOWEEN_EXPIRATION_DATETIME: datetime | None = None
 HALLOWEEN_THEME_ENABLED: bool = True
 HALLOWEEN_PREVIEW_USER_IDS: set[int] = {1516988645}
 
 
 def is_halloween_active_kz(target_dt: datetime | None = None) -> bool:
-    """Checks whether current Asia/Almaty time is within the active Halloween event window (before Nov 7, 04:00 AM)."""
-    now = target_dt or datetime.now(TIMEZONE)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=TIMEZONE)
-    return now < HALLOWEEN_EXPIRATION_DATETIME
+    """Checks whether Halloween theme is active (timer removed in favor of manual /design control)."""
+    return True
 
 
 def is_halloween_preview_user(user_id: int | str | None = None) -> bool:
@@ -3031,7 +3028,7 @@ async def handle_teacher_text_schedule(call: CallbackQuery, data: dict[str, Any]
         await call.answer()
         return
 
-    # 2. Refresh button clicked within cooldown (5 minutes) during daytime
+    # 2. Refresh button clicked within cooldown (10 minutes) during daytime
     if is_refresh and cached and (now - cached["timestamp"] < COOLDOWN_TEACHER_TEXT_REFRESH.total_seconds()):
         from_cache = False if cached.get("is_from_db") else True
         if not cached.get("is_from_db"):

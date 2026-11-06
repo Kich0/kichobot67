@@ -1093,7 +1093,7 @@ async def handle_info(message: Message) -> None:
         t_m, t_s = divmod(st["teachers_max_age_sec"], 60)
         warmup_line = (
             f"• <b>Прогрев:</b> G max {g_m}m{g_s:02d}s (&gt;10m: {st['groups_over_10m']}) | "
-            f"T max {t_m}m{t_s:02d}s (&gt;5m: {st['teachers_over_5m']}) | "
+            f"T max {t_m}m{t_s:02d}s (&gt;10m: {st.get('teachers_over_10m', st.get('teachers_over_5m', 0))}) | "
             f"304: {st['api_304']}, 200: {st['api_200']} | Исх. API: {st['out_req_per_min']}/мин\n"
         )
     except Exception as e:

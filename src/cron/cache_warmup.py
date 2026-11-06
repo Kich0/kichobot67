@@ -2,11 +2,11 @@
 
 Manages continuous, deadline-scheduled schedule pre-fetching:
 - TOP-150 student groups kept within 8 minutes target age (< 10 min refresh cooldown).
-- TOP-60 teachers kept within 4 minutes target age (< 5 min refresh cooldown).
-- Combined background rate: ~34 req/min (31% of 110 req/min limit, leaving ~76 req/min free).
+- TOP-200 teachers kept within 8.5 minutes target age (< 10 min refresh cooldown).
+- Combined background rate: ~42.3 req/min (24% of 180 req/min limit, leaving ~137 req/min free).
 - Active window: 06:30 to 01:00 (Asia/Almaty, UTC+5).
 - Night sleep: 01:00 to 06:30 (zero outbound network requests).
-- Rate limiter headroom guard: skips tick if live user load reaches 85 req/min (HEADROOM=25).
+- Rate limiter headroom guard: skips tick if live user load reaches 155 req/min (HEADROOM=25).
 - Fire-and-forget background synchronization to MongoDB emergency fallback collections.
 """
 
@@ -79,16 +79,16 @@ class SmartWarmupEngine:
 
     # Pacing and sizing constants
     GROUP_TARGET_AGE_SEC: float = 480.0    # 8 min (< 10 min refresh cooldown)
-    TEACHER_TARGET_AGE_SEC: float = 240.0  # 4 min (< 5 min refresh cooldown)
+    TEACHER_TARGET_AGE_SEC: float = 510.0  # 8.5 min (< 10 min refresh cooldown, 200 * 2.5s = 500s fits under target age)
     GROUP_INTERVAL_SEC: float = 2.5        # min spacing between group requests
     TEACHER_INTERVAL_SEC: float = 2.5      # min spacing between teacher requests
     IDLE_POLL_SEC: float = 5.0             # sleep check when no candidate has reached target age
     ERROR_RETRY_SEC: float = 60.0          # retry interval on API error or stale fallback
     MAX_GROUP_CANDIDATES: int = 180
-    MAX_TEACHER_CANDIDATES: int = 80
+    MAX_TEACHER_CANDIDATES: int = 240
     STATS_LOG_INTERVAL_SEC: float = 300.0  # 5 min periodic stats logging
     TOP_GROUPS_LIMIT: int = 150
-    TOP_TEACHERS_LIMIT: int = 60
+    TOP_TEACHERS_LIMIT: int = 200
     TOP_LISTS_CACHE_TTL: float = 3600.0  # 1 hour (was 900.0)
     HEADROOM: int = 25  # Leave at least 25 req/min margin under API limit (was 5)
 
@@ -1438,7 +1438,8 @@ class SmartWarmupEngine:
         max_t_sec = max(real_t_ages) if real_t_ages else (max(teacher_ages) if teacher_ages else 0.0)
 
         g_over_10m = sum(1 for a in group_ages if a >= 600.0)
-        t_over_5m = sum(1 for a in teacher_ages if a >= 300.0)
+        t_over_10m = sum(1 for a in teacher_ages if a >= 600.0)
+        t_over_5m = t_over_10m  # backwards compatibility alias
 
         p95_g_sec = 0.0
         if real_g_ages:
@@ -1455,6 +1456,7 @@ class SmartWarmupEngine:
             "groups_over_10m": g_over_10m,
             "teachers_count": len(teacher_ages),
             "teachers_max_age_sec": int(max_t_sec),
+            "teachers_over_10m": t_over_10m,
             "teachers_over_5m": t_over_5m,
             "api_200": self._stats["api_200"],
             "api_304": self._stats["api_304"],
@@ -1477,7 +1479,7 @@ class SmartWarmupEngine:
         logger.info(
             f"[Warmup📊] G: n={st['groups_count']} max={g_min}m{g_sec:02d}s p95={p95_min}m{p95_sec:02d}s >10m={st['groups_over_10m']} | "
             f"200={st['api_200']} 304={st['api_304']} stale={st['stale']} err={st['errors']} | "
-            f"T: n={st['teachers_count']} max={t_min}m{t_sec:02d}s >5m={st['teachers_over_5m']} | "
+            f"T: n={st['teachers_count']} max={t_min}m{t_sec:02d}s >10m={st.get('teachers_over_10m', st.get('teachers_over_5m', 0))} | "
             f"out={st['out_req_per_min']}/min"
         )
 

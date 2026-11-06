@@ -20,7 +20,7 @@ CACHE_API_TEACHERS_TTL = timedelta(minutes=10)
 
 # Refresh Button (🔄) Cooldowns
 COOLDOWN_STUDENT_REFRESH = timedelta(minutes=10)
-COOLDOWN_TEACHER_TEXT_REFRESH = timedelta(minutes=5)
+COOLDOWN_TEACHER_TEXT_REFRESH = timedelta(minutes=10)
 COOLDOWN_TEACHER_IMAGE_REFRESH = timedelta(minutes=20)
 
 # LRU Cache Sizes (Capacity)
@@ -31,7 +31,7 @@ CACHE_CAPACITY_TEACHER_IMAGES = 160
 
 # Buketov University Schedule API
 SCHEDULE_API_TIMEOUT = 4.5  # seconds
-SCHEDULE_API_RATE_LIMIT = 110  # max requests per minute (safe ceiling below university 120/min/IP limit)
+SCHEDULE_API_RATE_LIMIT = 180  # max requests per minute (safe ceiling below university 200/min/IP limit)
 CIRCUIT_BREAKER_FAIL_THRESHOLD = 2
 CIRCUIT_BREAKER_RESET_TIMEOUT = 120.0  # seconds (2 minutes)
 

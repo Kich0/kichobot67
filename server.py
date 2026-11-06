@@ -74,19 +74,18 @@ def main() -> None:
         logger.info(f"Starting Kichobot Webhook server on {settings.HOST}:{settings.PORT}...")
         try:
             from granian import Granian
-            from granian.constants import Interfaces
 
             server = Granian(
                 "server:app",
                 address=settings.HOST,
                 port=settings.PORT,
-                interface=Interfaces.ASGI,
+                interface='asgi',
                 workers=1,
                 reload=settings.DEBUG,
                 log_access=False,
             )
             server.serve()
-        except ImportError:
+        except (ImportError, Exception):
             uvicorn.run(
                 "server:app",
                 host=settings.HOST,
