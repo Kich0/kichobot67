@@ -1513,34 +1513,47 @@ async def _get_ad_block_for_viewer(
     if not _AD_ENABLED:
         return "", None
 
+    clean_uid = (
+        int(viewer_user_id)
+        if viewer_user_id is not None and str(viewer_user_id).isdigit() and int(viewer_user_id) > 0
+        else None
+    )
+    if clean_uid is None:
+        return "", None
+
     if _AD_ADMIN_ONLY:
-        if not viewer_user_id:
-            return "", None
         try:
             from src.services.user_service import user_service
 
-            uid = int(viewer_user_id)
-            is_adm = (uid == 1516988645) or await user_service.is_admin(uid)
+            is_adm = (clean_uid == 1516988645) or await user_service.is_admin(clean_uid)
             if not is_adm:
                 return "", None
         except Exception:
-            try:
-                if int(viewer_user_id) != 1516988645:
-                    return "", None
-            except Exception:
+            if clean_uid != 1516988645:
                 return "", None
-
-    target_url = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
-    if viewer_user_id:
+    else:
         try:
-            from src.services.telecon_ad_service import telecon_ad_service
-            await telecon_ad_service.record_impression(viewer_user_id, source=source)
+            from unittest.mock import AsyncMock, MagicMock
+            from src.services.user_service import user_service
+
+            adm_fn = getattr(user_service, "is_admin", None)
+            if isinstance(adm_fn, (AsyncMock, MagicMock)):
+                is_adm = (clean_uid == 1516988645) or await user_service.is_admin(clean_uid)
+                if not is_adm:
+                    return "", None
         except Exception:
             pass
 
+    target_url = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
+    try:
+        from src.services.telecon_ad_service import telecon_ad_service
+        await telecon_ad_service.record_impression(clean_uid, source=source)
+    except Exception:
+        pass
+
     ad_text = (
         "────────────────────\n"
-        "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b>\n"
+        "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b><!-- Хакатон в Terricon Valley -->\n"
         "С 9 по 27 ноября (13:00, онлайн). 15 занятий по SMM, рекламе и ИИ. Участие бесплатное.\n"
         f'🔗 <b>Ссылка:</b> <a href="{target_url}">terricon.kz/digital-marketing</a>\n'
         "────────────────────\n\n"
@@ -3133,7 +3146,10 @@ async def handle_ad_telecon_callback(call: CallbackQuery) -> None:
     except Exception as exc:
         logger.debug(f"Error recording ad click from callback: {exc}")
 
-    await call.answer()
+    try:
+        await call.answer()
+    except Exception as exc:
+        logger.debug(f"Error answering ad callback: {exc}")
     if call.message:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 

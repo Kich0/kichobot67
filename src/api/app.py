@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import ipaddress
+import secrets
 import time
 from typing import Any
+import urllib.parse
 
 from aiogram.types import BotCommand, Update
 import orjson
@@ -71,16 +74,78 @@ def _create_background_task(coro: Any) -> asyncio.Task[Any]:
     return task
 
 
+def _is_valid_ip(ip: str) -> bool:
+    """Checks if string is a valid IPv4 or IPv6 address."""
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _is_private_or_loopback(ip: str) -> bool:
+    """Checks if IP is in private RFC 1918, loopback, or link-local networks."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(addr in net for net in _PRIVATE_NETWORKS)
+    except (ValueError, TypeError):
+        return False
+
+
 def get_client_ip(request: Request) -> str:
-    """Extracts client IP address respecting reverse proxies."""
+    """Extracts client IP address securely, preventing X-Forwarded-For spoofing.
+
+    Security Strategy:
+    1. If directly connected from a public IP (no intermediate proxy), client.host is authoritative.
+    2. If behind a reverse proxy (e.g. Render / Cloudflare where direct host is private/loopback):
+       - Check 'CF-Connecting-IP' (set by Cloudflare edge, cannot be spoofed through Cloudflare).
+       - In 'X-Forwarded-For', proxies append connecting IP to the RIGHT.
+         Taking the leftmost element allows spoofing; we evaluate from right to left
+         to obtain the genuine caller address.
+       - Check 'X-Real-IP' if valid.
+    3. Strictly validate every candidate with ipaddress to prevent arbitrary header/string injection
+       into rate limiting structures.
+    """
+    direct_host = request.client.host if request.client else "127.0.0.1"
+
+    if direct_host == "testclient":
+        pass
+    elif _is_valid_ip(direct_host) and not _is_private_or_loopback(direct_host):
+        return direct_host
+
+    # Behind reverse proxy (or local testing/dev):
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip and _is_valid_ip(cf_ip.strip()):
+        return cf_ip.strip()
+
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        valid_ips = [p for p in parts if _is_valid_ip(p)]
+        if valid_ips:
+            for candidate in reversed(valid_ips):
+                if not _is_private_or_loopback(candidate):
+                    return candidate
+            return valid_ips[-1]
+
     real_ip = request.headers.get("x-real-ip")
-    if real_ip:
+    if real_ip and _is_valid_ip(real_ip.strip()):
         return real_ip.strip()
-    if request.client:
-        return request.client.host
+
+    if _is_valid_ip(direct_host):
+        return direct_host
     return "127.0.0.1"
 
 
@@ -217,7 +282,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -252,7 +317,7 @@ def create_app() -> FastAPI:
         token = x_telegram_bot_api_secret_token or request.headers.get("x-telegram-bot-api-secret-token")
         if settings.BOT_MODE == "webhook":
             expected_token = settings.resolved_webhook_secret
-            if expected_token and token != expected_token:
+            if expected_token and (not token or not secrets.compare_digest(token, expected_token)):
                 logger.warning(f"[Webhook Security] Unauthorized webhook update attempt from {get_client_ip(request)}")
                 return ORJSONResponse(content={"error": "Forbidden"}, status_code=403)
 
@@ -286,7 +351,7 @@ def create_app() -> FastAPI:
     async def post_client_log(request: Request) -> ORJSONResponse:
         if settings.INTERNAL_API_SECRET:
             provided = request.headers.get("x-api-secret") or request.query_params.get("key")
-            if provided != settings.INTERNAL_API_SECRET:
+            if not provided or not secrets.compare_digest(provided, settings.INTERNAL_API_SECRET):
                 return ORJSONResponse(content={"error": "Forbidden"}, status_code=403)
 
         client_ip = get_client_ip(request)
@@ -317,9 +382,20 @@ def create_app() -> FastAPI:
         request: Request,
         user_id: str | None = Query(default=None, alias="userId"),
     ) -> ORJSONResponse:
-        if settings.INTERNAL_API_SECRET:
-            provided = request.headers.get("x-api-secret") or request.query_params.get("key")
-            if provided != settings.INTERNAL_API_SECRET:
+        expected_secret = (
+            settings.INTERNAL_API_SECRET
+            or (settings.resolved_webhook_secret if settings.BOT_MODE == "webhook" else None)
+        )
+        if expected_secret:
+            provided = (
+                request.headers.get("x-api-secret")
+                or request.headers.get("x-telegram-bot-api-secret-token")
+                or request.query_params.get("key")
+                or request.query_params.get("secret")
+            )
+            if not provided or not secrets.compare_digest(provided, expected_secret):
+                client_ip = get_client_ip(request)
+                logger.warning(f"[Security] Unauthorized attempt to access /bot/get_user_schedule from {client_ip}")
                 return ORJSONResponse(content={"error": "Forbidden"}, status_code=403)
 
         client_ip = get_client_ip(request)
@@ -528,7 +604,7 @@ def create_app() -> FastAPI:
         )
         expected_key = settings.resolved_webhook_secret or settings.WEBHOOK_SECRET_TOKEN
 
-        if not expected_key or provided_key != expected_key:
+        if not expected_key or not provided_key or not secrets.compare_digest(provided_key, expected_key):
             logger.warning("[Cron Sync Security] Unauthorized attempt to trigger cron sync")
             return ORJSONResponse(content={"error": "Unauthorized"}, status_code=403)
 
@@ -618,7 +694,19 @@ def create_app() -> FastAPI:
         else:
             clean_source = "button" if clean_target == "button" else "text_link"
 
-        dest_url = telecon_ad_service.get_destination_url()
+        raw_dest = request.query_params.get("dest")
+        dest_url = TELECON_2GIS_URL
+        if raw_dest:
+            try:
+                parsed_dest = urllib.parse.urlparse(raw_dest)
+                trusted_hosts = {"2gis.kz", "terricon.kz", "is.gd", "www.2gis.kz", "www.terricon.kz"}
+                if parsed_dest.scheme in ("http", "https") and (
+                    parsed_dest.netloc.lower() in trusted_hosts
+                    or any(parsed_dest.netloc.lower().endswith("." + h) for h in trusted_hosts)
+                ):
+                    dest_url = raw_dest
+            except Exception:
+                pass
         await telecon_ad_service.record_click(
             user_id=resolved_uid,
             event_type=ev_type,

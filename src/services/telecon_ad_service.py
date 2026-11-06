@@ -23,6 +23,7 @@ logger = get_logger("telecon_ad_service")
 TELECON_FIRM_ID = "70000001083364853"
 TELECON_2GIS_URL = f"https://2gis.kz/karaganda/firm/{TELECON_FIRM_ID}"
 TELECON_EVENT_REG_URL = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
+TERRICON_EVENT_REG_URL = TELECON_EVENT_REG_URL
 TELECON_SHORT_URL = "https://is.gd/terricon_btn"
 TELECON_SHORT_URL_BUTTON = "https://is.gd/terricon_btn"
 TELECON_SHORT_URL_LINK = "https://is.gd/terricon_addr"
@@ -55,7 +56,7 @@ class TeleconAdService:
         user_id: int | str | None = None,
         source: str | None = None,
         base_url: str | None = None,
-        short: bool = True,
+        short: bool = False,
     ) -> str:
         """Returns tracking redirect URL if domain is configured, otherwise fallback to destination URL.
 
@@ -64,7 +65,7 @@ class TeleconAdService:
             user_id: Optional Telegram viewer user ID
             source: Placement source ('student_schedule', 'teacher_schedule', etc.)
             base_url: Optional explicit base URL override
-            short: If True (default), produces clean compact URL (https://is.gd/terricon_addr / terricon_btn)
+            short: If True, produces clean compact URL (https://is.gd/terricon_addr / terricon_btn)
         """
         if short:
             if target in ("link", "text_link", "address", "addr"):
@@ -85,7 +86,7 @@ class TeleconAdService:
                 url += f"&s={quote_plus(src_code)}"
             return url
 
-        return TERRICON_EVENT_REG_URL
+        return TELECON_2GIS_URL
 
     def get_short_tracking_url(
         self,

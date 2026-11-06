@@ -539,7 +539,7 @@ async def handle_group_search_prefix(message: Message) -> None:
     matched = smart_search_service.find_groups(query, groups)
 
     if not matched:
-        await message.answer(t("search_bad_result", lang, searchQuery=query), parse_mode="HTML")
+        await message.answer(t("search_bad_result", lang, searchQuery=escape_html(query)), parse_mode="HTML")
         return
 
     curr_day = get_current_day_number()
@@ -582,7 +582,7 @@ async def handle_group_search_prefix(message: Message) -> None:
 
     markup = get_search_results_keyboard(groups=matched, lang=lang, current_day=curr_day)
     await message.answer(
-        f"✨ По вашему запросу: <b>{query}</b> найдено групп: <b>{len(matched)}</b>\n\n"
+        f"✨ По вашему запросу: <b>{escape_html(query)}</b> найдено групп: <b>{len(matched)}</b>\n\n"
         "Выберите нужную группу из списка:",
         reply_markup=markup,
         parse_mode="HTML",
@@ -617,7 +617,7 @@ async def handle_teacher_search_prefix(message: Message) -> None:
     matched = smart_search_service.find_teachers(query, teachers)
 
     if not matched:
-        await message.answer(t("search_bad_result", lang, searchQuery=query), parse_mode="HTML")
+        await message.answer(t("search_bad_result", lang, searchQuery=escape_html(query)), parse_mode="HTML")
         return
 
     curr_day = get_current_day_number()
@@ -658,7 +658,7 @@ async def handle_teacher_search_prefix(message: Message) -> None:
 
     markup = get_search_results_keyboard(teachers=matched, lang=lang, current_day=curr_day)
     await message.answer(
-        f"✨ По вашему запросу: <b>{query}</b> найдено преподавателей: <b>{len(matched)}</b>\n\n"
+        f"✨ По вашему запросу: <b>{escape_html(query)}</b> найдено преподавателей: <b>{len(matched)}</b>\n\n"
         "Выберите преподавателя из списка:",
         reply_markup=markup,
         parse_mode="HTML",
