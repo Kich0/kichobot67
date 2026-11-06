@@ -1531,18 +1531,6 @@ async def _get_ad_block_for_viewer(
         except Exception:
             if clean_uid != 1516988645:
                 return "", None
-    else:
-        try:
-            from unittest.mock import AsyncMock, MagicMock
-            from src.services.user_service import user_service
-
-            adm_fn = getattr(user_service, "is_admin", None)
-            if isinstance(adm_fn, (AsyncMock, MagicMock)):
-                is_adm = (clean_uid == 1516988645) or await user_service.is_admin(clean_uid)
-                if not is_adm:
-                    return "", None
-        except Exception:
-            pass
 
     target_url = "https://terricon.kz/ru/digital-marketing-for-beginners?utm_source=bot#form"
     try:

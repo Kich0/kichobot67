@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter
 from src.core.logging import get_logger
 
 logger = get_logger("broadcast_service")
@@ -147,7 +148,7 @@ class BroadcastService:
 
             if message_ids:
                 await BroadcastMessage.find(
-                    BroadcastMessage.message_id.in_(message_ids)
+                    {"message_id": {"$in": message_ids}}
                 ).update_many({"$set": {"is_deleted": True}})
         except Exception as e:
             logger.debug(f"Failed to update is_deleted in DB: {e}")
@@ -175,8 +176,10 @@ class BroadcastService:
             now = datetime.now(timezone.utc)
             expired = (
                 await BroadcastMessage.find(
-                    BroadcastMessage.delete_at <= now,
-                    BroadcastMessage.is_deleted == False,
+                    {
+                        "delete_at": {"$lte": now},
+                        "is_deleted": False,
+                    }
                 )
                 .limit(1000)
                 .to_list()
@@ -196,6 +199,16 @@ class BroadcastService:
                         message_id=doc.message_id,
                     )
                     deleted_count += 1
+                except TelegramRetryAfter as e:
+                    await asyncio.sleep(float(e.retry_after))
+                    try:
+                        await bot.delete_message(
+                            chat_id=doc.chat_id,
+                            message_id=doc.message_id,
+                        )
+                        deleted_count += 1
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 processed_ids.append(doc.id)
@@ -203,7 +216,7 @@ class BroadcastService:
 
             if processed_ids:
                 await BroadcastMessage.find(
-                    BroadcastMessage.id.in_(processed_ids)
+                    {"_id": {"$in": processed_ids}}
                 ).update_many({"$set": {"is_deleted": True}})
 
             logger.info(f"Sweep complete: successfully deleted {deleted_count} expired messages.")
