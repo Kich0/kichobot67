@@ -89,6 +89,9 @@ async def lifespan(app: FastAPI):
     """Manages application startup and graceful shutdown."""
     # === STARTUP ===
     logger.info("Initializing Kichobot services in lifespan manager...")
+    bot = get_bot()
+    dp = get_dispatcher()
+
     try:
         await init_db()
         from src.services.black_list_service import black_list_service
@@ -108,9 +111,6 @@ async def lifespan(app: FastAPI):
         await broadcast_service.cleanup_expired_broadcasts(bot)
     except Exception as e:
         logger.error(f"Database initialization error during startup: {e}")
-
-    bot = get_bot()
-    dp = get_dispatcher()
 
     # Register Telegram bot commands and descriptions
     try:
