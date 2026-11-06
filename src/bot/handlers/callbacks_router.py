@@ -1541,7 +1541,7 @@ async def _get_ad_block_for_viewer(
 
     ad_text = (
         "────────────────────\n"
-        "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b><!-- Хакатон в Terricon Valley -->\n"
+        "📱 <b>Курс от Terricon Valley: Digital-маркетинг!</b>\n"
         "С 9 по 27 ноября (13:00, онлайн). 15 занятий по SMM, рекламе и ИИ. Участие бесплатное.\n"
         f'🔗 <b>Ссылка:</b> <a href="{target_url}">terricon.kz/digital-marketing</a>\n'
         "────────────────────\n\n"

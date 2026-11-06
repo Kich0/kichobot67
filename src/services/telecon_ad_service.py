@@ -187,6 +187,10 @@ class TeleconAdService:
 
         async def _do_record() -> None:
             try:
+                from src.database.connection import get_client
+                if get_client() is None:
+                    return
+
                 uid = int(user_id) if str(user_id).isdigit() else 0
                 resolved_user = username
                 resolved_fn = first_name
@@ -236,6 +240,10 @@ class TeleconAdService:
         """Records a button or link click asynchronously in both TeleconAdEvent and UserAction."""
         async def _do_record() -> None:
             try:
+                from src.database.connection import get_client
+                if get_client() is None:
+                    return
+
                 uid = 0
                 if user_id is not None and str(user_id).isdigit() and int(user_id) > 0:
                     uid = int(user_id)
