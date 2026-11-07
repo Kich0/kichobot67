@@ -2,7 +2,7 @@
 
 Implements:
 - Asynchronous HTTP client using httpx.AsyncClient with 4.5s timeout.
-- Outbound Sliding Window Rate Limiter (maximum 180 req/min).
+- Outbound Sliding Window Rate Limiter (maximum 950 req/min).
 - Resilient Circuit Breaker (CLOSED -> API_DOWN on 2 failures for 2 mins -> HALF_OPEN).
 - HTTP ETag / 304 Not Modified caching.
 - Partitioned in-memory LRU caches (students: 3000 slots, teachers: 1500 slots, 10 min TTL).
@@ -115,7 +115,7 @@ class BuketovApiService:
         self.REQUEST_TIMEOUT_SECONDS: float = SCHEDULE_API_TIMEOUT  # 4.5s
 
         # Outbound Sliding Window Rate Limiter
-        self.MAX_REQUESTS_PER_MINUTE: int = SCHEDULE_API_RATE_LIMIT  # 180
+        self.MAX_REQUESTS_PER_MINUTE: int = SCHEDULE_API_RATE_LIMIT  # 950
         self.outbound_request_timestamps: list[float] = []
 
         # Optimization & Deduplication state
@@ -203,7 +203,7 @@ class BuketovApiService:
     def check_rate_limit(self, headroom: int = 0) -> bool:
         """Checks sliding 60s window of outbound requests.
 
-        Returns False if safe threshold (180 req/min) has been reached.
+        Returns False if safe threshold (950 req/min) has been reached.
         """
         now = time.time()
         cutoff = now - 60.0
@@ -757,10 +757,10 @@ class BuketovApiService:
                         "Circuit Breaker cooldown passed, transitioning to HALF_OPEN for test probe."
                     )
 
-            # 3. Outbound Rate Limiter check (180 req/min)
+            # 3. Outbound Rate Limiter check (950 req/min)
             if not self.check_rate_limit():
                 logger.warning(
-                    "Reached outbound rate limit 180 req/min. Falling back to MongoDB."
+                    "Reached outbound rate limit 950 req/min. Falling back to MongoDB."
                 )
                 if cached and cached.data:
                     res = ScheduleApiResponse(cached.data, from_cache=True, not_modified=False)

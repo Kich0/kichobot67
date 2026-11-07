@@ -1,12 +1,12 @@
 """Intelligent Schedule Cache Warmup Engine & APScheduler Cron.
 
 Manages continuous, deadline-scheduled schedule pre-fetching:
-- TOP-150 student groups kept within 8 minutes target age (< 10 min refresh cooldown).
-- TOP-200 teachers kept within 8.5 minutes target age (< 10 min refresh cooldown).
-- Combined background rate: ~42.3 req/min (24% of 180 req/min limit, leaving ~137 req/min free).
+- TOP-300 student groups kept within 8 minutes target age (< 10 min refresh cooldown).
+- TOP-400 teachers kept within 8.5 minutes target age (< 10 min refresh cooldown).
+- Combined background rate: ~88 req/min (~9.2% of 950 req/min limit, leaving ~862 req/min free).
 - Active window: 06:30 to 01:00 (Asia/Almaty, UTC+5).
 - Night sleep: 01:00 to 06:30 (zero outbound network requests).
-- Rate limiter headroom guard: skips tick if live user load reaches 155 req/min (HEADROOM=25).
+- Rate limiter headroom guard: skips tick if live user load reaches 925 req/min (HEADROOM=25).
 - Fire-and-forget background synchronization to MongoDB emergency fallback collections.
 """
 
@@ -79,16 +79,16 @@ class SmartWarmupEngine:
 
     # Pacing and sizing constants
     GROUP_TARGET_AGE_SEC: float = 480.0    # 8 min (< 10 min refresh cooldown)
-    TEACHER_TARGET_AGE_SEC: float = 510.0  # 8.5 min (< 10 min refresh cooldown, 200 * 2.5s = 500s fits under target age)
-    GROUP_INTERVAL_SEC: float = 2.5        # min spacing between group requests
-    TEACHER_INTERVAL_SEC: float = 2.5      # min spacing between teacher requests
+    TEACHER_TARGET_AGE_SEC: float = 510.0  # 8.5 min (< 10 min refresh cooldown, 400 * 1.25s = 500s fits under target age)
+    GROUP_INTERVAL_SEC: float = 1.5        # min spacing between group requests (300 * 1.5s = 450s / 7.5 min)
+    TEACHER_INTERVAL_SEC: float = 1.25     # min spacing between teacher requests (400 * 1.25s = 500s / 8.33 min)
     IDLE_POLL_SEC: float = 5.0             # sleep check when no candidate has reached target age
     ERROR_RETRY_SEC: float = 60.0          # retry interval on API error or stale fallback
-    MAX_GROUP_CANDIDATES: int = 180
-    MAX_TEACHER_CANDIDATES: int = 240
+    MAX_GROUP_CANDIDATES: int = 360
+    MAX_TEACHER_CANDIDATES: int = 480
     STATS_LOG_INTERVAL_SEC: float = 300.0  # 5 min periodic stats logging
-    TOP_GROUPS_LIMIT: int = 150
-    TOP_TEACHERS_LIMIT: int = 200
+    TOP_GROUPS_LIMIT: int = 300
+    TOP_TEACHERS_LIMIT: int = 400
     TOP_LISTS_CACHE_TTL: float = 3600.0  # 1 hour (was 900.0)
     HEADROOM: int = 25  # Leave at least 25 req/min margin under API limit (was 5)
 
