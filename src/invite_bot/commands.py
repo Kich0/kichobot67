@@ -173,21 +173,20 @@ async def cmd_help(message: Message, bot: Bot) -> None:
     if not is_adm:
         text = (
             "⚡️ <b>Команды:</b>\n\n"
-            "• <code>/id</code> — узнать свой Telegram ID\n"
-            "• <code>/mute 30m</code> — самомут, чтобы не отвлекаться на чат"
+            "/id\n"
+            "/mute 30m"
         )
     else:
         text = (
-            "🛠 <b>Команды админа (ответом или @юзернейм):</b>\n\n"
-            "• <code>/mute @user 15m</code> — мут на время (m / h / d)\n"
-            "• <code>/unmute @user</code> — снять мут\n"
-            "• <code>/kick @user</code> — выкинуть из чата\n"
-            "• <code>/ban @user</code> — бан навсегда\n"
-            "• <code>/unban &lt;ID или @user&gt;</code> — снять бан\n\n"
-            "⚡️ <b>Быстрые:</b>\n"
-            "• <code>/id [@user]</code> — чекнуть ID\n"
-            "• <code>/mute 30m</code> — самомут (без ника)\n"
-            "• <code>/link</code> — сделать ссылку на 1 вход"
+            "🛠 <b>Команды админа:</b>\n\n"
+            "/mute @user 15m\n"
+            "/unmute @user\n"
+            "/kick @user\n"
+            "/ban @user\n"
+            "/unban ID\n"
+            "/id @user\n"
+            "/link\n"
+            "/mute 30m"
         )
     await message.reply(text, parse_mode="HTML")
 
@@ -294,10 +293,9 @@ async def cmd_mute(message: Message, bot: Bot) -> None:
             permissions=ChatPermissions(can_send_messages=False),
             until_date=until,
         )
-        if is_self:
-            await message.reply(f"🤐 {mention} в добровольном муте на {duration_str}, удачи с делами")
-        else:
-            await message.reply(f"🤐 {mention} в муте на {duration_str}, подумай о поведении")
+        sender_mention = get_user_mention(sender)
+        target_text = "себя" if is_self else mention
+        await message.reply(f"🤐 {sender_mention} замутил {target_text} на {duration_str}")
     except TelegramBadRequest as e:
         err_str = str(e).lower()
         if "can't restrict" in err_str or "not enough rights" in err_str or "administrator" in err_str:
