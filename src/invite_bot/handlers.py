@@ -14,6 +14,7 @@ from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
 from src.invite_bot.events import add_event, build_avatar_url, mark_link_used
 from src.invite_bot.site_client import notify_site
+from src.invite_bot.user_cache import record_user
 
 logger = get_logger("invite_bot.handlers")
 
@@ -63,6 +64,8 @@ async def on_member_joined(event: ChatMemberUpdated, bot: Bot) -> None:
     user = event.new_chat_member.user
     if user.is_bot:
         return
+
+    record_user(user.id, user.username, user.first_name)
 
     avatar_file_id = await fetch_avatar_file_id(bot, user.id)
     payload = build_join_payload(event, avatar_file_id)
