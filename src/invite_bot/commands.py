@@ -297,16 +297,9 @@ async def cmd_mute(message: Message, bot: Bot) -> None:
         target_text = "себя" if is_self else mention
         await message.reply(f"🤐 {sender_mention} замутил {target_text} на {duration_str}")
     except TelegramBadRequest as e:
-        err_str = str(e).lower()
-        if "can't restrict" in err_str or "not enough rights" in err_str or "administrator" in err_str:
-            if is_self:
-                await message.reply(
-                    f"👑 Ты создатель чата, Telegram запрещает ботам тебя затыкать. Но мы делаем вид, что ты в муте на {duration_str}, держи слово! 🤫"
-                )
-            else:
-                await message.reply("⛔️ У меня нет прав замутить этого пользователя")
-        else:
-            await message.reply(f"❌ Ошибка мута: {e}")
+        await message.reply(f"❌ {e.message}")
+    except Exception as e:
+        await message.reply(f"❌ Ошибка мута: {e}")
 
 
 @router.message(Command("unmute"))
