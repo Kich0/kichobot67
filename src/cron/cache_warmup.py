@@ -1,9 +1,9 @@
 """Intelligent Schedule Cache Warmup Engine & APScheduler Cron.
 
 Manages continuous, deadline-scheduled schedule pre-fetching:
-- TOP-300 student groups kept within 4.0 minutes target age (< 10 min refresh cooldown).
-- TOP-400 teachers kept within 4.0 minutes target age (< 10 min refresh cooldown).
-- Combined background rate: ~220 req/min (~23.2% of 950 req/min limit, leaving ~730 req/min free).
+- TOP-300 student groups kept within 5.5-6.0 minutes target age (< 10 min refresh cooldown).
+- TOP-400 teachers kept within 5.5-6.0 minutes target age (< 10 min refresh cooldown).
+- Combined background rate: ~125 req/min (~13% of 950 req/min limit, leaving >820 req/min free).
 - Active window: 06:30 to 01:00 (Asia/Almaty, UTC+5).
 - Night sleep: 01:00 to 06:30 (zero outbound network requests).
 - Rate limiter headroom guard: skips tick if live user load reaches 925 req/min (HEADROOM=25).
@@ -56,7 +56,7 @@ def is_night_cache_mode_kz(now_dt: datetime | None = None) -> bool:
     """Checks whether the current time in Asia/Almaty falls within the night cache freeze window (01:00 to 06:45).
 
     During 01:00 to 06:45, cache TTL checks and purges are frozen so night entries remain valid.
-    The warmup engine wakes up at 06:30 and refreshes all 150 groups by ~06:39.
+    The warmup engine wakes up at 06:30 and refreshes TOP-300 groups and TOP-400 teachers by ~06:35.
     At 06:45, night cache mode ends seamlessly without expiring old entries before morning warmup completes.
     """
     tz = zoneinfo.ZoneInfo(TIMEZONE_NAME)
@@ -78,12 +78,12 @@ class SmartWarmupEngine:
     """Continuous paced schedule warmup engine respecting API limits and RAM constraints."""
 
     # Pacing and sizing constants
-    GROUP_TARGET_AGE_SEC: float = 240.0    # 4.0 min (< 10 min refresh cooldown)
-    TEACHER_TARGET_AGE_SEC: float = 240.0  # 4.0 min (< 10 min refresh cooldown)
-    GROUP_INTERVAL_SEC: float = 0.6        # min spacing between group requests (300 * 0.6s = 180s / 3.0 min)
-    TEACHER_INTERVAL_SEC: float = 0.5      # min spacing between teacher requests (400 * 0.5s = 200s / 3.33 min)
+    GROUP_TARGET_AGE_SEC: float = 300.0    # 5.0 min (< 10 min refresh cooldown)
+    TEACHER_TARGET_AGE_SEC: float = 300.0  # 5.0 min (< 10 min refresh cooldown)
+    GROUP_INTERVAL_SEC: float = 1.1        # min spacing between group requests (300 * 1.1s = 330s / 5.5 min)
+    TEACHER_INTERVAL_SEC: float = 0.85     # min spacing between teacher requests (400 * 0.85s = 340s / 5.67 min)
     IDLE_POLL_SEC: float = 2.0             # sleep check when no candidate has reached target age
-    ERROR_RETRY_SEC: float = 60.0          # retry interval on API error or stale fallback
+    ERROR_RETRY_SEC: float = 30.0          # retry interval on API error or stale fallback
     MAX_GROUP_CANDIDATES: int = 360
     MAX_TEACHER_CANDIDATES: int = 480
     STATS_LOG_INTERVAL_SEC: float = 300.0  # 5 min periodic stats logging
@@ -835,7 +835,7 @@ class SmartWarmupEngine:
 
         return self._teachers_cache
 
-    async def _warm_group(self, group_id: int, group_name: str) -> None:
+    async def _warm_group(self, group_id: int, group_name: str) -> bool:
         """Fetches and warms schedule for a single group into RAM and DB fallback."""
         t0 = time.perf_counter()
         try:
@@ -882,7 +882,8 @@ class SmartWarmupEngine:
                     status=False,
                     error_msg=f"Group name for id={group_id} not resolved",
                 )
-                return
+                self._group_attempt_ts[group_id] = time.time() - self.GROUP_TARGET_AGE_SEC + self.ERROR_RETRY_SEC
+                return False
 
             # Skip redundant network fetch if already recently cached (< 3 min) and not from DB fallback
             existing_entry = student_schedule_cache.get(f"{group_id}_ru")
@@ -898,7 +899,7 @@ class SmartWarmupEngine:
                 and existing_entry.get("data")
                 and not existing_entry.get("is_from_db")
                 and entry_cached_ts > 0.0
-                and (time.time() - entry_cached_ts < 180.0)
+                and (time.time() - entry_cached_ts < 240.0)
             ):
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping redundant warmup for group {group_name}; recently cached."
@@ -912,7 +913,7 @@ class SmartWarmupEngine:
                     duration_ms=duration_ms,
                     status=True,
                 )
-                return
+                return True
 
             from src.bot.handlers.callbacks_router import _group_meta_cache, _is_college_group
             from src.database.connection import get_client
@@ -956,7 +957,7 @@ class SmartWarmupEngine:
                     duration_ms=duration_ms,
                     status=True,
                 )
-                return
+                return True
 
             raw_data = await buketov_api_service.get_group_schedule(group_name, force_refresh=True)
             not_modified = bool(getattr(raw_data, "not_modified", False))
@@ -988,7 +989,7 @@ class SmartWarmupEngine:
                         status=True,
                     )
                     logger.debug(f"[SmartWarmupEngine] 304 Not Modified for group {group_name} (id={group_id}), refreshed timestamp.")
-                    return
+                    return True
 
             # 2. Stale cache fallback (e.g. Buketov API error/rate-limit fallback to stale RAM or DB)
             is_stale_fallback = (from_api_cache and not not_modified) or is_from_db
@@ -1007,7 +1008,7 @@ class SmartWarmupEngine:
                     status=True,
                 )
                 logger.debug(f"[SmartWarmupEngine] Fallback data for group {group_name}; retry scheduled in {self.ERROR_RETRY_SEC}s.")
-                return
+                return False
 
             # 3. Fresh 200 OK
             self._stats["api_200"] += 1
@@ -1037,12 +1038,12 @@ class SmartWarmupEngine:
                     logger.debug(
                         f"[SmartWarmupEngine] Keeping existing valid cache for group {group_name}; fetch returned 0 lessons."
                     )
-                    return
+                    return True
                 # Do NOT pop existing RAM cache
                 from src.bot.handlers.callbacks_router import _bg_persist_empty_student_schedule
 
                 self._create_background_task(_bg_persist_empty_student_schedule(group_id, is_permanent=is_perm_empty))
-                return
+                return True
 
             student_schedule_cache[f"{group_id}_ru"] = {
                 "data": adapted_ru,
@@ -1059,6 +1060,7 @@ class SmartWarmupEngine:
             if adapted_ru and has_lessons:
                 self._create_background_task(_bg_persist_student_schedule(group_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for group {group_name} (id={group_id})")
+            return True
         except Exception as e:
             self._stats["errors"] += 1
             self._group_attempt_ts[group_id] = time.time() - self.GROUP_TARGET_AGE_SEC + self.ERROR_RETRY_SEC
@@ -1074,8 +1076,9 @@ class SmartWarmupEngine:
                 error_msg=str(e),
             )
             logger.warning(f"[SmartWarmupEngine] Error warming group {group_name} (id={group_id}): {e}")
+            return False
 
-    async def _warm_teacher(self, teacher_id: int | str, teacher_name: str) -> None:
+    async def _warm_teacher(self, teacher_id: int | str, teacher_name: str) -> bool:
         """Fetches and warms schedule for a single teacher into RAM and DB fallback with multi-key aliasing."""
         t0 = time.perf_counter()
         api_lookup = teacher_name
@@ -1109,7 +1112,7 @@ class SmartWarmupEngine:
                 and existing_teacher.get("data")
                 and not existing_teacher.get("is_from_db")
                 and t_cached_ts > 0.0
-                and (time.time() - t_cached_ts < 220.0)
+                and (time.time() - t_cached_ts < 240.0)
             ):
                 logger.debug(
                     f"[SmartWarmupEngine] Skipping redundant warmup for teacher {api_lookup}; recently cached."
@@ -1123,7 +1126,7 @@ class SmartWarmupEngine:
                     duration_ms=duration_ms,
                     status=True,
                 )
-                return
+                return True
 
             if not api_lookup or str(api_lookup).isdigit() or str(api_lookup).startswith("ID "):
                 profile_cand = None
@@ -1149,7 +1152,8 @@ class SmartWarmupEngine:
                     status=False,
                     error_msg=f"Teacher name for id={teacher_id} not resolved",
                 )
-                return
+                self._teacher_attempt_ts[teacher_id] = time.time() - self.TEACHER_TARGET_AGE_SEC + self.ERROR_RETRY_SEC
+                return False
 
             raw_data = await buketov_api_service.get_teacher_schedule(api_lookup, force_refresh=True)
             not_modified = bool(getattr(raw_data, "not_modified", False))
@@ -1181,7 +1185,7 @@ class SmartWarmupEngine:
                         status=True,
                     )
                     logger.debug(f"[SmartWarmupEngine] 304 Not Modified for teacher {api_lookup} (id={canonical_id}), refreshed timestamp.")
-                    return
+                    return True
 
             # 2. Stale cache fallback
             is_stale_fallback = (from_api_cache and not not_modified) or is_from_db
@@ -1200,7 +1204,7 @@ class SmartWarmupEngine:
                     status=True,
                 )
                 logger.debug(f"[SmartWarmupEngine] Fallback data for teacher {api_lookup}; retry scheduled in {self.ERROR_RETRY_SEC}s.")
-                return
+                return False
 
             # 3. Fresh 200 OK
             self._stats["api_200"] += 1
@@ -1233,9 +1237,9 @@ class SmartWarmupEngine:
                     logger.debug(
                         f"[SmartWarmupEngine] Keeping existing valid cache for teacher {api_lookup}; fetch returned 0 lessons."
                     )
-                    return
+                    return True
                 # Do NOT pop existing RAM cache
-                return
+                return True
 
             cache_entry_ru = {
                 "data": adapted_ru,
@@ -1307,6 +1311,7 @@ class SmartWarmupEngine:
             if not is_from_db and adapted_ru and has_lessons:
                 self._create_background_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
             logger.debug(f"[SmartWarmupEngine] Warmed schedule for teacher {api_lookup} (id={canonical_id})")
+            return True
         except Exception as e:
             self._stats["errors"] += 1
             self._teacher_attempt_ts[teacher_id] = time.time() - self.TEACHER_TARGET_AGE_SEC + self.ERROR_RETRY_SEC
@@ -1322,6 +1327,7 @@ class SmartWarmupEngine:
                 error_msg=str(e),
             )
             logger.warning(f"[SmartWarmupEngine] Error warming teacher {teacher_name} (id={teacher_id}): {e}")
+            return False
 
     def _group_candidates(self, base_groups: list[tuple[int, str]]) -> list[tuple[int, str]]:
         seen: set[int] = set()
@@ -1540,13 +1546,14 @@ class SmartWarmupEngine:
 
                 start_mono = time.monotonic()
                 async with self._group_tick_lock:
-                    await self._warm_group(group_id, group_name)
+                    success = await self._warm_group(group_id, group_name)
 
-                self._group_attempt_ts[group_id] = time.time()
+                if success is not False:
+                    self._group_attempt_ts[group_id] = time.time()
                 self._maybe_log_periodic_stats()
 
                 elapsed = time.monotonic() - start_mono
-                sleep_time = max(0.1, self.GROUP_INTERVAL_SEC - elapsed)
+                sleep_time = max(0.01, self.GROUP_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
@@ -1613,13 +1620,14 @@ class SmartWarmupEngine:
 
                 start_mono = time.monotonic()
                 async with self._teacher_tick_lock:
-                    await self._warm_teacher(teacher_id, teacher_name)
+                    success = await self._warm_teacher(teacher_id, teacher_name)
 
-                self._teacher_attempt_ts[teacher_id] = time.time()
+                if success is not False:
+                    self._teacher_attempt_ts[teacher_id] = time.time()
                 self._maybe_log_periodic_stats()
 
                 elapsed = time.monotonic() - start_mono
-                sleep_time = max(0.1, self.TEACHER_INTERVAL_SEC - elapsed)
+                sleep_time = max(0.01, self.TEACHER_INTERVAL_SEC - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except asyncio.CancelledError:
