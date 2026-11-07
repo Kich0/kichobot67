@@ -24,7 +24,13 @@ from src.api.rate_limiter import InMemoryRateLimiter
 from src.core.config import settings
 from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
-from src.invite_bot.events import get_events, get_link_status, register_link, verify_file_id_signature
+from src.invite_bot.events import (
+    get_events,
+    get_link_status,
+    get_user_status_entry,
+    register_link,
+    verify_file_id_signature,
+)
 from src.invite_bot.instance import get_invite_bot, get_invite_dispatcher
 
 logger = get_logger("invite_bot.api")
@@ -164,6 +170,68 @@ async def check_link_status(
     if status_info is None:
         return _error(404, "Invite link not found")
     return JSONResponse(status_code=200, content=status_info)
+
+
+@router.get("/api/invite/user/status")
+async def check_user_status(
+    request: Request,
+    telegram_id: int = Query(..., description="Telegram user ID"),
+    chat_id: int | None = Query(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    if not settings.invite_enabled:
+        return _error(503, "Invite bot disabled")
+    if not _api_key_valid(x_api_key):
+        return _error(401, "Unauthorized")
+    if not events_rate_limiter.is_allowed(_client_ip(request)):
+        return _error(429, "Too Many Requests")
+
+    allowed = settings.invite_chat_ids
+    target_chat = chat_id if (chat_id is not None and chat_id in allowed) else (allowed[0] if allowed else None)
+
+    bot = get_invite_bot()
+    cached = get_user_status_entry(telegram_id)
+    last_link = cached.get("invite_link") if cached else None
+
+    status = cached.get("status", "left") if cached else "left"
+    in_chat = cached.get("in_chat", False) if cached else False
+    can_reissue = (status != "banned" and not in_chat)
+
+    if bot and target_chat:
+        try:
+            member = await bot.get_chat_member(chat_id=target_chat, user_id=telegram_id)
+            tg_status = member.status
+            if tg_status in ("creator", "administrator", "member", "restricted"):
+                status = "member"
+                in_chat = True
+                can_reissue = False
+            elif tg_status == "kicked":
+                status = "banned"
+                in_chat = False
+                can_reissue = False
+            else:
+                status = "left"
+                in_chat = False
+                can_reissue = True
+        except TelegramAPIError as e:
+            err_msg = str(e).lower()
+            if "user not found" in err_msg or "participant" in err_msg:
+                status = "left"
+                in_chat = False
+                can_reissue = True
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "telegram_id": telegram_id,
+            "chat_id": target_chat,
+            "status": status,
+            "in_chat": in_chat,
+            "can_reissue": can_reissue,
+            "last_invite_link": last_link,
+            "updated_at": datetime.now(TIMEZONE).isoformat(),
+        },
+    )
 
 
 @router.get("/api/invite/events")
