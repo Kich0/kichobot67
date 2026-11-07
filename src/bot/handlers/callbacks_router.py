@@ -1414,18 +1414,19 @@ async def get_or_fetch_student_schedule(
 
                     entry_ts = float(raw_data.get("_cacheTimestamp") or now) if isinstance(raw_data, dict) else now
                     ts = now if is_refresh else entry_ts
+                    from_api_cache = bool(getattr(raw_data, "from_cache", False))
 
                     cached_ru = {
                         "data": adapted_ru,
                         "timestamp": ts,
                         "is_from_db": is_from_db,
-                        "is_from_cache": False,
+                        "is_from_cache": from_api_cache,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
                         "is_from_db": is_from_db,
-                        "is_from_cache": False,
+                        "is_from_cache": from_api_cache,
                     }
 
                     # Populate caches for both RU and KZ with identical timestamp to prevent cooldown bypass (Bug #8)
@@ -1438,6 +1439,12 @@ async def get_or_fetch_student_schedule(
                         _safe_create_task(_bg_persist_student_schedule(group_id, adapted_ru))
                 except Exception as e:
                     logger.warning(f"Error fetching schedule for group {grp_name} (id={group_id}): {e}")
+                    if cached and cached.get("data"):
+                        if is_refresh:
+                            cached["timestamp"] = now
+                        if not cached.get("is_from_db"):
+                            cached["is_from_cache"] = True
+                        return cached
 
             if not cached:
                 try:
@@ -2298,18 +2305,19 @@ async def get_or_fetch_teacher_text_schedule(
 
                     entry_ts = float(raw_sch.get("_cacheTimestamp") or now) if isinstance(raw_sch, dict) else now
                     ts = now if is_refresh else entry_ts
+                    from_api_cache = bool(getattr(raw_sch, "from_cache", False))
 
                     cached_ru = {
                         "data": adapted_ru,
                         "timestamp": ts,
                         "is_from_db": is_from_db,
-                        "is_from_cache": False,
+                        "is_from_cache": from_api_cache,
                     }
                     cached_kz = {
                         "data": adapted_kz,
                         "timestamp": ts,
                         "is_from_db": is_from_db,
-                        "is_from_cache": False,
+                        "is_from_cache": from_api_cache,
                     }
 
                     # Populate caches for both RU and KZ across alias keys (Bug #8)
@@ -2328,6 +2336,12 @@ async def get_or_fetch_teacher_text_schedule(
                         _safe_create_task(_bg_persist_teacher_schedule(canonical_id, adapted_ru))
                 except Exception as e:
                     logger.warning(f"Error fetching text schedule for teacher {lookup_name} (id={canonical_id}): {e}")
+                    if cached and cached.get("data"):
+                        if is_refresh:
+                            cached["timestamp"] = now
+                        if not cached.get("is_from_db"):
+                            cached["is_from_cache"] = True
+                        return cached
 
             if not cached:
                 try:
@@ -2808,11 +2822,12 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
                             except Exception:
                                 pass
                     else:
+                        from_api_cache = bool(getattr(raw_sch, "from_cache", False))
                         cached = {
                             "data": adapted_ru,
                             "timestamp": now,
                             "is_from_db": is_from_db,
-                            "is_from_cache": False,
+                            "is_from_cache": from_api_cache,
                         }
                         teacher_table_cache[t_id_str] = cached
                         if str(teacher_id) != t_id_str:
@@ -2823,6 +2838,10 @@ async def handle_teacher_table_image(call: CallbackQuery, data: dict[str, Any] |
                             _safe_create_task(_bg_persist_teacher_schedule(can_id_num, adapted_ru))
                 except Exception as e:
                     logger.warning(f"Error fetching schedule for teacher {can_id_num}: {e}")
+                    if cached and is_refresh:
+                        cached["timestamp"] = now
+                        if not cached.get("is_from_db"):
+                            cached["is_from_cache"] = True
                     if not cached:
                         try:
                             from src.database.models.teacher_schedule import TeacherSchedule

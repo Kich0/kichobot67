@@ -1,9 +1,9 @@
 """Intelligent Schedule Cache Warmup Engine & APScheduler Cron.
 
 Manages continuous, deadline-scheduled schedule pre-fetching:
-- TOP-300 student groups kept within 8 minutes target age (< 10 min refresh cooldown).
-- TOP-400 teachers kept within 8.5 minutes target age (< 10 min refresh cooldown).
-- Combined background rate: ~88 req/min (~9.2% of 950 req/min limit, leaving ~862 req/min free).
+- TOP-300 student groups kept within 4.0 minutes target age (< 10 min refresh cooldown).
+- TOP-400 teachers kept within 4.0 minutes target age (< 10 min refresh cooldown).
+- Combined background rate: ~220 req/min (~23.2% of 950 req/min limit, leaving ~730 req/min free).
 - Active window: 06:30 to 01:00 (Asia/Almaty, UTC+5).
 - Night sleep: 01:00 to 06:30 (zero outbound network requests).
 - Rate limiter headroom guard: skips tick if live user load reaches 925 req/min (HEADROOM=25).
@@ -78,11 +78,11 @@ class SmartWarmupEngine:
     """Continuous paced schedule warmup engine respecting API limits and RAM constraints."""
 
     # Pacing and sizing constants
-    GROUP_TARGET_AGE_SEC: float = 480.0    # 8 min (< 10 min refresh cooldown)
-    TEACHER_TARGET_AGE_SEC: float = 510.0  # 8.5 min (< 10 min refresh cooldown, 400 * 1.25s = 500s fits under target age)
-    GROUP_INTERVAL_SEC: float = 1.5        # min spacing between group requests (300 * 1.5s = 450s / 7.5 min)
-    TEACHER_INTERVAL_SEC: float = 1.25     # min spacing between teacher requests (400 * 1.25s = 500s / 8.33 min)
-    IDLE_POLL_SEC: float = 5.0             # sleep check when no candidate has reached target age
+    GROUP_TARGET_AGE_SEC: float = 240.0    # 4.0 min (< 10 min refresh cooldown)
+    TEACHER_TARGET_AGE_SEC: float = 240.0  # 4.0 min (< 10 min refresh cooldown)
+    GROUP_INTERVAL_SEC: float = 0.6        # min spacing between group requests (300 * 0.6s = 180s / 3.0 min)
+    TEACHER_INTERVAL_SEC: float = 0.5      # min spacing between teacher requests (400 * 0.5s = 200s / 3.33 min)
+    IDLE_POLL_SEC: float = 2.0             # sleep check when no candidate has reached target age
     ERROR_RETRY_SEC: float = 60.0          # retry interval on API error or stale fallback
     MAX_GROUP_CANDIDATES: int = 360
     MAX_TEACHER_CANDIDATES: int = 480
@@ -1539,7 +1539,7 @@ class SmartWarmupEngine:
                             break
 
                 start_mono = time.monotonic()
-                async with self._tick_lock:
+                async with self._group_tick_lock:
                     await self._warm_group(group_id, group_name)
 
                 self._group_attempt_ts[group_id] = time.time()
@@ -1612,7 +1612,7 @@ class SmartWarmupEngine:
                             break
 
                 start_mono = time.monotonic()
-                async with self._tick_lock:
+                async with self._teacher_tick_lock:
                     await self._warm_teacher(teacher_id, teacher_name)
 
                 self._teacher_attempt_ts[teacher_id] = time.time()
