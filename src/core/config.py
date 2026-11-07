@@ -66,6 +66,45 @@ class Settings(BaseSettings):
         default=None, description="Optional secret token for /bot/log and /bot/get_user_schedule"
     )
 
+    # === Invite Bot (partner site: one-time invite links into a Telegram chat) ===
+    INVITE_BOT_TOKEN: str = Field(default="", description="Separate invite bot token; empty = disabled")
+    INVITE_CHAT_IDS: str = Field(
+        default="", description="Comma-separated allowlist of target chat_ids; first one is default"
+    )
+    INVITE_API_KEY: str = Field(
+        default="", description="Partner -> us key (X-API-Key); also signs avatar_url"
+    )
+    INVITE_SITE_WEBHOOK_URL: str = Field(
+        default="", description="Partner endpoint receiving join events; empty = pull-only mode"
+    )
+    INVITE_SITE_SECRET: str = Field(default="", description="Us -> partner secret (X-Secret-Key)")
+    INVITE_WEBHOOK_PATH: str = Field(default="/invite-bot/webhook")
+    INVITE_LINK_EXPIRE_HOURS: int = Field(default=0, description="0 = invite link never expires")
+
+    @property
+    def invite_chat_ids(self) -> list[int]:
+        """Parses INVITE_CHAT_IDS into a list of ints, silently skipping malformed entries."""
+        result: list[int] = []
+        for raw in (self.INVITE_CHAT_IDS or "").replace(" ", "").split(","):
+            try:
+                if raw:
+                    result.append(int(raw))
+            except ValueError:
+                continue
+        return result
+
+    @property
+    def invite_enabled(self) -> bool:
+        """Invite bot runs only when token, at least one chat and the API key are configured."""
+        return bool(self.INVITE_BOT_TOKEN and self.invite_chat_ids and self.INVITE_API_KEY)
+
+    @property
+    def invite_webhook_secret(self) -> str | None:
+        """Deterministic secret for the invite bot webhook, distinct from the main bot secret."""
+        if not self.INVITE_BOT_TOKEN:
+            return None
+        return hashlib.sha256(f"{self.INVITE_BOT_TOKEN}_invite_secret".encode()).hexdigest()[:32]
+
     # === Debug & Browser/Proxy (Legacy flags) ===
     DEBUG: bool = Field(default=False)
     START_BROWSER: bool = Field(default=False)

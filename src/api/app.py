@@ -55,6 +55,13 @@ from src.cron import (
     warmup_top_schedules,
 )
 from src.database.connection import close_db, init_db
+from src.invite_bot import (
+    INVITE_ALLOWED_UPDATES,
+    close_invite_bot,
+    drain_invite_tasks,
+    get_invite_bot,
+    invite_api_router,
+)
 from src.services.buketov_api import buketov_api_service
 from src.services.schedule_adapter import schedule_api_adapter
 
@@ -207,6 +214,20 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("BOT_MODE is 'webhook' but WEBHOOK_DOMAIN is not specified.")
 
+    # Invite bot webhook (separate token; chat_member updates only, chat messages are never delivered)
+    try:
+        invite_bot = get_invite_bot()
+        if invite_bot is not None and settings.BOT_MODE == "webhook" and settings.WEBHOOK_DOMAIN:
+            await invite_bot.set_webhook(
+                url=settings.WEBHOOK_DOMAIN.rstrip("/") + settings.INVITE_WEBHOOK_PATH,
+                secret_token=settings.invite_webhook_secret,
+                drop_pending_updates=False,
+                allowed_updates=INVITE_ALLOWED_UPDATES,
+            )
+            logger.info("[InviteBot] webhook configured (allowed_updates=chat_member).")
+    except Exception as e:
+        logger.warning(f"[InviteBot] webhook setup failed: {e}")
+
     # Start APScheduler
     try:
         scheduler = get_scheduler()
@@ -261,6 +282,12 @@ async def lifespan(app: FastAPI):
         await bot.session.close()
     except Exception as e:
         logger.warning(f"Error closing bot session: {e}")
+
+    try:
+        await drain_invite_tasks()
+        await close_invite_bot()
+    except Exception as e:
+        logger.warning(f"[InviteBot] error during shutdown: {e}")
 
     try:
         await close_db()
@@ -747,6 +774,9 @@ def create_app() -> FastAPI:
             for ev in clean_summary.get("recent_events", [])
         ]
         return ORJSONResponse(content=clean_summary, status_code=200)
+
+    # Invite bot (@Karu_proxy_bot): isolated endpoints, disabled unless INVITE_* env is set
+    app.include_router(invite_api_router)
 
     return app
 

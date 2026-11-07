@@ -49,13 +49,39 @@ async def run_polling() -> None:
     scheduler = get_scheduler()
     setup_all_crons(scheduler)
     start_scheduler()
+    invite_task: asyncio.Task | None = None
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+
+        # Invite bot (@Karu_proxy_bot) runs alongside in polling mode if configured
+        from src.invite_bot import INVITE_ALLOWED_UPDATES, get_invite_bot, get_invite_dispatcher
+
+        invite_bot = get_invite_bot()
+        if invite_bot is not None:
+            await invite_bot.delete_webhook(drop_pending_updates=False)
+            invite_task = asyncio.create_task(
+                get_invite_dispatcher().start_polling(
+                    invite_bot,
+                    allowed_updates=INVITE_ALLOWED_UPDATES,
+                    handle_signals=False,
+                    close_bot_session=False,
+                )
+            )
+            logger.info("Invite bot polling started (chat_member only).")
+
         logger.info("Bot polling loop starting...")
         await dp.start_polling(bot)
     finally:
         stop_scheduler()
+        if invite_task is not None:
+            invite_task.cancel()
+            try:
+                from src.invite_bot import close_invite_bot
+
+                await close_invite_bot()
+            except Exception:
+                pass
         try:
             from src.bot.middlewares.user_action_logger import user_action_logging_middleware
             await user_action_logging_middleware.flush()
