@@ -9,9 +9,10 @@ from __future__ import annotations
 from aiogram import Bot, Dispatcher
 
 from src.core.config import settings
+from src.invite_bot.commands import router as commands_router
 from src.invite_bot.handlers import router as join_router
 
-INVITE_ALLOWED_UPDATES: list[str] = ["chat_member"]
+INVITE_ALLOWED_UPDATES: list[str] = ["message", "chat_member"]
 
 _bot: Bot | None = None
 _dp: Dispatcher | None = None
@@ -32,7 +33,9 @@ def get_invite_dispatcher() -> Dispatcher:
     if _dp is None:
         _dp = Dispatcher()
         join_router._parent_router = None
+        commands_router._parent_router = None
         _dp.include_router(join_router)
+        _dp.include_router(commands_router)
     return _dp
 
 

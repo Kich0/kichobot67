@@ -12,7 +12,7 @@ from aiogram.types import ChatMemberUpdated
 from src.core.config import settings
 from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
-from src.invite_bot.events import add_event, build_avatar_url
+from src.invite_bot.events import add_event, build_avatar_url, mark_link_used
 from src.invite_bot.site_client import notify_site
 
 logger = get_logger("invite_bot.handlers")
@@ -38,6 +38,7 @@ def build_join_payload(event: ChatMemberUpdated, avatar_file_id: str | None) -> 
     link = event.invite_link
     return {
         "invite_link": link.invite_link if link else None,
+        "status": "used",
         "telegram_id": user.id,
         "username": user.username,
         "first_name": user.first_name,
@@ -66,6 +67,8 @@ async def on_member_joined(event: ChatMemberUpdated, bot: Bot) -> None:
     avatar_file_id = await fetch_avatar_file_id(bot, user.id)
     payload = build_join_payload(event, avatar_file_id)
     add_event(payload)
+    if link.invite_link:
+        mark_link_used(link.invite_link, payload)
     logger.info(f"[InviteBot] join tg_id={user.id} chat={event.chat.id} link={link.invite_link}")
 
     await notify_site(payload)

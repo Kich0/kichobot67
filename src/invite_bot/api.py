@@ -24,7 +24,7 @@ from src.api.rate_limiter import InMemoryRateLimiter
 from src.core.config import settings
 from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
-from src.invite_bot.events import get_events, verify_file_id_signature
+from src.invite_bot.events import get_events, get_link_status, register_link, verify_file_id_signature
 from src.invite_bot.instance import get_invite_bot, get_invite_dispatcher
 
 logger = get_logger("invite_bot.api")
@@ -132,15 +132,38 @@ async def create_invite_link(
         logger.error(f"[InviteBot] createChatInviteLink failed for chat {chat_id}: {e}")
         return _error(502, "Telegram error", detail=str(e))
 
+    expire_iso = expire.isoformat() if expire else None
+    register_link(link.invite_link, chat_id=chat_id, expire_date=expire_iso)
+
     return JSONResponse(
         status_code=200,
         content={
             "invite_link": link.invite_link,
             "chat_id": chat_id,
+            "status": "active",
             "member_limit": 1,
-            "expire_date": expire.isoformat() if expire else None,
+            "expire_date": expire_iso,
         },
     )
+
+
+@router.get("/api/invite/link/status")
+async def check_link_status(
+    request: Request,
+    invite_link: str = Query(..., description="Full invite link URL, e.g. https://t.me/+..."),
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    if not settings.invite_enabled:
+        return _error(503, "Invite bot disabled")
+    if not _api_key_valid(x_api_key):
+        return _error(401, "Unauthorized")
+    if not events_rate_limiter.is_allowed(_client_ip(request)):
+        return _error(429, "Too Many Requests")
+
+    status_info = get_link_status(invite_link.strip())
+    if status_info is None:
+        return _error(404, "Invite link not found")
+    return JSONResponse(status_code=200, content=status_info)
 
 
 @router.get("/api/invite/events")
