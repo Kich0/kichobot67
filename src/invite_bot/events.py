@@ -1,11 +1,14 @@
 """In-memory join/leave/ban event buffer and link lifecycle registry.
 
-Events are kept in RAM only (no MongoDB): the partner site either receives them
-via push (INVITE_SITE_WEBHOOK_URL) or pulls them from GET /api/invite/events.
+Hybrid RAM + MongoDB persistence:
+- Fast in-memory cache for low-latency lookups.
+- Background asynchronous persistence to MongoDB (InviteLink, InviteEvent)
+  for disaster recovery and cross-restart persistence ('2-я защита').
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict, deque
 from datetime import datetime
 import hashlib
@@ -15,6 +18,9 @@ import urllib.parse
 
 from src.core.config import settings
 from src.core.constants import TIMEZONE
+from src.core.logging import get_logger
+
+logger = get_logger("invite_bot.events")
 
 MAX_EVENTS = 500
 MAX_LINKS = 1000
@@ -24,6 +30,70 @@ recent_events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENTS)
 links_registry: OrderedDict[str, dict[str, Any]] = OrderedDict()
 user_links: OrderedDict[int, str] = OrderedDict()
 user_statuses: OrderedDict[int, dict[str, Any]] = OrderedDict()
+
+
+def _is_db_ready() -> bool:
+    try:
+        from src.database.connection import get_client
+        return get_client() is not None
+    except Exception:
+        return False
+
+
+def _schedule_bg(coro_fn, *args, **kwargs) -> None:
+    if not _is_db_ready():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro_fn(*args, **kwargs))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+    except RuntimeError:
+        pass
+
+
+async def _db_save_link(entry: dict[str, Any]) -> None:
+    if not _is_db_ready():
+        return
+    try:
+        from src.database.models.invite_link import InviteLink
+        link_url = entry.get("invite_link")
+        if not link_url:
+            return
+        existing = await InviteLink.find_one(InviteLink.invite_link == link_url)
+        if existing is None:
+            await InviteLink(**entry).insert()
+        else:
+            await existing.set({
+                "status": entry.get("status"),
+                "used_at": entry.get("used_at"),
+                "used_by": entry.get("used_by"),
+                "left_at": entry.get("left_at"),
+                "banned_at": entry.get("banned_at"),
+            })
+    except Exception as e:
+        logger.warning(f"[InviteBot] _db_save_link error: {e}")
+
+
+async def _db_save_event(payload: dict[str, Any]) -> None:
+    if not _is_db_ready():
+        return
+    try:
+        from src.database.models.invite_event import InviteEvent
+        await InviteEvent(
+            event=payload.get("event", "joined"),
+            status=payload.get("status", "used"),
+            telegram_id=payload.get("telegram_id", 0),
+            username=payload.get("username"),
+            first_name=payload.get("first_name"),
+            last_name=payload.get("last_name"),
+            old_username=payload.get("old_username"),
+            avatar_url=payload.get("avatar_url"),
+            avatar_file_id=payload.get("avatar_file_id"),
+            chat_id=payload.get("chat_id", 0),
+            invite_link=payload.get("invite_link"),
+        ).insert()
+    except Exception as e:
+        logger.warning(f"[InviteBot] _db_save_event error: {e}")
 
 
 def register_link(
@@ -47,6 +117,8 @@ def register_link(
     links_registry[invite_link] = entry
     while len(links_registry) > MAX_LINKS:
         links_registry.popitem(last=False)
+
+    _schedule_bg(_db_save_link, entry)
     return entry
 
 
@@ -79,6 +151,7 @@ def mark_link_used(invite_link: str, user_payload: dict[str, Any]) -> dict[str, 
         entry["status"] = "used"
         entry["used_at"] = used_at
         entry["used_by"] = used_by
+        _schedule_bg(_db_save_link, entry)
         return entry
 
     # Link might not be in RAM if server restarted, record it now
@@ -97,6 +170,8 @@ def mark_link_used(invite_link: str, user_payload: dict[str, Any]) -> dict[str, 
     links_registry[invite_link] = entry
     while len(links_registry) > MAX_LINKS:
         links_registry.popitem(last=False)
+
+    _schedule_bg(_db_save_link, entry)
     return entry
 
 
@@ -107,6 +182,7 @@ def mark_link_left(user_id: int, user_payload: dict[str, Any]) -> str | None:
     if invite_link and invite_link in links_registry:
         links_registry[invite_link]["status"] = "left"
         links_registry[invite_link]["left_at"] = updated_at
+        _schedule_bg(_db_save_link, links_registry[invite_link])
 
     user_statuses[user_id] = {
         "status": "left",
@@ -127,6 +203,7 @@ def mark_link_banned(user_id: int, user_payload: dict[str, Any]) -> str | None:
     if invite_link and invite_link in links_registry:
         links_registry[invite_link]["status"] = "banned"
         links_registry[invite_link]["banned_at"] = updated_at
+        _schedule_bg(_db_save_link, links_registry[invite_link])
 
     user_statuses[user_id] = {
         "status": "banned",
@@ -161,6 +238,36 @@ def get_link_status(invite_link: str) -> dict[str, Any] | None:
     return entry
 
 
+async def fetch_link_status_async(invite_link: str) -> dict[str, Any] | None:
+    """Returns link status from RAM cache, with fallback to MongoDB if server restarted."""
+    cached = get_link_status(invite_link)
+    if cached is not None:
+        return cached
+
+    if _is_db_ready():
+        try:
+            from src.database.models.invite_link import InviteLink
+            doc = await InviteLink.find_one(InviteLink.invite_link == invite_link)
+            if doc:
+                entry = {
+                    "invite_link": doc.invite_link,
+                    "chat_id": doc.chat_id,
+                    "status": doc.status,
+                    "member_limit": doc.member_limit,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "expire_date": doc.expire_date,
+                    "used_at": doc.used_at,
+                    "used_by": doc.used_by,
+                    "left_at": doc.left_at,
+                    "banned_at": doc.banned_at,
+                }
+                links_registry[invite_link] = entry
+                return entry
+        except Exception as e:
+            logger.warning(f"[InviteBot] fetch_link_status_async DB error: {e}")
+    return None
+
+
 def sign_file_id(file_id: str) -> str:
     """Returns a 32-hex HMAC-SHA256 signature of a Telegram file_id."""
     key = (settings.INVITE_API_KEY or "").encode()
@@ -185,6 +292,7 @@ def build_avatar_url(file_id: str | None) -> str | None:
 
 def add_event(payload: dict[str, Any]) -> None:
     recent_events.append(payload)
+    _schedule_bg(_db_save_event, payload)
 
 
 def get_events(since: str | None = None) -> list[dict[str, Any]]:
@@ -206,6 +314,20 @@ def clear_events() -> None:
     user_statuses.clear()
 
 
+async def reset_all_invite_data() -> None:
+    """Clears both in-memory cache and MongoDB collections for test cleanup."""
+    clear_events()
+    if _is_db_ready():
+        try:
+            from src.database.models.invite_link import InviteLink
+            from src.database.models.invite_event import InviteEvent
+            await InviteLink.get_motor_collection().delete_many({})
+            await InviteEvent.get_motor_collection().delete_many({})
+            logger.info("[InviteBot] reset_all_invite_data: wiped DB invite collections")
+        except Exception as e:
+            logger.error(f"[InviteBot] reset_all_invite_data DB error: {e}")
+
+
 __all__ = [
     "MAX_EVENTS",
     "MAX_LINKS",
@@ -213,6 +335,7 @@ __all__ = [
     "add_event",
     "build_avatar_url",
     "clear_events",
+    "fetch_link_status_async",
     "get_events",
     "get_link_status",
     "get_user_status_entry",
@@ -222,6 +345,7 @@ __all__ = [
     "mark_link_used",
     "recent_events",
     "register_link",
+    "reset_all_invite_data",
     "sign_file_id",
     "user_links",
     "user_statuses",

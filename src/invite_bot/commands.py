@@ -14,10 +14,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import re
 
-from aiogram import Bot, Router
+from aiogram import BaseMiddleware, Bot, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import ChatPermissions, Message
+from aiogram.types import ChatPermissions, Message, TelegramObject
 
 from src.core.config import settings
 from src.core.logging import get_logger
@@ -33,6 +33,43 @@ logger = get_logger("invite_bot.commands")
 router = Router(name="invite_commands")
 
 SUPER_ADMIN_IDS = {1516988645}
+
+
+class ProfileTrackingMiddleware(BaseMiddleware):
+    """Tracks active users and detects profile updates on any incoming message."""
+
+    async def __call__(
+        self,
+        handler: Any,
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message):
+            _record_message_users(event)
+            if (
+                event.chat.id in settings.invite_chat_ids
+                and event.from_user
+                and not event.from_user.is_bot
+            ):
+                bot: Bot | None = data.get("bot")
+                if bot:
+                    try:
+                        from src.invite_bot.handlers import maybe_emit_profile_updated
+
+                        await maybe_emit_profile_updated(
+                            bot=bot,
+                            user_id=event.from_user.id,
+                            username=event.from_user.username,
+                            first_name=event.from_user.first_name,
+                            last_name=event.from_user.last_name,
+                            chat_id=event.chat.id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[InviteBot] profile check error: {e}")
+        return await handler(event, data)
+
+
+router.message.outer_middleware(ProfileTrackingMiddleware())
 
 
 def _record_message_users(message: Message) -> None:

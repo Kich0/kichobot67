@@ -25,10 +25,12 @@ from src.core.config import settings
 from src.core.constants import TIMEZONE
 from src.core.logging import get_logger
 from src.invite_bot.events import (
+    fetch_link_status_async,
     get_events,
     get_link_status,
     get_user_status_entry,
     register_link,
+    reset_all_invite_data,
     verify_file_id_signature,
 )
 from src.invite_bot.instance import get_invite_bot, get_invite_dispatcher
@@ -166,10 +168,26 @@ async def check_link_status(
     if not events_rate_limiter.is_allowed(_client_ip(request)):
         return _error(429, "Too Many Requests")
 
-    status_info = get_link_status(invite_link.strip())
+    status_info = await fetch_link_status_async(invite_link.strip())
     if status_info is None:
         return _error(404, "Invite link not found")
     return JSONResponse(status_code=200, content=status_info)
+
+
+@router.post("/api/invite/reset")
+async def reset_test_data(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    if not settings.invite_enabled:
+        return _error(503, "Invite bot disabled")
+    if not _api_key_valid(x_api_key):
+        return _error(401, "Unauthorized")
+    await reset_all_invite_data()
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "message": "All invite links and events have been reset"},
+    )
 
 
 @router.get("/api/invite/user/status")
@@ -213,6 +231,21 @@ async def check_user_status(
                 status = "left"
                 in_chat = False
                 can_reissue = True
+
+            if member and getattr(member, "user", None):
+                try:
+                    from src.invite_bot.handlers import maybe_emit_profile_updated
+
+                    await maybe_emit_profile_updated(
+                        bot=bot,
+                        user_id=member.user.id,
+                        username=member.user.username,
+                        first_name=member.user.first_name,
+                        last_name=member.user.last_name,
+                        chat_id=target_chat,
+                    )
+                except Exception as e:
+                    logger.warning(f"[InviteBot] user/status profile check error: {e}")
         except TelegramAPIError as e:
             err_msg = str(e).lower()
             if "user not found" in err_msg or "participant" in err_msg:
@@ -284,6 +317,52 @@ async def get_avatar(
     while len(_avatar_cache) > AVATAR_CACHE_SIZE:
         _avatar_cache.popitem(last=False)
     return Response(content=content, media_type="image/jpeg", headers=headers)
+
+
+@router.post("/api/invite/sync_profiles")
+async def sync_profiles(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    """Scans all tracked users and checks for profile changes (username, names, avatar)."""
+    if not settings.invite_enabled:
+        return _error(503, "Invite bot disabled")
+    if not _api_key_valid(x_api_key):
+        return _error(401, "Unauthorized")
+
+    bot = get_invite_bot()
+    if bot is None or not settings.invite_chat_ids:
+        return _error(503, "Invite bot disabled or chat_ids empty")
+
+    chat_id = settings.invite_chat_ids[0]
+    from src.invite_bot.handlers import maybe_emit_profile_updated
+    from src.invite_bot.user_cache import get_all_tracked_user_ids
+
+    user_ids = get_all_tracked_user_ids()
+    updated_count = 0
+
+    for uid in user_ids:
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=uid)
+            if member and getattr(member, "user", None):
+                ev = await maybe_emit_profile_updated(
+                    bot=bot,
+                    user_id=member.user.id,
+                    username=member.user.username,
+                    first_name=member.user.first_name,
+                    last_name=member.user.last_name,
+                    chat_id=chat_id,
+                )
+                if ev:
+                    updated_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            continue
+
+    return JSONResponse(
+        status_code=200,
+        content={"scanned_users": len(user_ids), "updated_profiles": updated_count},
+    )
 
 
 @router.post(settings.INVITE_WEBHOOK_PATH)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from aiogram import Bot, Router
@@ -19,7 +20,7 @@ from src.invite_bot.events import (
     mark_link_used,
 )
 from src.invite_bot.site_client import notify_site
-from src.invite_bot.user_cache import record_user
+from src.invite_bot.user_cache import check_user_profile_changed, record_user
 
 logger = get_logger("invite_bot.handlers")
 
@@ -87,6 +88,73 @@ def build_ban_payload(event: ChatMemberUpdated, last_link: str | None) -> dict[s
     }
 
 
+def build_profile_updated_payload(
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    chat_id: int,
+    old_profile: dict[str, Any] | None = None,
+    avatar_file_id: str | None = None,
+) -> dict[str, Any]:
+    old_user = (old_profile or {}).get("username")
+    return {
+        "event": "profile_updated",
+        "status": "member",
+        "telegram_id": user_id,
+        "username": username,
+        "first_name": first_name or "",
+        "last_name": last_name or "",
+        "old_username": old_user,
+        "avatar_file_id": avatar_file_id,
+        "avatar_url": build_avatar_url(avatar_file_id) if avatar_file_id else None,
+        "chat_id": chat_id,
+        "invite_link": None,
+        "updated_at": datetime.now(TIMEZONE).isoformat(),
+    }
+
+
+async def maybe_emit_profile_updated(
+    bot: Bot,
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    chat_id: int,
+) -> dict[str, Any] | None:
+    """Checks if user's profile changed (username, names) with 10-min cooldown.
+
+    If changed, fetches avatar, builds profile_updated event, saves to recent_events/DB
+    and sends webhook notification to site.
+    """
+    changed, old = check_user_profile_changed(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    if not changed:
+        return None
+
+    avatar_file_id = await fetch_avatar_file_id(bot, user_id)
+    payload = build_profile_updated_payload(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        chat_id=chat_id,
+        old_profile=old,
+        avatar_file_id=avatar_file_id,
+    )
+    add_event(payload)
+    logger.info(
+        f"[InviteBot] profile_updated tg_id={user_id} "
+        f"old=@{old.get('username') if old else None} new=@{username}"
+    )
+    await notify_site(payload)
+    return payload
+
+
 @router.chat_member()
 async def on_chat_member_updated(event: ChatMemberUpdated, bot: Bot) -> None:
     if event.chat.id not in settings.invite_chat_ids:
@@ -144,7 +212,9 @@ __all__ = [
     "build_ban_payload",
     "build_join_payload",
     "build_leave_payload",
+    "build_profile_updated_payload",
     "fetch_avatar_file_id",
+    "maybe_emit_profile_updated",
     "on_chat_member_updated",
     "on_member_joined",
     "router",

@@ -24,6 +24,8 @@ from src.database.models.catalog_discovery import CatalogDiscovery
 from src.database.models.telecon_ad_event import TeleconAdEvent
 from src.database.models.system_setting import SystemSetting
 from src.database.models.broadcast_message import BroadcastMessage
+from src.database.models.invite_link import InviteLink
+from src.database.models.invite_event import InviteEvent
 
 ALL_DOCUMENT_MODELS = [
     User,
@@ -47,6 +49,8 @@ ALL_DOCUMENT_MODELS = [
     TeleconAdEvent,
     SystemSetting,
     BroadcastMessage,
+    InviteLink,
+    InviteEvent,
 ]
 
 __all__ = [
@@ -75,5 +79,7 @@ __all__ = [
     "TeleconAdEvent",
     "SystemSetting",
     "BroadcastMessage",
+    "InviteLink",
+    "InviteEvent",
     "ALL_DOCUMENT_MODELS",
 ]
